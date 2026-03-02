@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">DoneGrading</string>
+    <string name="title_activity_main">DoneGrading</string>
+    <string name="package_name">com.donegrading.app</string>
+    <string name="custom_url_scheme">com.donegrading.app</string>
+</resources>

@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Env (do not commit API keys)
+.env
+.env.local
+.env.*.local
+
+# Build
+dist/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.log
+
+# Capacitor
+android/.gradle
+android/build
+android/app/build
+android/captures

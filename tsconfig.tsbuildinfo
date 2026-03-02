@@ -1,0 +1,1 @@
+{"root":["./analytics.ts","./capacitor.config.ts","./declarations.d.ts","./types.ts","./vite.config.ts","./services/classroomservice.ts","./services/geminiservice.ts","./app.tsx","./errorboundary.tsx","./index.tsx","./main.tsx"],"version":"5.6.3"}

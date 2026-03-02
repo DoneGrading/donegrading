@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>DoneGrading | The High-Speed AI Teaching Assistant</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+          },
+        },
+      },
+    }
+  </script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script type="text/javascript" src="https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/auth/2/en_US/appleid.auth.js"></script>
+  <style>
+    body { font-family: 'Inter', sans-serif; transition: background-color 0.3s ease, color 0.3s ease; margin: 0; padding: 0; overflow: hidden; }
+    .text-glow { text-shadow: 0 0 20px rgba(255,255,255,0.3); }
+    .scan-line {
+      position: absolute;
+      width: 100%;
+      height: 8px;
+      background: linear-gradient(to bottom, transparent, #22c55e, transparent);
+      box-shadow: 0 0 20px rgba(34, 197, 94, 0.6);
+      top: 0;
+      z-index: 10;
+      animation: scan 2.5s ease-in-out infinite;
+    }
+    @keyframes scan {
+      0% { top: 5%; opacity: 0.3; }
+      50% { top: 90%; opacity: 1; }
+      100% { top: 5%; opacity: 0.3; }
+    }
+    .gradient-animate {
+      background: linear-gradient(
+        135deg,
+        #fef3c7,
+        #e0f2fe,
+        #ede9fe,
+        #fee2e2,
+        #dcfce7
+      );
+      background-size: 200% 200%;
+      animation: gradient-wave 40s ease-in-out infinite;
+    }
+    .dark .gradient-animate {
+      background: radial-gradient(circle at 0% 0%, #0f172a, #020617),
+                  radial-gradient(circle at 100% 100%, #1e293b, #020617),
+                  linear-gradient(120deg, #1d4ed8, #7c3aed, #0f766e, #1e293b);
+      background-blend-mode: screen, soft-light, normal;
+      background-size: 260% 260%;
+      animation: gradient-wave 50s ease-in-out infinite;
+    }
+    @keyframes gradient-wave {
+      0% { background-position: 0% 50%; }
+      25% { background-position: 50% 60%; }
+      50% { background-position: 100% 50%; }
+      75% { background-position: 50% 40%; }
+      100% { background-position: 0% 50%; }
+    }
+    .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 10px; }
+    .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.05); }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
+  </style>
+</head>
+<body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
+  <div id="root" class="h-screen overflow-hidden"></div>
+  <script type="module" src="/main.tsx"></script>
+</body>
+</html>
