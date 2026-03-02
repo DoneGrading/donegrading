@@ -271,6 +271,19 @@ const App: React.FC = () => {
 
   const [dashboardSort, setDashboardSort] = useState<SortMode>(() => localStorage.getItem('dg_dash_sort') as SortMode || 'recent');
   const [assignmentSort, setAssignmentSort] = useState<SortMode>(() => localStorage.getItem('dg_asn_sort') as SortMode || 'recent');
+
+  const todayLabel = useMemo(() => {
+    try {
+      return new Date().toLocaleDateString(undefined, {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: '2-digit',
+      });
+    } catch {
+      return '';
+    }
+  }, []);
   
   // Fixed Google OAuth Client ID for Classroom integration
   const GOOGLE_CLIENT_ID = '137273476022-4il1dq3mj28v0g1c2t59mt3l341evlbl.apps.googleusercontent.com';
@@ -1139,7 +1152,7 @@ const App: React.FC = () => {
     return (
       <PageWrapper
         headerTitle={educatorName || 'Teaching dashboard'}
-        headerSubtitle="Today in your classes"
+        headerSubtitle={todayLabel || undefined}
         isOnline={isOnline}
         isDarkMode={isDarkMode}
         setIsDarkMode={setIsDarkMode}
