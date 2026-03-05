@@ -1915,12 +1915,15 @@ const App: React.FC = () => {
                   </button>
                 );
               })}
+            </div>
+
+            <div className="mt-auto pb-2 space-y-2">
               <button
                 type="button"
                 onClick={handleShareApp}
-                className="mt-1 w-full py-2.5 bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-700 rounded-xl text-[11px] font-semibold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
+                className="w-full py-2.5 bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-700 rounded-xl text-[11px] font-semibold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
               >
-                Share DoneGrading app
+                Share DoneGrading
               </button>
               <button
                 type="button"
@@ -1929,9 +1932,6 @@ const App: React.FC = () => {
               >
                 Sign out
               </button>
-            </div>
-
-            <div className="mt-auto pb-2">
               <div className="w-full text-[9px] text-slate-500 dark:text-slate-400 text-center space-y-1">
                 <p>
                   <a href="http://donegrading.com/terms-of-services" target="_blank" rel="noreferrer" className="underline underline-offset-2">
