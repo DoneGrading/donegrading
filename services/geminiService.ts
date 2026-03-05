@@ -144,3 +144,131 @@ Return ONLY JSON.`
     return null;
   }
 };
+
+export const analyzeMultiPagePaper = async (
+  base64Images: string[],
+  rubric: string,
+  maxScore: number,
+  studentList: string[]
+): Promise<GradingResponse | null> => {
+  const ai = new GoogleGenAI({ apiKey: getApiKey() });
+  try {
+    const imageParts = base64Images
+      .filter(Boolean)
+      .slice(0, 10)
+      .map((data) => ({
+        inlineData: {
+          mimeType: "image/jpeg",
+          data,
+        },
+      }));
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: {
+        parts: [
+          ...imageParts,
+          {
+            text: `You are grading ONE student's work that may span multiple pages.
+
+## Instructions
+- Consider ALL pages as a single submission.
+- Match the student from: ${studentList.join(", ")}.
+- OCR handwriting carefully across pages.
+- SCORE: Evaluate against Rubric: ${rubric} (Max: ${maxScore}).
+- Provide ONE final score and ONE consolidated feedback.
+
+## FEEDBACK RULES (MANDATORY)
+1. DO NOT use greetings/salutations.
+2. Always include the student's first name naturally.
+3. Start directly with the evaluation.
+4. Be encouraging and specific; provide one clear improvement path.
+5. Mention effort/handwriting/name inclusion to justify the score.
+
+Return ONLY JSON.`,
+          },
+        ],
+      },
+      config: {
+        thinkingConfig: { thinkingBudget: 0 },
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            detected: { type: Type.BOOLEAN },
+            studentName: { type: Type.STRING },
+            score: { type: Type.NUMBER },
+            feedback: { type: Type.STRING },
+            transcription: { type: Type.STRING },
+          },
+          required: ["detected"],
+        },
+      },
+    });
+
+    const text = response.text || "{}";
+    return JSON.parse(text) as GradingResponse;
+  } catch (e) {
+    console.error("Gemini multi-page analysis error", e);
+    return null;
+  }
+};
+
+export interface LessonScriptResult {
+  outline: string;
+  vocabulary: string[];
+  discussionQuestions: string[];
+}
+
+export const generateLessonScript = async (topic: string): Promise<LessonScriptResult | null> => {
+  const ai = new GoogleGenAI({ apiKey: getApiKey() });
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `You are an expert K-12 curriculum designer. For this topic: "${topic}", provide a 30-minute lesson plan.
+
+Return ONLY valid JSON with exactly these keys (no markdown, no extra text):
+- "outline": string with a step-by-step 30-minute lesson outline (numbered steps, brief).
+- "vocabulary": array of 5-10 key vocabulary words or phrases students should learn.
+- "discussionQuestions": array of exactly 3 discussion questions for the class.`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            outline: { type: Type.STRING },
+            vocabulary: { type: Type.ARRAY, items: { type: Type.STRING } },
+            discussionQuestions: { type: Type.ARRAY, items: { type: Type.STRING } },
+          },
+          required: ["outline", "vocabulary", "discussionQuestions"],
+        },
+      },
+    });
+    const text = response.text || "{}";
+    return JSON.parse(text) as LessonScriptResult;
+  } catch (e) {
+    console.error("Lesson script error", e);
+    return null;
+  }
+};
+
+export const generateDifferentiatedLesson = async (
+  lessonText: string,
+  level: "simplified" | "advanced"
+): Promise<string | null> => {
+  const ai = new GoogleGenAI({ apiKey: getApiKey() });
+  const directive =
+    level === "simplified"
+      ? "Rewrite this lesson for students with learning gaps: shorter sentences, simpler vocabulary, more scaffolding, and one extra practice step. Keep the same learning goal."
+      : "Rewrite this lesson for advanced/gifted students: add depth, extension questions, and one enrichment task. Keep the same learning goal.";
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `${directive}\n\nLesson:\n${lessonText}`,
+    });
+    return response.text || null;
+  } catch (e) {
+    console.error("Differentiation error", e);
+    return null;
+  }
+};

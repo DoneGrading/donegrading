@@ -216,14 +216,15 @@ export class ClassroomService {
     toEmail: string,
     subject: string,
     body: string,
-    imageBase64?: string
+    imageBase64?: string | string[]
   ): Promise<void> {
     if (!toEmail) return;
 
     const boundary = "DONEGRADING-BOUNDARY";
 
     let mimeBody: string;
-    if (imageBase64) {
+    const images = Array.isArray(imageBase64) ? imageBase64 : (imageBase64 ? [imageBase64] : []);
+    if (images.length > 0) {
       mimeBody =
 `MIME-Version: 1.0
 Content-Type: multipart/mixed; boundary="${boundary}"
@@ -232,14 +233,20 @@ Content-Type: multipart/mixed; boundary="${boundary}"
 Content-Type: text/plain; charset="UTF-8"
 
 ${body}
-
+${images
+  .slice(0, 10)
+  .map(
+    (img, idx) =>
+      `
 --${boundary}
 Content-Type: image/jpeg
 Content-Transfer-Encoding: base64
-Content-Disposition: attachment; filename="work.jpg"
+Content-Disposition: attachment; filename="work-${idx + 1}.jpg"
 
-${imageBase64}
-
+${img}
+`
+  )
+  .join("")}
 --${boundary}--
 `;
     } else {

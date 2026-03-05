@@ -39,37 +39,44 @@
       100% { top: 5%; opacity: 0.3; }
     }
     .gradient-animate {
-      background: linear-gradient(
-        135deg,
-        #fef3c7,
-        #e0f2fe,
-        #ede9fe,
-        #fee2e2,
-        #dcfce7
-      );
-      background-size: 200% 200%;
-      animation: gradient-wave 40s ease-in-out infinite;
+      /* Light mode: very bright, soft pastels with a clear radiant wave */
+      background:
+        radial-gradient(circle at 0% 0%, rgba(254, 249, 195, 0.95), transparent 55%),
+        radial-gradient(circle at 100% 0%, rgba(219, 234, 254, 0.95), transparent 55%),
+        radial-gradient(circle at 0% 100%, rgba(255, 228, 230, 0.95), transparent 55%),
+        radial-gradient(circle at 100% 100%, rgba(221, 239, 228, 0.95), transparent 55%);
+      background-color: #f9fafb; /* very light base */
+      background-size: 220% 220%;
+      animation: gradient-wave 32s ease-in-out infinite;
     }
     .dark .gradient-animate {
-      background: radial-gradient(circle at 0% 0%, #0f172a, #020617),
-                  radial-gradient(circle at 100% 100%, #1e293b, #020617),
-                  linear-gradient(120deg, #1d4ed8, #7c3aed, #0f766e, #1e293b);
-      background-blend-mode: screen, soft-light, normal;
+      /* Dark mode: only very dark tones with subtle color shifts */
+      background:
+        radial-gradient(circle at 0% 0%, rgba(15, 23, 42, 0.96), transparent 55%),
+        radial-gradient(circle at 100% 0%, rgba(17, 24, 39, 0.96), transparent 55%),
+        radial-gradient(circle at 0% 100%, rgba(24, 24, 27, 0.95), transparent 55%),
+        radial-gradient(circle at 100% 100%, rgba(15, 23, 42, 0.96), transparent 55%),
+        linear-gradient(130deg, #020617, #020617, #020617);
+      background-blend-mode: normal;
       background-size: 260% 260%;
-      animation: gradient-wave 50s ease-in-out infinite;
+      animation: gradient-wave 36s ease-in-out infinite;
     }
     @keyframes gradient-wave {
       0% { background-position: 0% 50%; }
-      25% { background-position: 50% 60%; }
+      25% { background-position: 50% 80%; }
       50% { background-position: 100% 50%; }
-      75% { background-position: 50% 40%; }
+      75% { background-position: 50% 20%; }
       100% { background-position: 0% 50%; }
     }
-    .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+    .custom-scrollbar {
+      scrollbar-width: none; /* Firefox */
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 0px;
+      height: 0px;
+    }
     .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-    .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 10px; }
-    .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.05); }
-    .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: transparent; border-radius: 10px; }
   </style>
 </head>
 <body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
