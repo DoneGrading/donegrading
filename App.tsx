@@ -1077,14 +1077,10 @@ const App: React.FC = () => {
   }, []);
 
   const openVoiceCapture = useCallback(() => {
-    const defaultRoute =
-      phase === AppPhase.PLAN ? 'plan' :
-      phase === AppPhase.RECORDS ? 'communicate' :
-      'grade';
-    setVoiceRoute(defaultRoute);
+    setVoiceRoute('reminder');
     setVoiceDraft('');
     setShowVoiceCapture(true);
-  }, [phase]);
+  }, []);
 
   const saveVoiceCapture = useCallback(() => {
     const text = voiceDraft.trim();
@@ -4640,7 +4636,10 @@ const App: React.FC = () => {
           <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-2xl p-5">
             <div className="flex items-center justify-between mb-3">
               <div className="flex flex-col">
-                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300">Voice capture</p>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300 flex items-center gap-2">
+                  <Mic className="w-4 h-4 text-indigo-500" />
+                  Voice capture
+                </p>
                 <p className="text-[10px] text-slate-500 dark:text-slate-400">
                   Route: <span className="font-semibold">{voiceRoute === 'plan' ? 'Plan note' : voiceRoute === 'communicate' ? 'Communicate draft' : voiceRoute === 'todo' ? 'To‑do' : voiceRoute === 'reminder' ? 'Reminder' : 'Grade follow‑up'}</span>
                 </p>
