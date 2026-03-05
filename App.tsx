@@ -6,10 +6,10 @@ import {
   Sun, Target, Chrome, Apple as AppleIcon, RefreshCw, ScanLine, FileText, 
   PlusCircle, Mic, MicOff, Settings, Home, MessageCircle, LayoutDashboard,
   Calendar, Timer, Shuffle, Volume2, ClipboardList, FolderOpen, Link, Minus, Plus,
-  Share2, Printer, Cloud, Wand2, UploadCloud
+  Cloud, Wand2, UploadCloud
 } from 'lucide-react';
 import { AppPhase, GradingMode, Course, Assignment, Student, GradedWork, GradingResponse, GeometricData, SubscriptionStatus } from './types';
-import { analyzeMultiPagePaper, analyzePaper, extractRubricFromImage, generateRubric, generateLessonScript, generateDifferentiatedLesson, type LessonScriptResult } from './services/geminiService';
+import { analyzeMultiPagePaper, analyzePaper, assessFrame, extractRubricFromImage, generateRubric, generateLessonScript, generateDifferentiatedLesson, type LessonScriptResult } from './services/geminiService';
 import { ClassroomService } from './services/classroomService';
 import { logEvent } from './analytics';
 import { CommunicationDashboard } from './CommunicationDashboard';
@@ -104,7 +104,7 @@ const PageWrapper: React.FC<{
           </button>
         </header>
         
-        <main className="flex-1 overflow-y-auto custom-scrollbar flex flex-col p-4 pb-16 relative min-h-0">
+        <main className="flex-1 overflow-y-auto custom-scrollbar flex flex-col p-4 pb-24 relative min-h-0">
           {children}
         </main>
       </div>
@@ -469,6 +469,20 @@ const App: React.FC = () => {
   const [scanHealth, setScanHealth] = useState<number>(0);
   const [oneWordCommand, setOneWordCommand] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [scanQueueCount, setScanQueueCount] = useState(0);
+  const [scanReviewQueueCount, setScanReviewQueueCount] = useState(0);
+  const [scanQueueHint, setScanQueueHint] = useState<string | null>(null);
+  const scanQueueRef = useRef<{
+    id: string;
+    base64: string;
+    dataUrl: string;
+    createdAt: number;
+    scanHealth?: number;
+    corners?: GeometricData | null;
+    transcription?: string;
+  }[]>([]);
+  const scanReviewRef = useRef<{ id: string; result: GradingResponse; dataUrl: string }[]>([]);
+  const frameAssessInFlightRef = useRef<boolean>(false);
   
   const [manualScore, setManualScore] = useState<string>('');
   const [manualFeedback, setManualFeedback] = useState<string>('');
@@ -492,13 +506,62 @@ const App: React.FC = () => {
   const [rubricScanError, setRubricScanError] = useState<string | null>(null);
   const [rubricAutoAttempts, setRubricAutoAttempts] = useState<number>(0);
 
+  // Phase 2: Voice-to-task (local)
+  const GRADE_FOLLOWUPS_KEY = 'dg_grade_followups_v1';
+  const QUICK_TODOS_KEY = 'dg_quick_todos_v1';
+  const COMM_VOICE_DRAFT_KEY = 'dg_comm_voice_draft_v1';
+  const [gradeFollowUps, setGradeFollowUps] = useState<{ id: string; text: string; createdAt: number; done?: boolean }[]>(() => {
+    try {
+      const saved = localStorage.getItem(GRADE_FOLLOWUPS_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [quickTodos, setQuickTodos] = useState<{ id: string; text: string; createdAt: number; done?: boolean }[]>(() => {
+    try {
+      const saved = localStorage.getItem(QUICK_TODOS_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [showVoiceCapture, setShowVoiceCapture] = useState(false);
+  const [voiceDraft, setVoiceDraft] = useState('');
+  const [voiceRoute, setVoiceRoute] = useState<'plan' | 'grade' | 'communicate' | 'todo' | 'reminder'>('grade');
+  const NAV_USAGE_KEY = 'dg_nav_usage_v1';
+  const [navUsage, setNavUsage] = useState<Record<string, number>>(() => {
+    try {
+      const raw = localStorage.getItem(NAV_USAGE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [dragCourseId, setDragCourseId] = useState<string | null>(null);
+  const [dragAssignmentId, setDragAssignmentId] = useState<string | null>(null);
+
+  useEffect(() => {
+    try { localStorage.setItem(GRADE_FOLLOWUPS_KEY, JSON.stringify(gradeFollowUps)); } catch {}
+  }, [gradeFollowUps]);
+  useEffect(() => {
+    try { localStorage.setItem(QUICK_TODOS_KEY, JSON.stringify(quickTodos)); } catch {}
+  }, [quickTodos]);
+  useEffect(() => {
+    try { localStorage.setItem(NAV_USAGE_KEY, JSON.stringify(navUsage)); } catch {}
+  }, [navUsage]);
+
   // Plan tab (The Architect)
   const PLAN_STATE_KEY = 'dg_plan_state_v1';
+  const PLAN_US_STATE_KEY = 'dg_plan_us_state';
   const FILE_VAULT_KEY = 'dg_file_vault_links';
 
   const [lessonTopic, setLessonTopic] = useState('');
   const [lessonResult, setLessonResult] = useState<LessonScriptResult | null>(null);
   const [lessonLoading, setLessonLoading] = useState(false);
+  const [planAiError, setPlanAiError] = useState<string | null>(null);
+  const [planActionLoading, setPlanActionLoading] = useState<null | 'share'>(null);
+  const [planActionMessage, setPlanActionMessage] = useState<string | null>(null);
   const [diffLevel, setDiffLevel] = useState<'simplified' | 'advanced' | null>(null);
   const [differentiationText, setDifferentiationText] = useState('');
   const [diffLoading, setDiffLoading] = useState(false);
@@ -517,6 +580,13 @@ const App: React.FC = () => {
   const [planLastSaved, setPlanLastSaved] = useState<Date | null>(null);
   const [isPlanSaving, setIsPlanSaving] = useState(false);
 
+  const [planStateRegion, setPlanStateRegion] = useState<string>(() => {
+    try {
+      return localStorage.getItem(PLAN_US_STATE_KEY) || 'National';
+    } catch {
+      return 'National';
+    }
+  });
   const [planGrade, setPlanGrade] = useState('6');
   const [planSubject, setPlanSubject] = useState('Science');
   const [planDuration, setPlanDuration] = useState(55);
@@ -552,6 +622,7 @@ const App: React.FC = () => {
   const [randomPicked, setRandomPicked] = useState<Student | null>(null);
   const [noiseLevel, setNoiseLevel] = useState(0);
   const [noiseMeterMicOn, setNoiseMeterMicOn] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [behaviorScores, setBehaviorScores] = useState<Record<string, number>>({});
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
@@ -624,6 +695,7 @@ const App: React.FC = () => {
         lessonTitle: planLessonTitle,
         unit: planUnit,
         version: planVersion,
+        state: planStateRegion,
         grade: planGrade,
         subject: planSubject,
         duration: planDuration,
@@ -644,16 +716,19 @@ const App: React.FC = () => {
         reflectionNote,
       };
       localStorage.setItem(PLAN_STATE_KEY, JSON.stringify(payload));
+      localStorage.setItem(PLAN_US_STATE_KEY, planStateRegion);
       setPlanLastSaved(new Date());
     } catch {
       // ignore
     }
   }, [
     PLAN_STATE_KEY,
+    PLAN_US_STATE_KEY,
     lessonTopic,
     planLessonTitle,
     planUnit,
     planVersion,
+    planStateRegion,
     planGrade,
     planSubject,
     planDuration,
@@ -748,6 +823,25 @@ const App: React.FC = () => {
       }
     };
   }, [noiseMeterMicOn]);
+
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onChange);
+    onChange();
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen?.();
+      } else {
+        await document.exitFullscreen?.();
+      }
+    } catch (e) {
+      console.error("Fullscreen toggle failed", e);
+    }
+  }, []);
 
   useEffect(() => localStorage.setItem('dg_history', JSON.stringify(history)), [history]);
   useEffect(() => localStorage.setItem('dg_cache_courses', JSON.stringify(courses)), [courses]);
@@ -860,7 +954,7 @@ const App: React.FC = () => {
     }
     logEvent('auth_demo_login');
     setIsDemoSignedIn(true);
-    setPhase(AppPhase.DASHBOARD);
+    setPhase(AppPhase.AUTHENTICATION);
   };
 
   const handleEmailLogin = (e: React.FormEvent) => { e.preventDefault(); if (!email || !password) { setAuthError("Email and password required."); return; } loginMock(); };
@@ -872,7 +966,7 @@ const App: React.FC = () => {
     setClassroom(service);
     setAuthError(null);
     logEvent('auth_google_sign_in');
-    setPhase(AppPhase.DASHBOARD);
+    setPhase(AppPhase.AUTHENTICATION);
 
     fetch('https://classroom.googleapis.com/v1/userProfiles/me', {
       headers: { Authorization: `Bearer ${accessToken}` }
@@ -922,7 +1016,7 @@ const App: React.FC = () => {
 
       const client = g.accounts.oauth2.initTokenClient({
         client_id: GOOGLE_CLIENT_ID,
-        scope: "https://www.googleapis.com/auth/classroom.courses https://www.googleapis.com/auth/classroom.courses.readonly https://www.googleapis.com/auth/classroom.coursework.me https://www.googleapis.com/auth/classroom.rosters.readonly https://www.googleapis.com/auth/classroom.coursework.students https://www.googleapis.com/auth/classroom.profile.emails https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/drive.file",
+        scope: "https://www.googleapis.com/auth/classroom.courses https://www.googleapis.com/auth/classroom.courses.readonly https://www.googleapis.com/auth/classroom.coursework.me https://www.googleapis.com/auth/classroom.rosters.readonly https://www.googleapis.com/auth/classroom.coursework.students https://www.googleapis.com/auth/classroom.profile.emails https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets",
         prompt: 'consent',
         ux_mode: 'redirect',
         redirect_uri: redirectUri,
@@ -972,6 +1066,51 @@ const App: React.FC = () => {
   };
 
   const startGrading = (mode: GradingMode) => { setGradingMode(mode); setPhase(AppPhase.GRADING_LOOP); };
+
+  const classifyVoiceIntent = useCallback((text: string): 'todo' | 'message' | 'note' | 'reminder' => {
+    const t = (text || '').toLowerCase();
+    if (!t.trim()) return 'note';
+    if (t.includes('remind me') || t.startsWith('remind') || t.includes('reminder')) return 'reminder';
+    if (t.includes('message') || t.includes('text ') || t.includes('sms') || t.includes('email') || t.includes('call ')) return 'message';
+    if (t.includes('todo') || t.includes('to do') || t.includes('task')) return 'todo';
+    return 'note';
+  }, []);
+
+  const openVoiceCapture = useCallback(() => {
+    const defaultRoute =
+      phase === AppPhase.PLAN ? 'plan' :
+      phase === AppPhase.RECORDS ? 'communicate' :
+      'grade';
+    setVoiceRoute(defaultRoute);
+    setVoiceDraft('');
+    setShowVoiceCapture(true);
+  }, [phase]);
+
+  const saveVoiceCapture = useCallback(() => {
+    const text = voiceDraft.trim();
+    if (!text) { setShowVoiceCapture(false); return; }
+
+    const inferred = classifyVoiceIntent(text);
+    const now = Date.now();
+    const id = `${now}_${Math.random().toString(16).slice(2)}`;
+
+    if (voiceRoute === 'plan') {
+      setReflectionNote((prev) => (prev ? `${prev}\n` : '') + text);
+    } else if (voiceRoute === 'communicate') {
+      try { localStorage.setItem(COMM_VOICE_DRAFT_KEY, text); } catch {}
+      setPhase(AppPhase.RECORDS);
+    } else if (voiceRoute === 'reminder') {
+      setQuickTodos((prev) => [{ id, text: `Reminder: ${text}`, createdAt: now, done: false }, ...prev].slice(0, 50));
+    } else if (voiceRoute === 'todo' || inferred === 'todo') {
+      setQuickTodos((prev) => [{ id, text, createdAt: now, done: false }, ...prev].slice(0, 50));
+    } else {
+      // Grade follow-up note by default
+      setGradeFollowUps((prev) => [{ id, text, createdAt: now, done: false }, ...prev].slice(0, 50));
+    }
+
+    setShowVoiceCapture(false);
+    setVoiceDraft('');
+  }, [voiceDraft, voiceRoute, classifyVoiceIntent, COMM_VOICE_DRAFT_KEY, setPhase]);
   
   const handleScanPaperRubric = () => { 
     setCameraError(null);
@@ -1270,7 +1409,7 @@ const App: React.FC = () => {
   }, [isScanningRubric, isOnline, cameraError, isProcessing, rubricAutoAttempts, handleRubricSnap]);
 
   const handleAutoSnap = useCallback(async () => {
-    if (isProcessing || cooldownRef.current || showQuickPick || cameraError) return;
+    if (cooldownRef.current || showQuickPick || cameraError) return;
     if (gradingMode === GradingMode.MULTI_PAGE && multiPageCaptureInFlightRef.current) return;
     
     const optimalHighResBase64 = captureFrame(0.9);
@@ -1278,20 +1417,23 @@ const App: React.FC = () => {
     
     if (!optimalHighResBase64 || !apiBase64 || !selectedAssignment) return;
 
-    if (!isOnline) {
-      return; 
-    }
+    if (frameAssessInFlightRef.current) return;
+    frameAssessInFlightRef.current = true;
 
     try {
-      const result = await analyzePaper(apiBase64, customRubric || selectedAssignment.rubric, selectedAssignment.maxScore, students.map(s => s.name), true);
-      if (result) { setScanHealth(result.scanHealth || 0); setOneWordCommand(result.oneWordCommand || null); setActiveGeometry(result.corners || null); }
+      const assess = await assessFrame(apiBase64);
+      if (assess) {
+        setScanHealth(assess.scanHealth || 0);
+        setActiveGeometry((assess as any).corners || null);
+      }
       
       const captureThreshold = gradingMode === GradingMode.MULTI_PAGE ? 88 : 80;
-      if (!result || (result.scanHealth ?? 0) < captureThreshold) return;
-      
-      setIsProcessing(true);
-      
-      const croppedBase64 = await cropImageToBoundingBox(optimalHighResBase64, result.corners || null);
+      const assessHealth = assess?.scanHealth ?? 0;
+      if (!assess || assessHealth < captureThreshold) return;
+
+      // Capture accepted: crop using assessed corners (if any)
+      const corners = (assess as any).corners || null;
+      const croppedBase64 = await cropImageToBoundingBox(optimalHighResBase64, corners);
 
       if (gradingMode === GradingMode.MULTI_PAGE) {
         multiPageCaptureInFlightRef.current = true;
@@ -1318,7 +1460,7 @@ const App: React.FC = () => {
           return {
             croppedDataUrls: nextUrls,
             apiBase64s: nextApi,
-            detectedStudentName: prev.detectedStudentName || result.studentName || undefined,
+            detectedStudentName: prev.detectedStudentName || assess.transcription || undefined,
           };
         });
         setMultiPageHint('Captured. Turn the page, then keep scanning.');
@@ -1329,28 +1471,29 @@ const App: React.FC = () => {
         return;
       }
 
-      setPendingWork({ ...result, imageUrls: [`data:image/jpeg;base64,${croppedBase64}`] });
-      setManualScore(result.score?.toString() || ''); setManualFeedback(result.feedback || '');
-      
-      const detectedIds = new Set<string>();
-      if (result.studentName) {
-         const lowerDetected = result.studentName.toLowerCase().replace(/[^a-z]/g, '');
-         if (lowerDetected.length > 2) {
-             const match = students.find(s => {
-               const sName = s.name.toLowerCase().replace(/[^a-z]/g, '');
-               return sName.includes(lowerDetected) || lowerDetected.includes(sName);
-             });
-             if (match) detectedIds.add(match.id);
-         }
-      }
-      setSelectedQuickPickIds(detectedIds); 
-      setShowQuickPick(true);
+      // Single-page: enqueue for background grading + later review.
+      const id = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      const dataUrl = `data:image/jpeg;base64,${croppedBase64}`;
+      scanQueueRef.current.push({
+        id,
+        base64: croppedBase64,
+        dataUrl,
+        createdAt: Date.now(),
+        scanHealth: assessHealth,
+        corners,
+        transcription: assess.transcription || undefined,
+      });
+      setScanQueueCount(scanQueueRef.current.length);
+      setScanQueueHint(`Queued (${scanQueueRef.current.length}). Keep scanning.`);
+      window.setTimeout(() => setScanQueueHint(null), 1200);
+      cooldownRef.current = true;
+      setTimeout(() => { cooldownRef.current = false; }, 1200);
     } catch (err) { 
       console.error(err); 
     } finally { 
-      setIsProcessing(false); 
+      frameAssessInFlightRef.current = false;
     }
-  }, [isProcessing, isOnline, cameraError, captureFrame, selectedAssignment, students, showQuickPick, customRubric, gradingMode, computeAHash, hammingDistance]);
+  }, [isOnline, cameraError, captureFrame, selectedAssignment, students, showQuickPick, customRubric, gradingMode, computeAHash, hammingDistance]);
 
   useEffect(() => {
     let interval: number | null = null;
@@ -1359,6 +1502,101 @@ const App: React.FC = () => {
     }
     return () => { if (interval) clearInterval(interval); };
   }, [phase, isOnline, showQuickPick, isProcessing, cameraError, handleAutoSnap]);
+
+  const openNextQueuedReview = useCallback(() => {
+    if (showQuickPick) return;
+    const next = scanReviewRef.current.shift();
+    setScanReviewQueueCount(scanReviewRef.current.length);
+    if (!next) return;
+
+    setPendingWork({ ...next.result, imageUrls: [next.dataUrl] });
+    setManualScore(next.result.score?.toString() || '');
+    setManualFeedback(next.result.feedback || '');
+
+    const detectedIds = new Set<string>();
+    if (next.result.studentName) {
+      const lowerDetected = next.result.studentName.toLowerCase().replace(/[^a-z]/g, '');
+      if (lowerDetected.length > 2) {
+        const match = students.find(s => {
+          const sName = s.name.toLowerCase().replace(/[^a-z]/g, '');
+          return sName.includes(lowerDetected) || lowerDetected.includes(sName);
+        });
+        if (match) detectedIds.add(match.id);
+      }
+    }
+    setSelectedQuickPickIds(detectedIds);
+    setShowQuickPick(true);
+  }, [showQuickPick, students]);
+
+  // Background worker: grade queued single-page captures while teacher keeps scanning.
+  useEffect(() => {
+    if (gradingMode !== GradingMode.SINGLE_PAGE) return;
+    if (!isOnline) return;
+    if (!selectedAssignment) return;
+
+    let cancelled = false;
+    const workerInFlightRef = { current: false };
+
+    const tick = async () => {
+      if (cancelled) return;
+      if (showQuickPick) return;
+      if (workerInFlightRef.current) return;
+      if (scanQueueRef.current.length === 0) return;
+
+      workerInFlightRef.current = true;
+      const job = scanQueueRef.current[0];
+      try {
+        const result = await analyzePaper(
+          job.base64,
+          customRubric || selectedAssignment.rubric,
+          selectedAssignment.maxScore,
+          students.map(s => s.name),
+          false
+        );
+        const finalResult: GradingResponse =
+          result ||
+          ({
+            detected: true,
+            studentName: "",
+            score: 0,
+            feedback: "AI unavailable right now. Your scan is saved in the review queue so you can match the student and fill in a score/feedback manually.",
+            confidence: 0,
+            scanHealth: job.scanHealth,
+            alignment: "IN_FRAME",
+            corners: job.corners || undefined,
+            transcription: job.transcription,
+          } as GradingResponse);
+
+        scanReviewRef.current.push({ id: job.id, result: finalResult, dataUrl: job.dataUrl });
+        setScanReviewQueueCount(scanReviewRef.current.length);
+      } catch (e) {
+        console.error("Queued grading failed", e);
+        const fallback = {
+          detected: true,
+          studentName: "",
+          score: 0,
+          feedback: "Grading failed due to a network/API error. Your scan is saved in the review queue so you can match the student and fill in a score/feedback manually.",
+          confidence: 0,
+          scanHealth: job.scanHealth,
+          alignment: "IN_FRAME",
+          corners: job.corners || undefined,
+          transcription: job.transcription,
+        } as GradingResponse;
+        scanReviewRef.current.push({ id: job.id, result: fallback, dataUrl: job.dataUrl });
+        setScanReviewQueueCount(scanReviewRef.current.length);
+      } finally {
+        scanQueueRef.current.shift();
+        setScanQueueCount(scanQueueRef.current.length);
+        workerInFlightRef.current = false;
+      }
+    };
+
+    const intervalId = window.setInterval(() => { void tick(); }, 450);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [gradingMode, isOnline, selectedAssignment, customRubric, students, showQuickPick]);
 
   const confirmQuickPickStudents = () => {
     if (!pendingWork || !selectedAssignment || selectedQuickPickIds.size === 0) return;
@@ -1382,6 +1620,36 @@ const App: React.FC = () => {
     setShowQuickPick(false); setPendingWork(null); setActiveGeometry(null); setScanHealth(0); setOneWordCommand(null);
     cooldownRef.current = true; setTimeout(() => { cooldownRef.current = false; }, 1000); 
   };
+
+  const handleManualCaptureSinglePage = useCallback(async () => {
+    if (gradingMode !== GradingMode.SINGLE_PAGE) return;
+    if (cooldownRef.current || showQuickPick || cameraError) return;
+    if (!selectedAssignment) return;
+
+    const highRes = captureFrame(0.9);
+    if (!highRes) return;
+
+    try {
+      const croppedBase64 = await cropImageToBoundingBox(highRes, activeGeometry || null);
+      const id = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      const dataUrl = `data:image/jpeg;base64,${croppedBase64}`;
+      scanQueueRef.current.push({
+        id,
+        base64: croppedBase64,
+        dataUrl,
+        createdAt: Date.now(),
+        scanHealth: Math.max(0, Math.min(100, Math.round(scanHealth))),
+        corners: activeGeometry || null,
+      });
+      setScanQueueCount(scanQueueRef.current.length);
+      setScanQueueHint(`Captured (${scanQueueRef.current.length}). ${isOnline ? 'Grading in background.' : 'Will grade when online.'}`);
+      window.setTimeout(() => setScanQueueHint(null), 1200);
+      cooldownRef.current = true;
+      setTimeout(() => { cooldownRef.current = false; }, 900);
+    } catch (e) {
+      console.error(e);
+    }
+  }, [gradingMode, cooldownRef, showQuickPick, cameraError, selectedAssignment, captureFrame, activeGeometry, isOnline]);
 
   const finalizeMultiPage = async () => {
     if (isProcessing || showQuickPick) return;
@@ -1562,9 +1830,40 @@ const App: React.FC = () => {
     setTimeout(() => setPhase(AppPhase.FINALE), 1000);
   };
 
+  const bumpNavUsage = useCallback((key: 'plan' | 'grade' | 'teach' | 'communicate') => {
+    setNavUsage(prev => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
+  }, []);
+
   const renderAuth = () => {
     if (isSignedIn) {
       const signedInVia = accessToken ? 'Google Classroom' : 'demo mode';
+      const quickActions = [
+        {
+          key: 'grade' as const,
+          label: 'Grade student work',
+          icon: LayoutDashboard,
+          onClick: () => { bumpNavUsage('grade'); setPhase(AppPhase.DASHBOARD); },
+        },
+        {
+          key: 'teach' as const,
+          label: 'Teach class',
+          icon: Timer,
+          onClick: () => { bumpNavUsage('teach'); setPhase(AppPhase.CLASSROOM); },
+        },
+        {
+          key: 'plan' as const,
+          label: 'Plan lessons',
+          icon: Calendar,
+          onClick: () => { bumpNavUsage('plan'); setPhase(AppPhase.PLAN); },
+        },
+        {
+          key: 'communicate' as const,
+          label: 'Communicate',
+          icon: MessageCircle,
+          onClick: () => { bumpNavUsage('communicate'); setPhase(AppPhase.RECORDS); },
+        },
+      ].sort((a, b) => (navUsage[b.key] || 0) - (navUsage[a.key] || 0));
+
       return (
         <PageWrapper
           headerTitle={educatorName || 'Welcome'}
@@ -1574,42 +1873,54 @@ const App: React.FC = () => {
           setIsDarkMode={setIsDarkMode}
           syncStatus={syncStatus}
         >
-          <div className="h-full w-full flex flex-col max-w-sm mx-auto pt-2 pb-8">
-            <div className="flex-none flex flex-col items-center justify-start pt-3 pb-2">
+          <div className="h-full w-full flex flex-col max-w-sm mx-auto py-4 gap-4">
+            <div className="flex flex-col items-center gap-4">
               <img
                 src="/DoneGradingLogo.png"
                 alt="DoneGrading"
-                className="w-24 max-w-full mb-2 drop-shadow-lg"
+                className="w-40 max-w-full drop-shadow-lg"
               />
               <p className="text-center text-slate-700 dark:text-slate-200 font-semibold text-[13px]">
                 Welcome back, {educatorName || 'teacher'}.
               </p>
-              <p className="text-center text-[10px] font-bold text-slate-500 dark:text-slate-400 mt-1">
+              <p className="text-center text-[10px] font-bold text-slate-500 dark:text-slate-400">
                 You’re signed in via {signedInVia}. Use the tabs below to grade or communicate.
               </p>
             </div>
 
-            <div className="flex-none mt-3 space-y-2">
-              <button
-                type="button"
-                onClick={() => setPhase(AppPhase.DASHBOARD)}
-                className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-bold uppercase tracking-wider text-[11px] shadow-sm active:scale-[0.98] transition-all flex items-center justify-center gap-2"
-              >
-                Go to Grade workspace
-              </button>
-              <button
-                type="button"
-                onClick={() => setPhase(AppPhase.RECORDS)}
-                className="w-full py-2.5 bg-sky-500 hover:bg-sky-600 text-white rounded-xl font-bold uppercase tracking-wider text-[11px] shadow-sm active:scale-[0.98] transition-all flex items-center justify-center gap-2"
-              >
-                Open Communicate hub
-              </button>
+            <div className="flex flex-col gap-2">
+              {quickActions.map(action => {
+                const baseColor =
+                  action.key === 'grade'
+                    ? 'bg-emerald-500 hover:bg-emerald-600 text-white border-emerald-500'
+                    : action.key === 'teach'
+                      ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-500'
+                      : action.key === 'plan'
+                        ? 'bg-indigo-500 hover:bg-indigo-600 text-white border-indigo-500'
+                        : 'bg-sky-500 hover:bg-sky-600 text-white border-sky-500';
+                return (
+                  <button
+                    key={action.key}
+                    type="button"
+                    onClick={action.onClick}
+                    className={`w-full py-2.5 rounded-xl border text-[11px] font-semibold flex items-center justify-between px-3 active:scale-[0.98] transition-all ${baseColor}`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <action.icon className="w-4 h-4" />
+                      <span className="font-black uppercase tracking-[0.16em]">{action.label}</span>
+                    </div>
+                    {navUsage[action.key] ? (
+                      <span className="text-[9px] opacity-80">×{navUsage[action.key]}</span>
+                    ) : null}
+                  </button>
+                );
+              })}
               <button
                 type="button"
                 onClick={handleShareApp}
-                className="w-full py-2.5 bg-white/90 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-700 rounded-xl text-[11px] font-semibold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
+                className="mt-1 w-full py-2.5 bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-700 rounded-xl text-[11px] font-semibold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
               >
-                Share DoneGrading
+                Share DoneGrading app
               </button>
               <button
                 type="button"
@@ -1620,8 +1931,8 @@ const App: React.FC = () => {
               </button>
             </div>
 
-            <div className="flex-1 mt-3 space-y-2 pb-2 flex flex-col justify-end">
-              <div className="w-full text-[9px] text-slate-500 dark:text-slate-400 text-center mt-1 mb-2 space-y-1">
+            <div className="mt-auto pb-2">
+              <div className="w-full text-[9px] text-slate-500 dark:text-slate-400 text-center space-y-1">
                 <p>
                   <a href="http://donegrading.com/terms-of-services" target="_blank" rel="noreferrer" className="underline underline-offset-2">
                     Terms of Service
@@ -1654,18 +1965,18 @@ const App: React.FC = () => {
         setIsDarkMode={setIsDarkMode}
         syncStatus={syncStatus}
       >
-        <div className="h-full w-full flex flex-col max-w-sm mx-auto pt-2 pb-8">
-          {/* Top: logo + promise (fixed band, stable position) */}
-          <div className="flex-none flex flex-col items-center justify-start pt-3 pb-2">
+          <div className="h-full w-full flex flex-col max-w-sm mx-auto py-4 gap-4">
+          {/* Top: logo + promise */}
+          <div className="flex flex-col items-center gap-4">
             <img
               src="/DoneGradingLogo.png"
               alt="DoneGrading"
-              className="w-28 max-w-full mb-2 drop-shadow-lg"
+              className="w-40 max-w-full drop-shadow-lg"
             />
             <p className="text-center text-slate-700 dark:text-slate-200 font-semibold text-[13px]">
               Cut grading time & focus on teaching.
             </p>
-            <p className="text-center text-[10px] font-bold text-slate-500 dark:text-slate-400 mt-1">
+            <p className="text-center text-[10px] font-bold text-slate-500 dark:text-slate-400">
               30-day free trial · then $19.99/month · Cancel anytime.
             </p>
             {authError && (
@@ -1676,7 +1987,7 @@ const App: React.FC = () => {
           </div>
 
           {/* Middle: primary actions */}
-          <div className="flex-none mt-3 space-y-2">
+          <div className="flex flex-col gap-2">
             <button
               onClick={handleGoogleLogin}
               className="w-full py-3 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-slate-200 dark:border-slate-700 rounded-xl flex items-center justify-center gap-3 shadow-sm active:scale-[0.98] transition-all"
@@ -1700,7 +2011,7 @@ const App: React.FC = () => {
           </div>
 
           {/* Bottom: compact reveal for secondary options + tiny footer */}
-          <div className="flex-1 mt-3 space-y-2 pb-2 flex flex-col justify-end">
+          <div className="mt-auto space-y-2 pb-2">
             <button
               type="button"
               onClick={() => setShowMoreAuthOptions(v => !v)}
@@ -1745,7 +2056,7 @@ const App: React.FC = () => {
               </div>
             )}
 
-            <div className="w-full text-[9px] text-slate-500 dark:text-slate-400 text-center mt-1 mb-2 space-y-1">
+            <div className="w-full text-[9px] text-slate-500 dark:text-slate-400 text-center space-y-1">
               <p>
                 <a href="http://donegrading.com/terms-of-services" target="_blank" rel="noreferrer" className="underline underline-offset-2">
                   Terms of Service
@@ -1888,6 +2199,63 @@ const App: React.FC = () => {
             </div>
           </div>
 
+          {(gradeFollowUps.length > 0 || quickTodos.length > 0) && (
+            <div className="p-4 rounded-xl bg-white/90 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Mic className="w-4 h-4 text-indigo-500" />
+                  <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300">
+                    Voice inbox
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {gradeFollowUps.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400 mb-1">Grade follow‑ups</p>
+                    <div className="space-y-1.5">
+                      {gradeFollowUps.slice(0, 5).map((f) => (
+                        <div key={f.id} className="flex items-start gap-2 px-3 py-2 rounded-xl bg-slate-50/80 dark:bg-slate-800/80 border border-slate-200/80 dark:border-slate-700/80">
+                          <button
+                            type="button"
+                            onClick={() => setGradeFollowUps((prev) => prev.map(p => p.id === f.id ? { ...p, done: !p.done } : p))}
+                            className={`mt-0.5 w-4 h-4 rounded border ${f.done ? 'bg-emerald-500 border-emerald-500' : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-600'}`}
+                            title={f.done ? 'Mark not done' : 'Mark done'}
+                          />
+                          <div className="flex-1 text-[11px] text-slate-700 dark:text-slate-200">
+                            <span className={f.done ? 'line-through opacity-70' : ''}>{f.text}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {quickTodos.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400 mb-1">To‑dos / reminders</p>
+                    <div className="space-y-1.5">
+                      {quickTodos.slice(0, 5).map((t) => (
+                        <div key={t.id} className="flex items-start gap-2 px-3 py-2 rounded-xl bg-slate-50/80 dark:bg-slate-800/80 border border-slate-200/80 dark:border-slate-700/80">
+                          <button
+                            type="button"
+                            onClick={() => setQuickTodos((prev) => prev.map(p => p.id === t.id ? { ...p, done: !p.done } : p))}
+                            className={`mt-0.5 w-4 h-4 rounded border ${t.done ? 'bg-emerald-500 border-emerald-500' : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-600'}`}
+                            title={t.done ? 'Mark not done' : 'Mark done'}
+                          />
+                          <div className="flex-1 text-[11px] text-slate-700 dark:text-slate-200">
+                            <span className={t.done ? 'line-through opacity-70' : ''}>{t.text}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Summary tiles */}
           <div className="grid grid-cols-2 gap-3">
             <div className="p-3 rounded-xl bg-white/80 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col justify-between">
@@ -1942,11 +2310,48 @@ const App: React.FC = () => {
             {dashboardResults.courses.map((course, index) => (
               <div
                 key={course.id}
-                className="p-4 bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl border border-slate-200 dark:border-slate-700 rounded-xl flex items-center justify-between shadow-sm hover:border-indigo-400 hover:-translate-y-0.5 transition-all"
+                draggable
+                onDragStart={() => setDragCourseId(course.id)}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (!dragCourseId || dragCourseId === course.id) return;
+                  setDashboardSort('manual');
+                  setCourses(prev => {
+                    const next = [...prev];
+                    const from = next.findIndex(c => c.id === dragCourseId);
+                    const to = next.findIndex(c => c.id === course.id);
+                    if (from === -1 || to === -1) return prev;
+                    const [item] = next.splice(from, 1);
+                    next.splice(to, 0, item);
+                    return next;
+                  });
+                  setDragCourseId(null);
+                }}
+                className={`p-4 bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl border rounded-xl flex items-center justify-between shadow-sm hover:-translate-y-0.5 transition-all ${
+                  dragCourseId === course.id ? 'border-indigo-400 ring-2 ring-indigo-300' : 'border-slate-200 dark:border-slate-700 hover:border-indigo-400'
+                }`}
               >
                 <button
                   type="button"
                   onClick={() => selectCourse(course)}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    const name = window.prompt('Rename course', course.name);
+                    if (!name || !name.trim()) return;
+                    if (classroom && isOnline && course.source !== 'local') {
+                      classroom.updateCourse(course.id, name.trim(), course.period)
+                        .then((updated) => {
+                          setCourses(prev => prev.map(c => c.id === course.id ? { ...c, ...updated } : c));
+                        })
+                        .catch(err => {
+                          console.error('Failed to rename course', err);
+                          setAuthError('Could not rename course in Google Classroom.');
+                        });
+                    } else {
+                      setCourses(prev => prev.map(c => c.id === course.id ? { ...c, name: name.trim() } : c));
+                    }
+                  }}
                   className="flex items-center gap-4 flex-1 text-left"
                 >
                   <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-xl flex items-center justify-center text-white">
@@ -1965,84 +2370,36 @@ const App: React.FC = () => {
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      const action = window.prompt(
-                        'Course options:\n- Type "rename" to rename\n- Type "up" or "down" to reorder\n- Type "delete" to remove the course',
-                        'rename'
-                      );
-                      if (!action) return;
-                      const cmd = action.trim().toLowerCase();
-
-                      if (cmd === 'rename') {
-                        const name = window.prompt('Rename course', course.name);
-                        if (!name || !name.trim()) return;
-                        if (classroom && isOnline && course.source !== 'local') {
-                          classroom.updateCourse(course.id, name.trim(), course.period)
-                            .then((updated) => {
-                              setCourses(prev => prev.map(c => c.id === course.id ? { ...c, ...updated } : c));
-                            })
-                            .catch(err => {
-                              console.error('Failed to rename course', err);
-                              setAuthError('Could not rename course in Google Classroom.');
-                            });
-                        } else {
-                          setCourses(prev => prev.map(c => c.id === course.id ? { ...c, name: name.trim() } : c));
-                        }
-                      } else if (cmd === 'up') {
-                        if (index === 0) return;
-                        setDashboardSort('manual');
-                        setCourses(prev => {
-                          const copy = [...prev];
-                          const from = copy.findIndex(c => c.id === course.id);
-                          if (from <= 0) return prev;
-                          const to = from - 1;
-                          const [item] = copy.splice(from, 1);
-                          copy.splice(to, 0, item);
-                          return copy;
-                        });
-                      } else if (cmd === 'down') {
-                        if (index === dashboardResults.courses.length - 1) return;
-                        setDashboardSort('manual');
-                        setCourses(prev => {
-                          const copy = [...prev];
-                          const from = copy.findIndex(c => c.id === course.id);
-                          if (from === -1 || from === copy.length - 1) return prev;
-                          const to = from + 1;
-                          const [item] = copy.splice(from, 1);
-                          copy.splice(to, 0, item);
-                          return copy;
-                        });
-                      } else if (cmd === 'delete') {
-                        if (!window.confirm('Delete this course? This will also remove it from Google Classroom if it is synced.')) return;
-                        if (classroom && isOnline && course.source !== 'local') {
-                          classroom.deleteCourse(course.id)
-                            .then(() => {
-                              setCourses(prev => prev.filter(c => c.id !== course.id));
-                              if (selectedCourse?.id === course.id) {
-                                setSelectedCourse(null);
-                                setAssignments([]);
-                                setStudents([]);
-                                setPhase(AppPhase.DASHBOARD);
-                              }
-                            })
-                            .catch(err => {
-                              console.error('Failed to delete course', err);
-                              setAuthError('Could not delete course in Google Classroom.');
-                            });
-                        } else {
-                          setCourses(prev => prev.filter(c => c.id !== course.id));
-                          if (selectedCourse?.id === course.id) {
-                            setSelectedCourse(null);
-                            setAssignments([]);
-                            setStudents([]);
-                            setPhase(AppPhase.DASHBOARD);
-                          }
+                      if (!window.confirm('Delete this course? This will also remove it from Google Classroom if it is synced.')) return;
+                      if (classroom && isOnline && course.source !== 'local') {
+                        classroom.deleteCourse(course.id)
+                          .then(() => {
+                            setCourses(prev => prev.filter(c => c.id !== course.id));
+                            if (selectedCourse?.id === course.id) {
+                              setSelectedCourse(null);
+                              setAssignments([]);
+                              setStudents([]);
+                              setPhase(AppPhase.DASHBOARD);
+                            }
+                          })
+                          .catch(err => {
+                            console.error('Failed to delete course', err);
+                            setAuthError('Could not delete course in Google Classroom.');
+                          });
+                      } else {
+                        setCourses(prev => prev.filter(c => c.id !== course.id));
+                        if (selectedCourse?.id === course.id) {
+                          setSelectedCourse(null);
+                          setAssignments([]);
+                          setStudents([]);
+                          setPhase(AppPhase.DASHBOARD);
                         }
                       }
                     }}
-                    className="p-1.5 rounded-full bg-white/60 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-slate-500 hover:bg-indigo-50 hover:text-indigo-600 transition-colors"
-                    title="Course settings"
+                    className="p-1.5 rounded-full bg-white/60 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-rose-500 hover:bg-rose-50 hover:text-rose-600 transition-colors"
+                    title="Delete course"
                   >
-                    <Settings className="w-4 h-4" />
+                    <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
               </div>
@@ -2099,14 +2456,52 @@ const App: React.FC = () => {
       }}
     >
        <div className="h-full overflow-y-auto flex flex-col gap-4 custom-scrollbar">
-          {filteredAssignmentsList.map((assignment, index) => (
+         {filteredAssignmentsList.map((assignment, index) => (
             <div
               key={assignment.id}
-              className="p-4 bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl border border-slate-200 dark:border-slate-700 rounded-xl flex items-center justify-between shadow-sm hover:border-emerald-400 hover:-translate-y-0.5 transition-all"
+              draggable
+              onDragStart={() => setDragAssignmentId(assignment.id)}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (!dragAssignmentId || dragAssignmentId === assignment.id) return;
+                setAssignmentSort('manual');
+                setAssignments(prev => {
+                  const next = [...prev];
+                  const from = next.findIndex(a => a.id === dragAssignmentId);
+                  const to = next.findIndex(a => a.id === assignment.id);
+                  if (from === -1 || to === -1) return prev;
+                  const [item] = next.splice(from, 1);
+                  next.splice(to, 0, item);
+                  return next;
+                });
+                setDragAssignmentId(null);
+              }}
+              className={`p-4 bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl border rounded-xl flex items-center justify-between shadow-sm hover:-translate-y-0.5 transition-all ${
+                dragAssignmentId === assignment.id ? 'border-emerald-400 ring-2 ring-emerald-300' : 'border-slate-200 dark:border-slate-700 hover:border-emerald-400'
+              }`}
             >
                <button
                  type="button"
                  onClick={() => { setSelectedAssignment(assignment); setPhase(AppPhase.RUBRIC_SETUP); }}
+                 onDoubleClick={(e) => {
+                   e.stopPropagation();
+                   if (!selectedCourse) return;
+                   const title = window.prompt('Rename assignment', assignment.title);
+                   if (!title || !title.trim()) return;
+                   if (classroom && isOnline && selectedCourse.source !== 'local') {
+                     classroom.updateAssignment(selectedCourse.id, assignment.id, title.trim())
+                       .then((updated) => {
+                         setAssignments(prev => prev.map(a => a.id === assignment.id ? { ...a, ...updated } : a));
+                       })
+                       .catch(err => {
+                         console.error('Failed to rename assignment', err);
+                         setAuthError('Could not rename assignment in Google Classroom.');
+                       });
+                   } else {
+                     setAssignments(prev => prev.map(a => a.id === assignment.id ? { ...a, title: title.trim() } : a));
+                   }
+                 }}
                  className="flex items-center gap-4 flex-1 text-left"
                >
                  <div className="w-10 h-10 bg-slate-100 dark:bg-slate-700 rounded-xl flex items-center justify-center text-slate-500 dark:text-slate-400">
@@ -2124,78 +2519,30 @@ const App: React.FC = () => {
                    onClick={(e) => {
                      e.stopPropagation();
                      if (!selectedCourse) return;
-                     const action = window.prompt(
-                       'Assignment options:\n- Type "rename" to rename\n- Type "up" or "down" to reorder\n- Type "delete" to remove the assignment',
-                       'rename'
-                     );
-                     if (!action) return;
-                     const cmd = action.trim().toLowerCase();
-
-                     if (cmd === 'rename') {
-                       const title = window.prompt('Rename assignment', assignment.title);
-                       if (!title || !title.trim()) return;
-                       if (classroom && isOnline && selectedCourse.source !== 'local') {
-                         classroom.updateAssignment(selectedCourse.id, assignment.id, title.trim())
-                           .then((updated) => {
-                             setAssignments(prev => prev.map(a => a.id === assignment.id ? { ...a, ...updated } : a));
-                           })
-                           .catch(err => {
-                             console.error('Failed to rename assignment', err);
-                             setAuthError('Could not rename assignment in Google Classroom.');
-                           });
-                       } else {
-                         setAssignments(prev => prev.map(a => a.id === assignment.id ? { ...a, title: title.trim() } : a));
-                       }
-                     } else if (cmd === 'up') {
-                       if (index === 0) return;
-                       setAssignmentSort('manual');
-                       setAssignments(prev => {
-                         const copy = [...prev];
-                         const from = copy.findIndex(a => a.id === assignment.id);
-                         if (from <= 0) return prev;
-                         const to = from - 1;
-                         const [item] = copy.splice(from, 1);
-                         copy.splice(to, 0, item);
-                         return copy;
-                       });
-                     } else if (cmd === 'down') {
-                       if (index === filteredAssignmentsList.length - 1) return;
-                       setAssignmentSort('manual');
-                       setAssignments(prev => {
-                         const copy = [...prev];
-                         const from = copy.findIndex(a => a.id === assignment.id);
-                         if (from === -1 || from === copy.length - 1) return prev;
-                         const to = from + 1;
-                         const [item] = copy.splice(from, 1);
-                         copy.splice(to, 0, item);
-                         return copy;
-                       });
-                     } else if (cmd === 'delete') {
-                       if (!window.confirm('Delete this assignment? This will also remove it from Google Classroom if it is synced.')) return;
-                       if (classroom && isOnline && selectedCourse.source !== 'local') {
-                         classroom.deleteAssignment(selectedCourse.id, assignment.id)
-                           .then(() => {
-                             setAssignments(prev => prev.filter(a => a.id !== assignment.id));
-                             if (selectedAssignment?.id === assignment.id) {
-                               setSelectedAssignment(null);
-                             }
-                           })
-                           .catch(err => {
-                             console.error('Failed to delete assignment', err);
-                             setAuthError('Could not delete assignment in Google Classroom.');
-                           });
-                       } else {
-                         setAssignments(prev => prev.filter(a => a.id !== assignment.id));
-                         if (selectedAssignment?.id === assignment.id) {
-                           setSelectedAssignment(null);
-                         }
+                     if (!window.confirm('Delete this assignment? This will also remove it from Google Classroom if it is synced.')) return;
+                     if (classroom && isOnline && selectedCourse.source !== 'local') {
+                       classroom.deleteAssignment(selectedCourse.id, assignment.id)
+                         .then(() => {
+                           setAssignments(prev => prev.filter(a => a.id !== assignment.id));
+                           if (selectedAssignment?.id === assignment.id) {
+                             setSelectedAssignment(null);
+                           }
+                         })
+                         .catch(err => {
+                           console.error('Failed to delete assignment', err);
+                           setAuthError('Could not delete assignment in Google Classroom.');
+                         });
+                     } else {
+                       setAssignments(prev => prev.filter(a => a.id !== assignment.id));
+                       if (selectedAssignment?.id === assignment.id) {
+                         setSelectedAssignment(null);
                        }
                      }
                    }}
-                   className="p-1.5 rounded-full bg-white/60 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-slate-500 hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
-                   title="Assignment settings"
+                   className="p-1.5 rounded-full bg-white/60 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-rose-500 hover:bg-rose-50 hover:text-rose-600 transition-colors"
+                   title="Delete assignment"
                  >
-                   <Settings className="w-4 h-4" />
+                   <Trash2 className="w-4 h-4" />
                  </button>
                </div>
             </div>
@@ -2485,11 +2832,57 @@ const App: React.FC = () => {
               </div>
             </div>
 
+            <div className="absolute top-4 left-4 z-40 flex flex-col gap-2 pointer-events-auto">
+              <div className="px-3 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-white text-[9px] font-black uppercase tracking-widest">
+                Health · {Math.max(0, Math.min(100, Math.round(scanHealth)))}%
+              </div>
+              {(scanQueueCount > 0 || scanReviewQueueCount > 0) && (
+                <div className="flex items-center gap-2">
+                  {scanQueueCount > 0 && (
+                    <div className="px-3 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-white text-[9px] font-black uppercase tracking-widest">
+                      Queue · {scanQueueCount}
+                    </div>
+                  )}
+                  {scanReviewQueueCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={openNextQueuedReview}
+                      className="px-3 py-1.5 rounded-full bg-emerald-500/25 hover:bg-emerald-500/35 backdrop-blur-md border border-emerald-400/40 text-emerald-100 text-[9px] font-black uppercase tracking-widest transition-all"
+                      title="Review next graded scan"
+                    >
+                      Review · {scanReviewQueueCount}
+                    </button>
+                  )}
+                </div>
+              )}
+              {scanQueueHint && (
+                <div className="px-3 py-2 rounded-xl bg-black/70 backdrop-blur-md border border-white/20 text-white text-[10px] font-semibold shadow-lg max-w-[220px]">
+                  {scanQueueHint}
+                </div>
+              )}
+              {!isOnline && scanQueueCount > 0 && (
+                <div className="px-3 py-2 rounded-xl bg-amber-500/20 backdrop-blur-md border border-amber-400/30 text-amber-100 text-[10px] font-semibold shadow-lg max-w-[220px]">
+                  Offline — queued scans will grade when you’re back online (keep app open).
+                </div>
+              )}
+            </div>
+
             <div className="relative z-40 flex items-center justify-center gap-6 mb-6 mt-auto pb-4">
               <div className="bg-black/50 backdrop-blur-xl p-2 rounded-full flex gap-3 items-center shadow-lg border border-white/20">
                  <button onClick={toggleFlash} className={`p-4 rounded-full border-2 transition-all ${isFlashOn ? 'bg-yellow-400 text-black border-transparent shadow-[0_0_20px_rgba(250,204,21,0.6)]' : 'bg-white/10 text-white border-white/30 hover:bg-white/20'}`} title="Toggle Flash">
                    <Zap className="w-6 h-6" />
                  </button>
+
+                 {gradingMode === GradingMode.SINGLE_PAGE && (
+                   <button
+                     type="button"
+                     onClick={() => void handleManualCaptureSinglePage()}
+                     className="w-16 h-16 rounded-full border-[4px] border-emerald-400 bg-emerald-500/20 hover:bg-emerald-500/30 active:scale-95 flex items-center justify-center transition-all shadow-[0_0_30px_rgba(52,211,153,0.25)] backdrop-blur-md"
+                     title="Capture now"
+                   >
+                     <Camera className="w-7 h-7 text-emerald-200" />
+                   </button>
+                 )}
 
                  {gradingMode === GradingMode.MULTI_PAGE && (
                    <>
@@ -2747,6 +3140,182 @@ const App: React.FC = () => {
         : `Saved ${planLastSaved.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 
     const effectiveTopic = lessonTopic || planLessonTitle || 'Your lesson topic';
+    const handleSavePlanNow = () => {
+      try {
+        const payload = {
+          lessonTopic,
+          lessonTitle: planLessonTitle,
+          unit: planUnit,
+          version: planVersion,
+          state: planStateRegion,
+          grade: planGrade,
+          subject: planSubject,
+          duration: planDuration,
+          standardsQuery,
+          pinnedStandards,
+          classProfile,
+          hookType,
+          hookContent,
+          directPoints,
+          cfuIdeas,
+          guidedTemplate,
+          guidedNotes,
+          independentNotes,
+          resourceQuery,
+          exitTicketPrompt,
+          exitTicketQuestions,
+          successCriteria,
+          reflectionNote,
+        };
+        localStorage.setItem(PLAN_STATE_KEY, JSON.stringify(payload));
+        localStorage.setItem(PLAN_US_STATE_KEY, planStateRegion);
+        setPlanLastSaved(new Date());
+      } catch {
+        // ignore
+      }
+    };
+    const buildPlanText = () => {
+      const standards = pinnedStandards.map((s) => `${s.code}: ${s.label}`).join('\n');
+      const vocab = lessonResult?.vocabulary?.join(', ') || '';
+      const discussion = lessonResult?.discussionQuestions?.map((q, i) => `${i + 1}. ${q}`).join('\n') || cfuIdeas;
+      return [
+        `Lesson: ${planLessonTitle || lessonTopic || 'Untitled Lesson'}`,
+        `State: ${planStateRegion}`,
+        `Grade: ${planGrade}`,
+        `Subject: ${planSubject}`,
+        `Duration: ${planDuration} mins`,
+        '',
+        'Standards',
+        standards || standardsQuery || 'N/A',
+        '',
+        'Direct Instruction',
+        directPoints || 'N/A',
+        '',
+        'Guided Practice',
+        guidedNotes || 'N/A',
+        '',
+        'Independent Practice',
+        independentNotes || 'N/A',
+        '',
+        'Resources',
+        resourceCards.map((c) => `- ${c.title} (${c.source}) ${c.url}`).join('\n') || resourceQuery || 'N/A',
+        '',
+        'Assessment',
+        `Exit ticket prompt: ${exitTicketPrompt || 'N/A'}`,
+        exitTicketQuestions.length ? `Questions:\n${exitTicketQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}` : '',
+        successCriteria.length ? `Success criteria:\n${successCriteria.map((s, i) => `${i + 1}. ${s}`).join('\n')}` : '',
+        '',
+        'Vocabulary',
+        vocab || 'N/A',
+        '',
+        'Discussion / CFU',
+        discussion || 'N/A',
+        '',
+        `Created by DoneGrading`,
+      ].filter(Boolean).join('\n');
+    };
+    const handleEmailPlan = () => {
+      const subject = encodeURIComponent(`Lesson Plan: ${planLessonTitle || 'Lesson'}`);
+      const body = encodeURIComponent(`${buildPlanText()}\n\nCreated by DoneGrading`);
+      window.location.href = `mailto:?subject=${subject}&body=${body}`;
+    };
+    const handleSharePlan = async () => {
+      const title = `Lesson Plan: ${planLessonTitle || 'Lesson'}`;
+      const text = buildPlanText();
+      try {
+        setPlanActionLoading('share');
+        if ((navigator as any).share) {
+          await (navigator as any).share({ title, text });
+        } else {
+          await navigator.clipboard.writeText(text);
+          setPlanActionMessage('Lesson plan copied to clipboard.');
+        }
+      } catch {
+        setPlanActionMessage('Could not share right now.');
+      } finally {
+        setPlanActionLoading(null);
+      }
+    };
+    const buildFallbackLesson = (topic: string): LessonScriptResult => ({
+      outline: `1) Warm-up: Activate prior knowledge about ${topic}.\n2) Teach core concept with a short model and examples.\n3) Guided practice with think-pair-share checks.\n4) Independent task applying the concept.\n5) Exit ticket to verify mastery.`,
+      vocabulary: [topic.split(' ')[0] || 'concept', 'evidence', 'analyze', 'apply', 'explain'],
+      discussionQuestions: [
+        `How would you explain ${topic} in your own words?`,
+        `What is one example of ${topic} in real life?`,
+        `What part of ${topic} still feels confusing?`,
+      ],
+    });
+    const handlePlanActionSelect = async (action: string) => {
+      if (action === 'save') {
+        handleSavePlanNow();
+        setPlanActionMessage('Lesson plan saved.');
+        return;
+      }
+      if (action === 'print') {
+        window.print();
+        return;
+      }
+      if (action === 'email') {
+        handleEmailPlan();
+        return;
+      }
+      if (action === 'share') {
+        await handleSharePlan();
+      }
+    };
+    const handleGeneratePlan = async () => {
+      const topic = (lessonTopic || planLessonTitle || `${planSubject} lesson for grade ${planGrade}`).trim();
+      if (!topic) {
+        setPlanAiError('Add a lesson title or topic first.');
+        return;
+      }
+      setPlanAiError(null);
+      setLessonLoading(true);
+      try {
+        let timedOut = false;
+        const timeoutPromise = new Promise<null>((resolve) => {
+          window.setTimeout(() => {
+            timedOut = true;
+            resolve(null);
+          }, 20000);
+        });
+        const res = await Promise.race([generateLessonScript(topic), timeoutPromise]);
+        if (timedOut) {
+          const fallback = buildFallbackLesson(topic);
+          setLessonResult(fallback);
+          setDirectPoints(fallback.outline);
+          setCfuIdeas(fallback.discussionQuestions.join('\n'));
+          setPlanAiError(null);
+          setPlanActionMessage('AI timed out. Generated a template draft instead.');
+          return;
+        }
+        const finalRes = res || buildFallbackLesson(topic);
+        setLessonResult(finalRes);
+        setDirectPoints(finalRes.outline);
+        setCfuIdeas(finalRes.discussionQuestions.join('\n'));
+        if (!res) {
+          setPlanActionMessage('AI unavailable. Generated a template draft instead.');
+        }
+        if (!exitTicketQuestions.length) {
+          setExitTicketQuestions(finalRes.discussionQuestions.slice(0, 3));
+        }
+        if (!successCriteria.length && finalRes.vocabulary.length > 0) {
+          setSuccessCriteria([
+            `Use at least 2 key terms correctly (${finalRes.vocabulary.slice(0, 2).join(', ')}).`,
+            'Explain the objective in your own words.',
+          ]);
+        }
+      } catch {
+        const fallback = buildFallbackLesson(topic);
+        setLessonResult(fallback);
+        setDirectPoints(fallback.outline);
+        setCfuIdeas(fallback.discussionQuestions.join('\n'));
+        setPlanAiError(null);
+        setPlanActionMessage('AI failed unexpectedly. Generated a template draft instead.');
+      } finally {
+        setLessonLoading(false);
+      }
+    };
 
     return (
       <PageWrapper
@@ -2758,35 +3327,80 @@ const App: React.FC = () => {
         syncStatus={syncStatus}
       >
         <div className="h-full flex flex-col min-h-0 overflow-hidden">
+          <style>{`
+            @media print {
+              @page {
+                margin: 12mm 10mm 16mm 10mm;
+              }
+              .plan-no-print { display: none !important; }
+              .plan-print-plain {
+                background: white !important;
+                color: black !important;
+                border: none !important;
+                box-shadow: none !important;
+              }
+              .plan-print-plain * {
+                background: transparent !important;
+                color: black !important;
+                border-color: #d1d5db !important;
+                box-shadow: none !important;
+              }
+              .plan-print-plain input,
+              .plan-print-plain select,
+              .plan-print-plain textarea {
+                border: none !important;
+                padding: 0 !important;
+                min-height: auto !important;
+              }
+              .plan-print-footer {
+                position: fixed;
+                left: 0;
+                right: 0;
+                bottom: 4mm;
+                display: flex !important;
+                align-items: center;
+                justify-content: center;
+                gap: 6px;
+                font-size: 9px;
+                color: #6b7280 !important;
+                z-index: 9999;
+              }
+              .plan-print-footer img {
+                width: 34px;
+                height: 34px;
+              }
+            }
+            .plan-print-footer { display: none; }
+          `}</style>
           {/* Compact header + tab bar: no scroll on Plan screen */}
-          <div className="flex-none flex flex-col gap-1.5 -mx-4 px-4 pt-0 pb-1.5 bg-white/95 dark:bg-slate-950/95 border-b border-slate-200/80 dark:border-slate-700/80">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <div className="flex items-center gap-1 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
-                <span>My Lessons</span>
-                <ChevronRight className="w-3 h-3 opacity-60" />
-                <span className="truncate max-w-[100px]">{planUnit}</span>
-                <ChevronRight className="w-3 h-3 opacity-60" />
-                <input
-                  value={planLessonTitle}
-                  onChange={(e) => setPlanLessonTitle(e.target.value)}
-                  placeholder="Lesson title"
-                  className="px-2 py-0.5 rounded-md bg-white/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 text-[10px] font-semibold text-slate-700 dark:text-slate-100 w-24 min-w-0"
-                />
-              </div>
-              <div className="flex items-center gap-1.5">
-                <select
-                  value={planVersion}
-                  onChange={(e) => setPlanVersion(e.target.value as PlanVersion)}
-                  className="px-1.5 py-0.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[9px] font-semibold text-slate-700 dark:text-slate-100"
-                >
-                  <option value="Standard">Standard</option>
-                  <option value="Sub Plan">Sub Plan</option>
-                  <option value="Period 2 (Advanced)">Period 2 (Advanced)</option>
-                </select>
-                <span className="text-[8px] text-slate-400">{lastSavedLabel}</span>
-                <button type="button" onClick={() => window.print()} className="p-1 rounded border border-slate-200 dark:border-slate-700" title="Print"><Printer className="w-3 h-3" /></button>
-                <button type="button" onClick={() => { const url = 'https://donegrading.com/lessons/preview'; const subject = encodeURIComponent(`View: ${planLessonTitle || 'Lesson'}`); const body = encodeURIComponent(`Link: ${url}\n— ${educatorName || 'Teacher'}`); window.location.href = `mailto:?subject=${subject}&body=${body}`; }} className="p-1 rounded border border-slate-200 dark:border-slate-700" title="Share"><Share2 className="w-3 h-3" /></button>
-              </div>
+          <div className="plan-no-print flex-none flex flex-col gap-1.5 -mx-4 px-4 pt-0 pb-1.5 bg-white/95 dark:bg-slate-950/95 border-b border-slate-200/80 dark:border-slate-700/80">
+            <div className="grid grid-cols-2 gap-1">
+              <button
+                type="button"
+                onClick={() => void handleGeneratePlan()}
+                disabled={lessonLoading}
+                className="flex-1 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider bg-indigo-600 text-white disabled:opacity-50 flex items-center justify-center gap-1"
+              >
+                {lessonLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                {lessonLoading ? 'Generating…' : 'Generate'}
+              </button>
+              <select
+                className="flex-1 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700"
+                defaultValue=""
+                disabled={planActionLoading === 'share'}
+                onChange={(e) => {
+                  const action = e.target.value;
+                  e.target.value = '';
+                  if (!action) return;
+                  void handlePlanActionSelect(action);
+                }}
+              >
+                <option value="">Actions</option>
+                <option value="save">Save</option>
+                <option value="print">Print</option>
+                <option value="email">Email</option>
+                <option value="share">{planActionLoading === 'share' ? 'Sharing…' : 'Share'}</option>
+              </select>
             </div>
             <div className="flex gap-1">
               {(['context', 'blocks', 'resources', 'assessment'] as const).map((tab) => (
@@ -2796,10 +3410,21 @@ const App: React.FC = () => {
                   onClick={() => setPlanTab(tab)}
                   className={`flex-1 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider ${planTab === tab ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'}`}
                 >
-                  {tab === 'context' ? 'Context' : tab === 'blocks' ? 'Blocks' : tab === 'resources' ? 'Resources' : 'Assessment'}
+                  {tab === 'context' ? '1 Standards' : tab === 'blocks' ? '2 Instruction' : tab === 'resources' ? '3 Resources' : '4 Assessment'}
                 </button>
               ))}
             </div>
+            <p className="text-[8px] text-slate-400 text-center">{lastSavedLabel}</p>
+            {planAiError && (
+              <p className="text-[9px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded px-2 py-1">
+                {planAiError}
+              </p>
+            )}
+            {planActionMessage && (
+              <p className="text-[9px] text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded px-2 py-1">
+                {planActionMessage}
+              </p>
+            )}
           </div>
 
           {/* Single panel: only active tab content, no page scroll */}
@@ -2807,11 +3432,81 @@ const App: React.FC = () => {
             {planTab === 'context' && (
             <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2 space-y-2">
             <aside className="space-y-2">
+              <section className="plan-print-plain bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-3 space-y-1">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-700 dark:text-indigo-200">
+                  State compliance checkpoint
+                </p>
+                <p className="text-[10px] text-slate-700 dark:text-slate-200">
+                  {planStateRegion === 'National'
+                    ? 'Using national template: objective, standards, differentiation, formative checks, and assessment evidence.'
+                    : `Using ${planStateRegion} alignment workflow: standards mapping, objective language, differentiation plan, accommodations, and evidence of mastery.`}
+                </p>
+              </section>
               <section className="bg-white/85 dark:bg-slate-900/85 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
                 <p className={sectionTitle}>
                   Context & Constraints
                 </p>
                 <div className="grid grid-cols-3 gap-2 text-[10px]">
+                  <div className="flex flex-col gap-1 col-span-3">
+                    <label className={label}>State (standards)</label>
+                    <select
+                      value={planStateRegion}
+                      onChange={(e) => setPlanStateRegion(e.target.value)}
+                      className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80"
+                    >
+                      <option value="National">National / General</option>
+                      <option value="AL">Alabama</option>
+                      <option value="AK">Alaska</option>
+                      <option value="AZ">Arizona</option>
+                      <option value="AR">Arkansas</option>
+                      <option value="CA">California</option>
+                      <option value="CO">Colorado</option>
+                      <option value="CT">Connecticut</option>
+                      <option value="DE">Delaware</option>
+                      <option value="FL">Florida</option>
+                      <option value="GA">Georgia</option>
+                      <option value="HI">Hawaii</option>
+                      <option value="ID">Idaho</option>
+                      <option value="IL">Illinois</option>
+                      <option value="IN">Indiana</option>
+                      <option value="IA">Iowa</option>
+                      <option value="KS">Kansas</option>
+                      <option value="KY">Kentucky</option>
+                      <option value="LA">Louisiana</option>
+                      <option value="ME">Maine</option>
+                      <option value="MD">Maryland</option>
+                      <option value="MA">Massachusetts</option>
+                      <option value="MI">Michigan</option>
+                      <option value="MN">Minnesota</option>
+                      <option value="MS">Mississippi</option>
+                      <option value="MO">Missouri</option>
+                      <option value="MT">Montana</option>
+                      <option value="NE">Nebraska</option>
+                      <option value="NV">Nevada</option>
+                      <option value="NH">New Hampshire</option>
+                      <option value="NJ">New Jersey</option>
+                      <option value="NM">New Mexico</option>
+                      <option value="NY">New York</option>
+                      <option value="NC">North Carolina</option>
+                      <option value="ND">North Dakota</option>
+                      <option value="OH">Ohio</option>
+                      <option value="OK">Oklahoma</option>
+                      <option value="OR">Oregon</option>
+                      <option value="PA">Pennsylvania</option>
+                      <option value="RI">Rhode Island</option>
+                      <option value="SC">South Carolina</option>
+                      <option value="SD">South Dakota</option>
+                      <option value="TN">Tennessee</option>
+                      <option value="TX">Texas</option>
+                      <option value="UT">Utah</option>
+                      <option value="VT">Vermont</option>
+                      <option value="VA">Virginia</option>
+                      <option value="WA">Washington</option>
+                      <option value="WV">West Virginia</option>
+                      <option value="WI">Wisconsin</option>
+                      <option value="WY">Wyoming</option>
+                    </select>
+                  </div>
                   <div className="flex flex-col gap-1">
                     <label className={label}>Grade</label>
                     <input
@@ -2954,6 +3649,11 @@ const App: React.FC = () => {
 
             {planTab === 'blocks' && (
             <div className="flex-1 min-h-0 overflow-hidden flex flex-col p-2">
+              <section className="plan-print-plain mb-2 bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-2">
+                <p className="text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
+                  Instruction design sequence: Hook → Direct instruction → Guided practice → Independent transfer.
+                </p>
+              </section>
               <div className="flex gap-1 mb-2">
                 {(['A', 'B', 'C', 'D'] as const).map((b) => (
                   <button key={b} type="button" onClick={() => setPlanBlockTab(b)} className={`flex-1 py-1 rounded-lg text-[9px] font-bold ${planBlockTab === b ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'}`}>{b}</button>
@@ -3076,22 +3776,12 @@ const App: React.FC = () => {
                     <div className="flex items-center gap-1">
                       <button
                         type="button"
-                        onClick={async () => {
-                          if (!effectiveTopic.trim()) return;
-                          setLessonLoading(true);
-                          const res = await generateLessonScript(effectiveTopic.trim());
-                          setLessonLoading(false);
-                          if (res) {
-                            setLessonResult(res);
-                            setDirectPoints(res.outline);
-                            setCfuIdeas(res.discussionQuestions.join('\n'));
-                            if (res.outline) setDifferentiationText(res.outline);
-                          }
-                        }}
+                        onClick={() => void handleGeneratePlan()}
+                        disabled={lessonLoading}
                         className="p-1.5 rounded-full text-[10px] text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50/80 dark:hover:bg-indigo-900/30"
                         title="AI Regenerate"
                       >
-                        <Sparkles className="w-3 h-3" />
+                        {lessonLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
                       </button>
                       <button
                         type="button"
@@ -3267,6 +3957,11 @@ const App: React.FC = () => {
             {planTab === 'resources' && (
             <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2">
             <aside className="w-full space-y-3">
+              <section className="plan-print-plain bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-3">
+                <p className="text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
+                  Resource compliance: include accessible text, multimodal materials, and differentiation artifacts tied to selected standards.
+                </p>
+              </section>
               <section className="bg-white/85 dark:bg-slate-900/85 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
                 <p className={sectionTitle}>
                   Resources
@@ -3481,6 +4176,11 @@ const App: React.FC = () => {
 
             {planTab === 'assessment' && (
             <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2">
+          <section className="plan-print-plain bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-3 mb-2">
+            <p className="text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
+              Assessment compliance: align exit ticket + success criteria to objective and preserve evidence of mastery for documentation.
+            </p>
+          </section>
           <section className="bg-white/90 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-3">
             <div className="flex flex-col md:flex-row md:items-start gap-3">
               <div className="flex-1 space-y-1.5">
@@ -3576,6 +4276,13 @@ const App: React.FC = () => {
           </section>
             </div>
             )}
+          </div>
+          <div className="plan-print-footer">
+            <span>Created using the DoneGrading app</span>
+            <img
+              src="https://api.qrserver.com/v1/create-qr-code/?size=68x68&data=https%3A%2F%2Fdonegrading.com%2F"
+              alt="DoneGrading QR"
+            />
           </div>
         </div>
       </PageWrapper>
@@ -3787,6 +4494,13 @@ const App: React.FC = () => {
             <button type="button" onClick={() => { setTimerRunning(false); setTimerSeconds(0); }} className="py-1.5 px-3 rounded-xl border border-slate-300 dark:border-slate-600 text-xs font-semibold text-slate-700 dark:text-slate-200">
               Reset
             </button>
+            <button
+              type="button"
+              onClick={() => void toggleFullscreen()}
+              className="py-1.5 px-3 rounded-xl bg-indigo-600 text-white text-xs font-semibold"
+            >
+              {isFullscreen ? "Exit full screen" : "Full screen"}
+            </button>
           </div>
         </div>
 
@@ -3853,7 +4567,15 @@ const App: React.FC = () => {
   );
 
   return (
-    <div className="min-h-screen font-sans text-slate-800 dark:text-slate-200 selection:bg-indigo-500/30 overflow-hidden relative gradient-animate">
+    <>
+      <style>{`
+        @media print {
+          .fixed.bottom-3 {
+            display: none !important;
+          }
+        }
+      `}</style>
+      <div className="min-h-screen font-sans text-slate-800 dark:text-slate-200 selection:bg-indigo-500/30 overflow-hidden relative gradient-animate">
 
       {(!isOnline && !isOfflineBannerDismissed) && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] animate-in slide-in-from-top duration-500 w-[90%] max-w-sm">
@@ -3902,14 +4624,87 @@ const App: React.FC = () => {
           setIsDarkMode={setIsDarkMode}
           syncStatus={syncStatus}
         >
-          <CommunicationDashboard educatorName={educatorName} />
+          <CommunicationDashboard educatorName={educatorName} courses={courses} classroom={classroom} students={students} accessToken={accessToken} isDemoMode={isDemoSignedIn && !accessToken} />
         </PageWrapper>
+      )}
+
+      {showVoiceCapture && (
+        <div className="fixed inset-0 z-[95] bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-2xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex flex-col">
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300">Voice capture</p>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                  Route: <span className="font-semibold">{voiceRoute === 'plan' ? 'Plan note' : voiceRoute === 'communicate' ? 'Communicate draft' : voiceRoute === 'todo' ? 'To‑do' : voiceRoute === 'reminder' ? 'Reminder' : 'Grade follow‑up'}</span>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setShowVoiceCapture(false); setVoiceDraft(''); }}
+                className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-[11px] font-semibold"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="relative">
+              <textarea
+                value={voiceDraft}
+                onChange={(e) => setVoiceDraft(e.target.value)}
+                placeholder="Tap the mic, then speak. We'll transcribe it here."
+                className="w-full min-h-[120px] text-[13px] px-3 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar pr-12"
+              />
+              <VoiceInputButton
+                onResult={(text) => setVoiceDraft((prev) => (prev ? `${prev} ` : '') + text)}
+                className="absolute right-2 bottom-2"
+              />
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button type="button" onClick={() => setVoiceRoute('plan')} className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border transition-colors ${voiceRoute === 'plan' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white/80 dark:bg-slate-800/80 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700'}`}>Plan</button>
+              <button type="button" onClick={() => setVoiceRoute('grade')} className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border transition-colors ${voiceRoute === 'grade' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white/80 dark:bg-slate-800/80 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700'}`}>Grade</button>
+              <button type="button" onClick={() => setVoiceRoute('communicate')} className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border transition-colors ${voiceRoute === 'communicate' ? 'bg-sky-600 text-white border-sky-600' : 'bg-white/80 dark:bg-slate-800/80 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700'}`}>Communicate</button>
+              <button type="button" onClick={() => setVoiceRoute('todo')} className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border transition-colors ${voiceRoute === 'todo' ? 'bg-slate-900 text-white border-slate-900 dark:bg-slate-100 dark:text-slate-900 dark:border-slate-100' : 'bg-white/80 dark:bg-slate-800/80 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700'}`}>To‑do</button>
+              <button type="button" onClick={() => setVoiceRoute('reminder')} className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border transition-colors ${voiceRoute === 'reminder' ? 'bg-amber-500 text-white border-amber-500' : 'bg-white/80 dark:bg-slate-800/80 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700'}`}>Reminder</button>
+            </div>
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => { setVoiceDraft(''); }}
+                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-[11px] font-semibold"
+              >
+                Clear
+              </button>
+              <button
+                type="button"
+                onClick={saveVoiceCapture}
+                className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-[11px] font-black uppercase tracking-widest shadow-sm hover:-translate-y-0.5 transition-all"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* GLOBAL BOTTOM NAV (hidden in Class Presenter for clean projection) */}
       {phase !== AppPhase.CLASS_PRESENTER && (
       <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-[90] w-full max-w-md px-4">
-        <div className="bg-white/95 dark:bg-slate-900/95 border border-slate-200/80 dark:border-slate-700/80 rounded-xl shadow-lg px-3 py-1.5 flex items-center justify-between">
+        <div className="relative">
+          {isSignedIn && (
+            <button
+              type="button"
+              onClick={openVoiceCapture}
+              className="absolute -top-14 left-1/2 -translate-x-[58%] w-12 h-12 rounded-full bg-indigo-600 text-white shadow-xl border-[3px] border-white/80 dark:border-slate-900/80 flex items-center justify-center active:scale-95 transition-transform"
+              title="Voice capture"
+              aria-label="Voice capture"
+            >
+              <Mic className="w-5 h-5" />
+            </button>
+          )}
+
+          <div className="bg-white/95 dark:bg-slate-900/95 border border-slate-200/80 dark:border-slate-700/80 rounded-xl shadow-lg px-3 py-1.5 flex items-center justify-between">
           <button
             type="button"
             onClick={() => setPhase(AppPhase.AUTHENTICATION)}
@@ -3936,6 +4731,17 @@ const App: React.FC = () => {
           <button
             type="button"
             disabled={!isSignedIn}
+            onClick={() => { if (!isSignedIn) return; setPhase(AppPhase.CLASSROOM); }}
+            className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
+              phase === AppPhase.CLASSROOM ? 'text-amber-400' : isSignedIn ? 'text-slate-600 dark:text-slate-300' : 'text-slate-400 dark:text-slate-600'
+            }`}
+          >
+            <Timer className="w-4 h-4 mb-0.5" />
+            <span className="text-[9px] font-semibold uppercase tracking-[0.14em]">Teach</span>
+          </button>
+          <button
+            type="button"
+            disabled={!isSignedIn}
             onClick={() => {
               if (!isSignedIn) return;
               setPhase(AppPhase.DASHBOARD);
@@ -3950,17 +4756,6 @@ const App: React.FC = () => {
           >
             <LayoutDashboard className="w-4 h-4 mb-0.5" />
             <span className="text-[9px] font-semibold uppercase tracking-[0.14em]">Grade</span>
-          </button>
-          <button
-            type="button"
-            disabled={!isSignedIn}
-            onClick={() => { if (!isSignedIn) return; setPhase(AppPhase.CLASSROOM); }}
-            className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
-              phase === AppPhase.CLASSROOM ? 'text-amber-400' : isSignedIn ? 'text-slate-600 dark:text-slate-300' : 'text-slate-400 dark:text-slate-600'
-            }`}
-          >
-            <Timer className="w-4 h-4 mb-0.5" />
-            <span className="text-[9px] font-semibold uppercase tracking-[0.14em]">Class</span>
           </button>
           <button
             type="button"
@@ -3980,10 +4775,12 @@ const App: React.FC = () => {
             <MessageCircle className="w-4 h-4 mb-0.5" />
             <span className="text-[9px] font-semibold uppercase tracking-[0.14em]">Communicate</span>
           </button>
+          </div>
         </div>
       </div>
       )}
     </div>
+    </>
   );
 };
 

@@ -1,15 +1,91 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { GradingResponse } from "../types";
+import { GradingResponse, type GeometricData } from "../types";
 
 const getApiKey = () =>
   (typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_GEMINI_API_KEY) ||
   (typeof process !== "undefined" && (process as any).env?.API_KEY) ||
   "";
 
+export type FrameAssessmentResult = {
+  scanHealth: number;
+  alignment: "IN_FRAME" | "OVERLAP_DETECTED" | "OUT_OF_BOUNDS";
+  corners?: GeometricData;
+  triggerSignal?: string;
+  transcription?: string;
+};
+
+// Lightweight viewfinder assessment (no grading): scanHealth + corners + OCR text.
+export const assessFrame = async (base64Image: string): Promise<FrameAssessmentResult | null> => {
+  try {
+    const apiKey = getApiKey();
+    if (!apiKey) return null;
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: {
+        parts: [
+          { inlineData: { mimeType: "image/jpeg", data: base64Image } },
+          {
+            text: `You are an ultra-fast Document Viewfinder Sensor for teachers.
+
+Return ONLY JSON.
+
+## Goal
+Assess whether a document is in-frame and readable enough to capture.
+
+## Output rules
+- scanHealth: 0-100 (penalize blur, glare, cutoff edges, low light).
+- alignment: IN_FRAME / OVERLAP_DETECTED / OUT_OF_BOUNDS
+- corners: 4 corners [x,y] (0-1000 scale) when visible
+- transcription: OCR any visible handwriting/text (best-effort)
+- triggerSignal: set to "SNAP" if scanHealth >= 90 and alignment is IN_FRAME`,
+          },
+        ],
+      },
+      config: {
+        thinkingConfig: { thinkingBudget: 0 },
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            scanHealth: { type: Type.NUMBER },
+            alignment: { type: Type.STRING, enum: ["IN_FRAME", "OVERLAP_DETECTED", "OUT_OF_BOUNDS"] },
+            corners: {
+              type: Type.OBJECT,
+              properties: {
+                topLeft: { type: Type.ARRAY, items: { type: Type.NUMBER } },
+                topRight: { type: Type.ARRAY, items: { type: Type.NUMBER } },
+                bottomLeft: { type: Type.ARRAY, items: { type: Type.NUMBER } },
+                bottomRight: { type: Type.ARRAY, items: { type: Type.NUMBER } }
+              }
+            },
+            transcription: { type: Type.STRING },
+            triggerSignal: { type: Type.STRING },
+          },
+          required: ["scanHealth", "alignment"],
+        },
+      },
+    });
+    const text = response.text || "{}";
+    try {
+      return JSON.parse(text) as FrameAssessmentResult;
+    } catch {
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return null;
+      return JSON.parse(jsonMatch[0]) as FrameAssessmentResult;
+    }
+  } catch (e) {
+    console.error("Frame assessment error", e);
+    return null;
+  }
+};
+
 // Service to extract rubric text from an image using Gemini
 export const extractRubricFromImage = async (base64Image: string): Promise<string | null> => {
-  const ai = new GoogleGenAI({ apiKey: getApiKey() });
   try {
+    const apiKey = getApiKey();
+    if (!apiKey) return null;
+    const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: {
@@ -35,8 +111,10 @@ export const extractRubricFromImage = async (base64Image: string): Promise<strin
 
 // Service to generate a rubric from a title and description
 export const generateRubric = async (assignmentTitle: string, assignmentDescription: string, maxScore: number): Promise<string | null> => {
-  const ai = new GoogleGenAI({ apiKey: getApiKey() });
   try {
+    const apiKey = getApiKey();
+    if (!apiKey) return null;
+    const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: `Generate a professional and detailed grading rubric for: ${assignmentTitle}. 
@@ -59,8 +137,10 @@ export const analyzePaper = async (
   studentList: string[],
   isAutoDetect: boolean = false
 ): Promise<GradingResponse | null> => {
-  const ai = new GoogleGenAI({ apiKey: getApiKey() });
   try {
+    const apiKey = getApiKey();
+    if (!apiKey) return null;
+    const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: {
@@ -151,8 +231,10 @@ export const analyzeMultiPagePaper = async (
   maxScore: number,
   studentList: string[]
 ): Promise<GradingResponse | null> => {
-  const ai = new GoogleGenAI({ apiKey: getApiKey() });
   try {
+    const apiKey = getApiKey();
+    if (!apiKey) return null;
+    const ai = new GoogleGenAI({ apiKey });
     const imageParts = base64Images
       .filter(Boolean)
       .slice(0, 10)
@@ -221,8 +303,12 @@ export interface LessonScriptResult {
 }
 
 export const generateLessonScript = async (topic: string): Promise<LessonScriptResult | null> => {
-  const ai = new GoogleGenAI({ apiKey: getApiKey() });
   try {
+    const apiKey = getApiKey();
+    if (!apiKey) {
+      throw new Error("Missing Gemini API key");
+    }
+    const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: `You are an expert K-12 curriculum designer. For this topic: "${topic}", provide a 30-minute lesson plan.
@@ -245,7 +331,14 @@ Return ONLY valid JSON with exactly these keys (no markdown, no extra text):
       },
     });
     const text = response.text || "{}";
-    return JSON.parse(text) as LessonScriptResult;
+    try {
+      return JSON.parse(text) as LessonScriptResult;
+    } catch {
+      // Fallback for fenced or extra-text responses
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return null;
+      return JSON.parse(jsonMatch[0]) as LessonScriptResult;
+    }
   } catch (e) {
     console.error("Lesson script error", e);
     return null;
@@ -256,12 +349,14 @@ export const generateDifferentiatedLesson = async (
   lessonText: string,
   level: "simplified" | "advanced"
 ): Promise<string | null> => {
-  const ai = new GoogleGenAI({ apiKey: getApiKey() });
   const directive =
     level === "simplified"
       ? "Rewrite this lesson for students with learning gaps: shorter sentences, simpler vocabulary, more scaffolding, and one extra practice step. Keep the same learning goal."
       : "Rewrite this lesson for advanced/gifted students: add depth, extension questions, and one enrichment task. Keep the same learning goal.";
   try {
+    const apiKey = getApiKey();
+    if (!apiKey) return null;
+    const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: `${directive}\n\nLesson:\n${lessonText}`,
@@ -269,6 +364,30 @@ export const generateDifferentiatedLesson = async (
     return response.text || null;
   } catch (e) {
     console.error("Differentiation error", e);
+    return null;
+  }
+};
+
+export const translateText = async (
+  text: string,
+  targetLanguage: "es" | "en"
+): Promise<string | null> => {
+  try {
+    const apiKey = getApiKey();
+    if (!apiKey) return null;
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `Translate this text to ${targetLanguage === "es" ? "Spanish" : "English"}.
+Return ONLY the translated text (no quotes, no markdown).
+
+Text:
+${text}`,
+      config: { thinkingConfig: { thinkingBudget: 0 } },
+    });
+    return (response.text || "").trim() || null;
+  } catch (e) {
+    console.error("Translation error", e);
     return null;
   }
 };
