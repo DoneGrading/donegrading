@@ -686,7 +686,7 @@ export const CommunicationDashboard: React.FC<{
   };
 
   return (
-    <div className="h-full flex flex-col gap-3">
+    <div className="h-full flex flex-col gap-2 pb-2">
       {/* Step 1: Who to contact – master selection */}
       <div className={card}>
         <p className={`${sectionTitle} mb-2`}>1. Who are you contacting?</p>
@@ -706,8 +706,8 @@ export const CommunicationDashboard: React.FC<{
 
       {/* Step 2: Course → Student → Gender → Subject */}
       <div className={card}>
-        <p className={`${sectionTitle} mb-2`}>2. Context</p>
-        <div className="space-y-2">
+        <p className={`${sectionTitle} mb-1.5`}>2. Context</p>
+        <div className="space-y-1.5">
           <div>
             <label className={label}>Course</label>
             <select
@@ -784,7 +784,7 @@ export const CommunicationDashboard: React.FC<{
           )}
           </div>
 
-          <div className="grid grid-cols-2 gap-2 mt-2">
+          <div className="grid grid-cols-2 gap-1.5 mt-1.5">
             <div>
               <label className={label}>Gender / Pronouns</label>
               <select value={gender} onChange={(e) => handleFieldChange(() => setGender(e.target.value as GenderKey))} className={input}>
@@ -815,7 +815,7 @@ export const CommunicationDashboard: React.FC<{
           <ChevronRight className={`w-4 h-4 transition-transform ${showMoreDetails ? 'rotate-90' : ''}`} />
         </button>
         {showMoreDetails && (
-          <div className="grid grid-cols-2 gap-2 text-[10px] mt-2">
+          <div className="grid grid-cols-2 gap-1.5 text-[10px] mt-1.5">
             <div><label className={label}>Parent / Guardian</label><input value={parentName} onChange={(e) => handleFieldChange(() => setParentName(e.target.value))} className={input} placeholder="Name" /></div>
             <div><label className={label}>Period</label><select value={period} onChange={(e) => handleFieldChange(() => setPeriod(e.target.value))} className={input}><option value="none">N/A</option>{[1,2,3,4,5,6,7,8].map((n) => <option key={n} value={String(n)}>Period {n}</option>)}</select></div>
             <div className="col-span-2"><label className={label}>School</label><input value={schoolName} onChange={(e) => handleFieldChange(() => setSchoolName(e.target.value))} className={input} placeholder="Your school" /></div>
@@ -829,7 +829,7 @@ export const CommunicationDashboard: React.FC<{
 
       {/* Step 3: Template dropdown */}
       <div className={card}>
-        <p className={`${sectionTitle} mb-2`}>3. Template</p>
+        <p className={`${sectionTitle} mb-1.5`}>3. Template</p>
         <select
           value={activeMsg ? String(filteredMessages.findIndex((m) => m.title === activeMsg.title && m.cat === activeMsg.cat)) : "-1"}
           onChange={(e) => {
@@ -847,13 +847,13 @@ export const CommunicationDashboard: React.FC<{
         {filteredMessages.length === 0 && (
           <p className={`mt-1 ${helperText}`}>No templates for {audience}. Change who you're contacting above.</p>
         )}
-        <button type="button" onClick={() => setShowBehaviors((v) => !v)} className="mt-2 w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[10px] font-semibold text-slate-700 dark:text-slate-200 flex items-center justify-between">
+        <button type="button" onClick={() => setShowBehaviors((v) => !v)} className="mt-1.5 w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[10px] font-semibold text-slate-700 dark:text-slate-200 flex items-center justify-between">
           <span>{showBehaviors ? 'Hide behavior options' : 'Add behavior/context (optional)'}</span>
           <span>{showBehaviors ? '−' : '+'}</span>
         </button>
         {showBehaviors && (
-          <div className="mt-1.5 space-y-1.5">
-            <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto custom-scrollbar">
+          <div className="mt-1 space-y-1.5">
+            <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto custom-scrollbar">
               {behaviors.map((b, idx) => (
                 <button key={idx} type="button" onClick={() => { toggleBehavior(idx); if (activeMsg) recomputeTexts(activeMsg); }} className={`${chip} ${selectedBehaviors.has(idx) ? "bg-emerald-500/20 border-emerald-500 text-emerald-700 dark:text-emerald-200" : chipInactive}`}>{b.e}</button>
               ))}

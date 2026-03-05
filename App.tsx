@@ -1874,17 +1874,17 @@ const App: React.FC = () => {
           syncStatus={syncStatus}
         >
           <div className="h-full w-full flex flex-col max-w-sm mx-auto py-4 gap-4">
-            <div className="flex flex-col items-center gap-4">
+            <div className="flex flex-col items-center gap-5">
               <img
                 src="/DoneGradingLogo.png"
                 alt="DoneGrading"
-                className="w-40 max-w-full drop-shadow-lg"
+                className="w-48 max-w-full drop-shadow-lg"
               />
               <p className="text-center text-slate-700 dark:text-slate-200 font-semibold text-[13px]">
                 Welcome back, {educatorName || 'teacher'}.
               </p>
               <p className="text-center text-[10px] font-bold text-slate-500 dark:text-slate-400">
-                You’re signed in via {signedInVia}. Use the tabs below to grade or communicate.
+                You’re signed in via {signedInVia}.
               </p>
             </div>
 
@@ -1909,9 +1909,6 @@ const App: React.FC = () => {
                       <action.icon className="w-4 h-4" />
                       <span className="font-black uppercase tracking-[0.16em]">{action.label}</span>
                     </div>
-                    {navUsage[action.key] ? (
-                      <span className="text-[9px] opacity-80">×{navUsage[action.key]}</span>
-                    ) : null}
                   </button>
                 );
               })}
@@ -1967,11 +1964,11 @@ const App: React.FC = () => {
       >
           <div className="h-full w-full flex flex-col max-w-sm mx-auto py-4 gap-4">
           {/* Top: logo + promise */}
-          <div className="flex flex-col items-center gap-4">
+          <div className="flex flex-col items-center gap-5">
             <img
               src="/DoneGradingLogo.png"
               alt="DoneGrading"
-              className="w-40 max-w-full drop-shadow-lg"
+              className="w-48 max-w-full drop-shadow-lg"
             />
             <p className="text-center text-slate-700 dark:text-slate-200 font-semibold text-[13px]">
               Cut grading time & focus on teaching.
@@ -3372,8 +3369,8 @@ const App: React.FC = () => {
             }
             .plan-print-footer { display: none; }
           `}</style>
-          {/* Compact header + tab bar: no scroll on Plan screen */}
-          <div className="plan-no-print flex-none flex flex-col gap-1.5 -mx-4 px-4 pt-0 pb-1.5 bg-white/95 dark:bg-slate-950/95 border-b border-slate-200/80 dark:border-slate-700/80">
+          {/* Compact header + tab bar: inset card to match sections */}
+          <div className="plan-no-print flex-none flex flex-col gap-2 mx-2 mt-1 mb-2 px-3 py-2 bg-white/90 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-700 rounded-xl shadow-sm">
             <div className="grid grid-cols-2 gap-1">
               <button
                 type="button"
@@ -3402,15 +3399,25 @@ const App: React.FC = () => {
                 <option value="share">{planActionLoading === 'share' ? 'Sharing…' : 'Share'}</option>
               </select>
             </div>
-            <div className="flex gap-1">
+            <div className="flex gap-1 bg-slate-100/70 dark:bg-slate-900/70 p-0.5 rounded-lg">
               {(['context', 'blocks', 'resources', 'assessment'] as const).map((tab) => (
                 <button
                   key={tab}
                   type="button"
                   onClick={() => setPlanTab(tab)}
-                  className={`flex-1 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider ${planTab === tab ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'}`}
+                  className={`flex-1 py-1.5 rounded-md text-[9px] font-bold uppercase tracking-wider flex items-center justify-center gap-1 ${
+                    planTab === tab
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                  }`}
                 >
-                  {tab === 'context' ? '1 Standards' : tab === 'blocks' ? '2 Instruction' : tab === 'resources' ? '3 Resources' : '4 Assessment'}
+                  {tab === 'context'
+                    ? '1 Standards'
+                    : tab === 'blocks'
+                      ? '2 Instruction'
+                      : tab === 'resources'
+                        ? '3 Resources'
+                        : '4 Assessment'}
                 </button>
               ))}
             </div>
