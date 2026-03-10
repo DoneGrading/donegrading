@@ -80,6 +80,106 @@ Assess whether a document is in-frame and readable enough to capture.
   }
 };
 
+export type ParsedTeacherScheduleBlock = {
+  title: string;
+  day: 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun';
+  startTime: string; // HH:MM 24h
+  endTime: string; // HH:MM 24h
+  location?: string;
+  kind?: 'class' | 'prep' | 'lunch' | 'meeting' | 'pd' | 'other';
+};
+
+export const parseTeacherScheduleFromImage = async (
+  base64Image: string
+): Promise<ParsedTeacherScheduleBlock[] | null> => {
+  try {
+    const apiKey = getApiKey();
+    if (!apiKey) return null;
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: {
+        parts: [
+          {
+            inlineData: {
+              mimeType: 'image/jpeg',
+              data: base64Image,
+            },
+          },
+          {
+            text: `You are an expert school scheduler.
+
+Teachers will scan a printed daily or weekly teaching schedule that lists periods, classes, prep, lunch, PD, and meetings.
+
+Return ONLY JSON.
+
+Goal: Convert the visual schedule into structured blocks for a mobile planning app.
+
+Rules:
+- Assume the school week is Monday–Friday unless the page clearly includes weekends.
+- Map each block to a weekday abbreviation: Mon, Tue, Wed, Thu, Fri, Sat, Sun.
+- Times MUST be normalized to 24‑hour HH:MM.
+- title should be a short label like "Period 1 – ELA 7", "Prep", "Lunch", "PLC Meeting", "PD", etc.
+- kind should be one of: "class", "prep", "lunch", "meeting", "pd", "other".
+- location is optional (e.g., "Room 204", "Library").
+
+Output schema:
+[
+  {
+    "title": "Period 1 – Algebra",
+    "day": "Mon",
+    "startTime": "08:00",
+    "endTime": "08:50",
+    "location": "Room 204",
+    "kind": "class"
+  }
+]
+
+If you cannot confidently see any schedule, return an empty JSON array [].
+`,
+          },
+        ],
+      },
+      config: {
+        thinkingConfig: { thinkingBudget: 0 },
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              day: {
+                type: Type.STRING,
+                enum: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+              },
+              startTime: { type: Type.STRING },
+              endTime: { type: Type.STRING },
+              location: { type: Type.STRING },
+              kind: {
+                type: Type.STRING,
+                enum: ['class', 'prep', 'lunch', 'meeting', 'pd', 'other'],
+              },
+            },
+            required: ['title', 'day', 'startTime', 'endTime'],
+          },
+        },
+      },
+    });
+    const text = response.text || '[]';
+    try {
+      return JSON.parse(text) as ParsedTeacherScheduleBlock[];
+    } catch {
+      const jsonMatch = text.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) return null;
+      return JSON.parse(jsonMatch[0]) as ParsedTeacherScheduleBlock[];
+    }
+  } catch (e) {
+    console.error('Teacher schedule parse error', e);
+    return null;
+  }
+};
+
 // Service to extract rubric text from an image using Gemini
 export const extractRubricFromImage = async (base64Image: string): Promise<string | null> => {
   try {
@@ -135,7 +235,7 @@ export const analyzePaper = async (
   rubric: string,
   maxScore: number,
   studentList: string[],
-  isAutoDetect: boolean = false
+  _isAutoDetect: boolean = false
 ): Promise<GradingResponse | null> => {
   try {
     const apiKey = getApiKey();
@@ -218,7 +318,13 @@ Return ONLY JSON.`
     });
 
     const text = response.text || '{}';
-    return JSON.parse(text) as GradingResponse;
+    try {
+      return JSON.parse(text) as GradingResponse;
+    } catch {
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return null;
+      return JSON.parse(jsonMatch[0]) as GradingResponse;
+    }
   } catch (e) {
     console.error("Gemini analysis error", e);
     return null;
@@ -289,7 +395,13 @@ Return ONLY JSON.`,
     });
 
     const text = response.text || "{}";
-    return JSON.parse(text) as GradingResponse;
+    try {
+      return JSON.parse(text) as GradingResponse;
+    } catch {
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return null;
+      return JSON.parse(jsonMatch[0]) as GradingResponse;
+    }
   } catch (e) {
     console.error("Gemini multi-page analysis error", e);
     return null;

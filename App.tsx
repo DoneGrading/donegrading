@@ -1,19 +1,72 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { 
-  ChevronRight, BookOpen, Camera, Layers, CheckCircle, Users, Loader2, Trash2, 
-  ArrowRight, Sparkles, CloudUpload, Zap, ZapOff, AlertCircle, Mail, KeyRound, 
-  Check, Wifi, WifiOff, History as HistoryIcon, Search, X, UserCheck, Moon, 
-  Sun, Target, Chrome, Apple as AppleIcon, RefreshCw, ScanLine, FileText, 
-  PlusCircle, Mic, MicOff, Settings, Home, MessageCircle, LayoutDashboard,
-  Calendar, Timer, Shuffle, Volume2, ClipboardList, FolderOpen, Link, Minus, Plus,
-  Cloud, Wand2, UploadCloud
+import {
+  BookOpen,
+  Camera,
+  Layers,
+  CheckCircle,
+  Users,
+  Loader2,
+  Trash2,
+  ArrowRight,
+  Sparkles,
+  CloudUpload,
+  Zap,
+  AlertCircle,
+  Mail,
+  Check,
+  Wifi,
+  WifiOff,
+  History as HistoryIcon,
+  X,
+  Target,
+  RefreshCw,
+  FileText,
+  PlusCircle,
+  Mic,
+  MicOff,
+  Home,
+  MessageCircle,
+  LayoutDashboard,
+  Calendar,
+  Timer,
+  Shuffle,
+  Volume2,
+  ClipboardList,
+  Minus,
+  Plus,
 } from 'lucide-react';
 import { AppPhase, GradingMode, Course, Assignment, Student, GradedWork, GradingResponse, GeometricData, SubscriptionStatus } from './types';
-import { analyzeMultiPagePaper, analyzePaper, assessFrame, extractRubricFromImage, generateRubric, generateLessonScript, generateDifferentiatedLesson, type LessonScriptResult } from './services/geminiService';
+import {
+  analyzeMultiPagePaper,
+  analyzePaper,
+  assessFrame,
+  extractRubricFromImage,
+  generateRubric,
+  generateLessonScript,
+  generateDifferentiatedLesson,
+  type LessonScriptResult,
+} from './services/geminiService';
+import { scheduleReminderNotification } from './lib/notifications';
+import { loadAuthSession, saveAuthSession, clearAuthSession, touchAuthSession } from './lib/authSession';
+import { auth } from './lib/firebase';
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  signOut as firebaseSignOut,
+  updateProfile,
+  sendPasswordResetEmail,
+} from 'firebase/auth';
 import { ClassroomService } from './services/classroomService';
 import { logEvent } from './analytics';
 import { CommunicationDashboard } from './CommunicationDashboard';
-import { card, sectionTitle, label, input, textarea, btnPrimary, btnSecondary, chip, chipInactive, helperText } from './uiStyles';
+import { sectionTitle, label } from './uiStyles';
+import { safeParseJson } from './utils/safeParseJson';
+import { PageWrapper } from './components/PageWrapper';
+import { ConsentBanner } from './components/ConsentBanner';
+import { Onboarding, hasCompletedOnboarding } from './components/Onboarding';
+import { AppContext } from './context/AppContext';
+import { AuthView } from './views/AuthView';
 
 type SortMode = 'recent' | 'alphabetical' | 'manual';
 
@@ -29,127 +82,100 @@ type ResourceCard = {
   blurb: string;
 };
 
-// --- STABLE SUB-COMPONENTS ---
+type ScheduleViewMode = 'daily' | 'weekly' | 'monthly';
 
-const ThemeToggle: React.FC<{ isDarkMode: boolean, setIsDarkMode: (val: boolean) => void, className?: string }> = ({ isDarkMode, setIsDarkMode, className = "" }) => (
-  <button 
-    onClick={() => setIsDarkMode(!isDarkMode)} 
-    title="Toggle theme" 
-    aria-label="Toggle theme"
-    className={`p-2 rounded-full transition-colors ${className}`}
-  >
-    {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-  </button>
-);
-
-const PageWrapper: React.FC<{ 
-  children: React.ReactNode, 
-  headerTitle?: string, 
-  headerSubtitle?: string,
-  onBack?: () => void, 
-  isOnline: boolean,
-  isDarkMode: boolean,
-  setIsDarkMode: (val: boolean) => void,
-  syncStatus?: 'idle' | 'ok' | 'error',
-  onSyncClick?: () => void,
-}> = ({ children, headerTitle = "DoneGrading", headerSubtitle, onBack, isOnline, isDarkMode, setIsDarkMode, syncStatus = 'idle', onSyncClick }) => {
-  return (
-    <div className="fixed inset-0 flex items-center justify-center p-4 overflow-hidden z-10 selection:bg-indigo-500/30">
-      <div className="absolute top-4 right-4 z-50">
-        <ThemeToggle isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode} />
-      </div>
-      
-      <div className="w-full max-w-lg h-full bg-transparent flex flex-col overflow-hidden animate-in zoom-in-[0.98] duration-500">
-        <header className="h-16 shrink-0 flex items-center justify-between px-6">
-          <div className="flex items-center gap-3">
-            {onBack && (
-              <button onClick={onBack} className="p-1.5 -ml-1.5 rounded-full bg-white/10 dark:bg-black/10 backdrop-blur-md shadow-sm transition-all active:scale-90">
-                <ChevronRight className="w-5 h-5 rotate-180 text-slate-800 dark:text-slate-100" />
-              </button>
-            )}
-            
-            <div className="flex flex-col backdrop-blur-md bg-white/10 dark:bg-black/10 px-3 py-1.5 rounded-xl shadow-sm">
-              <h1 className="text-lg font-black bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-200 text-transparent bg-clip-text tracking-tight truncate leading-none pb-0.5 drop-shadow-sm">
-                {headerTitle}
-              </h1>
-              {headerSubtitle && (
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-800 dark:text-slate-200 mt-0.5 drop-shadow-sm min-w-0 max-w-[min(100%,280px)]">
-                  {headerSubtitle}
-                </p>
-              )}
-            </div>
-          </div>
-          
-          <button
-            type="button"
-            onClick={onSyncClick}
-            className="flex items-center gap-2 backdrop-blur-md bg-white/10 dark:bg-black/10 px-3 py-1.5 rounded-xl shadow-sm active:scale-95 transition-transform"
-            title={isOnline ? 'Tap to sync now' : 'Offline'}
-            aria-label={isOnline ? 'Cloud sync status, tap to sync now' : 'Offline, using local cache'}
-          >
-            <span
-              className={`w-2 h-2 rounded-full shadow-sm ${
-                !isOnline
-                  ? 'bg-amber-500 shadow-amber-500/50'
-                  : syncStatus === 'error'
-                    ? 'bg-red-500 shadow-red-500/50 animate-pulse'
-                    : syncStatus === 'ok'
-                      ? 'bg-emerald-500 shadow-emerald-500/50 animate-pulse'
-                      : 'bg-slate-400 shadow-slate-400/50'
-              }`}
-            />
-            <span className="text-[9px] font-black uppercase tracking-widest text-slate-800 dark:text-slate-200 hidden sm:inline drop-shadow-sm">
-              {isOnline ? (syncStatus === 'error' ? 'Sync Error' : 'Cloud Sync') : 'Local Cache'}
-            </span>
-          </button>
-        </header>
-        
-        <main className="flex-1 overflow-y-auto custom-scrollbar flex flex-col p-4 pb-24 relative min-h-0">
-          {children}
-        </main>
-      </div>
-    </div>
-  );
+type ScheduleItem = {
+  id: string;
+  title: string;
+  date: string; // ISO date string
+  view: ScheduleViewMode;
+   // type of block for coloring and grouping
+  kind?: 'event' | 'reminder' | 'teacherBlock' | 'appointment' | 'meeting';
+  courseId?: string;
+  assignmentId?: string;
+  notes?: string;
+  time?: string; // HH:MM (24h) start
+  endTime?: string; // optional HH:MM end time for blocks
+  recurrence: 'once' | 'daily' | 'weekly' | 'monthly';
 };
 
-const useSpeechToText = (onResult: (text: string) => void) => {
+const useSpeechToText = (
+  onResult: (text: string) => void,
+  options?: {
+    continuous?: boolean;
+    interimResults?: boolean;
+    autoRestart?: boolean;
+    lang?: string;
+  },
+) => {
   const [isListening, setIsListening] = useState(false);
+  const [hasSupport, setHasSupport] = useState(false);
   const recognitionRef = useRef<any>(null);
+  const shouldListenRef = useRef(false);
+  const optsRef = useRef(options);
+  optsRef.current = options;
 
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (SpeechRecognition) {
       recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = false;
-      recognitionRef.current.interimResults = false;
-      recognitionRef.current.lang = 'en-US';
+      recognitionRef.current.continuous = !!optsRef.current?.continuous;
+      recognitionRef.current.interimResults = !!optsRef.current?.interimResults;
+      recognitionRef.current.lang = optsRef.current?.lang || 'en-US';
+      setHasSupport(true);
 
+      recognitionRef.current.onstart = () => {
+        setIsListening(true);
+      };
       recognitionRef.current.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript;
-        onResult(transcript);
-        setIsListening(false);
+        try {
+          const transcript = event.results?.[0]?.[0]?.transcript ?? '';
+          if (transcript) onResult(transcript);
+        } catch {
+          // ignore
+        }
       };
 
-      recognitionRef.current.onerror = () => setIsListening(false);
-      recognitionRef.current.onend = () => setIsListening(false);
+      recognitionRef.current.onerror = () => {
+        // Keep UI responsive even when recognition errors out.
+        setIsListening(false);
+        shouldListenRef.current = false;
+      };
+      recognitionRef.current.onend = () => {
+        if (shouldListenRef.current && optsRef.current?.autoRestart) {
+          try {
+            recognitionRef.current?.start();
+            return;
+          } catch {
+            // fall through
+          }
+        }
+        setIsListening(false);
+        shouldListenRef.current = false;
+      };
+    } else {
+      setHasSupport(false);
     }
   }, [onResult]);
 
   const toggleListening = () => {
     if (isListening) {
+      shouldListenRef.current = false;
       recognitionRef.current?.stop();
       setIsListening(false);
     } else {
       try {
+        shouldListenRef.current = true;
         recognitionRef.current?.start();
-        setIsListening(true);
+        // isListening will flip true in onstart
       } catch (e) {
         console.error("Speech recognition start failed", e);
+        shouldListenRef.current = false;
       }
     }
   };
 
-  return { isListening, toggleListening, hasSupport: !!recognitionRef.current };
+  return { isListening, toggleListening, hasSupport };
 };
 
 const VoiceInputButton: React.FC<{ onResult: (text: string) => void, className?: string }> = ({ onResult, className = "" }) => {
@@ -224,10 +250,15 @@ const cropImageToBoundingBox = (base64: string, corners: GeometricData | null): 
   });
 };
 
+/** Escape single quotes for Drive API query string (double the quote). */
+const escapeDriveQueryValue = (s: string) => (s || '').replace(/'/g, "''");
+
 const getOrCreateDriveFolder = async (token: string, folderName: string, parentId?: string) => {
-  let query = `mimeType='application/vnd.google-apps.folder' and name='${folderName}' and trashed=false`;
-  if (parentId) query += ` and '${parentId}' in parents`;
-  
+  const safeName = escapeDriveQueryValue(folderName);
+  const safeParent = parentId ? escapeDriveQueryValue(parentId) : '';
+  let query = `mimeType='application/vnd.google-apps.folder' and name='${safeName}' and trashed=false`;
+  if (safeParent) query += ` and '${safeParent}' in parents`;
+
   const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&spaces=drive`, { headers: { 'Authorization': `Bearer ${token}` } });
   const searchData = await searchRes.json();
   
@@ -262,6 +293,7 @@ const uploadImageToDrive = async (token: string, base64Data: string, fileName: s
 
 const App: React.FC = () => {
   const [phase, setPhase] = useState<AppPhase | 'COURSE_CREATION'>(AppPhase.AUTHENTICATION);
+  const [showOnboarding, setShowOnboarding] = useState(() => !hasCompletedOnboarding());
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [classroom, setClassroom] = useState<ClassroomService | null>(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -269,13 +301,14 @@ const App: React.FC = () => {
   const [showOnlineRestore, setShowOnlineRestore] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'ok' | 'error'>('idle');
   const [isDarkMode, setIsDarkMode] = useState(() => {
-    const saved = localStorage.getItem('dg_dark_mode');
-    return saved ? JSON.parse(saved) : window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const dark = safeParseJson<boolean | null>(localStorage.getItem('dg_dark_mode'), null);
+    return dark ?? window.matchMedia('(prefers-color-scheme: dark)').matches;
   });
   
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [globalSearchQuery, setGlobalSearchQuery] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [globalSearchQuery, _setGlobalSearchQuery] = useState('');
   const [assignmentSearchQuery, setAssignmentSearchQuery] = useState('');
   
   const [educatorName, setEducatorName] = useState<string>(() => localStorage.getItem('dg_educator_name') || "");
@@ -284,10 +317,10 @@ const App: React.FC = () => {
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus>('trialing');
   const isPaid = subscriptionStatus === 'trialing' || subscriptionStatus === 'active';
   const [showMoreAuthOptions, setShowMoreAuthOptions] = useState(false);
-  const [isDemoSignedIn, setIsDemoSignedIn] = useState(false);
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
 
-  const [dashboardSort, setDashboardSort] = useState<SortMode>(() => localStorage.getItem('dg_dash_sort') as SortMode || 'recent');
-  const [assignmentSort, setAssignmentSort] = useState<SortMode>(() => localStorage.getItem('dg_asn_sort') as SortMode || 'recent');
+  const [dashboardSort, setDashboardSort] = useState<SortMode>(() => safeParseJson<SortMode>(localStorage.getItem('dg_dash_sort'), 'recent'));
+  const [assignmentSort, setAssignmentSort] = useState<SortMode>(() => safeParseJson<SortMode>(localStorage.getItem('dg_asn_sort'), 'recent'));
 
   const todayLabel = useMemo(() => {
     try {
@@ -302,138 +335,58 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const welcomeSnippets = useMemo(() => {
-    return [
-      {
-        id: 'why-teachers-love',
-        render: () => (
-          <div className="mt-3 w-full flex flex-wrap justify-center gap-1.5">
-            <span className="px-2.5 py-1 rounded-full bg-white/80 dark:bg-slate-900/80 text-[9px] font-semibold text-slate-700 dark:text-slate-200 border border-slate-200/80 dark:border-slate-700/80">
-              Auto‑grades stacks of papers
-            </span>
-            <span className="px-2.5 py-1 rounded-full bg-white/80 dark:bg-slate-900/80 text-[9px] font-semibold text-slate-700 dark:text-slate-200 border border-slate-200/80 dark:border-slate-700/80">
-              Syncs to Google Classroom
-            </span>
-            <span className="px-2.5 py-1 rounded-full bg-white/80 dark:bg-slate-900/80 text-[9px] font-semibold text-slate-700 dark:text-slate-200 border border-slate-200/80 dark:border-slate-700/80">
-              Emails students with feedback
-            </span>
-          </div>
-        ),
-      },
-      {
-        id: 'today-this-will-do',
-        render: () => (
-          <p className="mt-3 text-[10px] text-slate-600 dark:text-slate-300 text-center font-semibold">
-            Today this app will help you: import a class, scan work, and post grades back to Classroom.
-          </p>
-        ),
-      },
-      {
-        id: 'trust-safety',
-        render: () => (
-          <p className="mt-3 text-[9px] text-slate-500 dark:text-slate-400 text-center">
-            FERPA‑aware · Data stays in your Google account · You approve every grade.
-          </p>
-        ),
-      },
-      {
-        id: 'micro-stats',
-        render: () => (
-          <p className="mt-3 text-[10px] text-slate-600 dark:text-slate-300 text-center font-semibold">
-            Up to 5× faster grading, no special forms, built for your phone.
-          </p>
-        ),
-      },
-      {
-        id: 'quick-start',
-        render: () => (
-          <p className="mt-3 text-[10px] text-slate-600 dark:text-slate-300 text-center">
-            To get started you need: a Google Classroom class, a stack of student work, and 5 spare minutes.
-          </p>
-        ),
-      },
-      {
-        id: 'role-selector',
-        render: () => (
-          <div className="mt-3 flex justify-center gap-2 text-[9px]">
-            <span className="px-2 py-1 rounded-full bg-white/80 dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-700/80 text-slate-600 dark:text-slate-300">
-              Elementary
-            </span>
-            <span className="px-2 py-1 rounded-full bg-white/80 dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-700/80 text-slate-600 dark:text-slate-300">
-              Middle
-            </span>
-            <span className="px-2 py-1 rounded-full bg-white/80 dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-700/80 text-slate-600 dark:text-slate-300">
-              High School
-            </span>
-          </div>
-        ),
-      },
-      {
-        id: 'support-line',
-        render: () => (
-          <p className="mt-3 text-[9px] text-slate-500 dark:text-slate-400 text-center">
-            Need help getting set up? Email <span className="font-semibold">donegrading@gmail.com</span>.
-          </p>
-        ),
-      },
-      {
-        id: 'orientation',
-        render: () => (
-          <p className="mt-3 text-[10px] text-slate-600 dark:text-slate-300 text-center">
-            In 2 minutes: pick a class, scan work, and sync grades back to Classroom.
-          </p>
-        ),
-      },
-    ];
-  }, []);
-
-  const welcomeSnippetIndex = useMemo(
-    () => Math.floor(Math.random() * welcomeSnippets.length),
-    [welcomeSnippets.length]
-  );
-  
-  // Fixed Google OAuth Client ID for Classroom integration
-  const GOOGLE_CLIENT_ID = '137273476022-4il1dq3mj28v0g1c2t59mt3l341evlbl.apps.googleusercontent.com';
+ 
+  // Google OAuth Client ID – production client for app.donegrading.com; fix bad/truncated env values
+  const PRODUCTION_GOOGLE_CLIENT_ID =
+    '705695813275-roaepb7an7bkq4gn9b7fr5c73vp26303.apps.googleusercontent.com';
+  const raw =
+    (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID) ||
+    PRODUCTION_GOOGLE_CLIENT_ID;
+  const isInvalid =
+    raw !== PRODUCTION_GOOGLE_CLIENT_ID &&
+    (raw === '137273476022-4il1dq3mj28v0g1c2t59mt3l341evlbl.apps.googleusercontent.com' ||
+     !/^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$/i.test(String(raw).trim()));
+  const effectiveGoogleClientId = isInvalid ? PRODUCTION_GOOGLE_CLIENT_ID : String(raw).trim();
   
   const [authError, setAuthError] = useState<string | null>(null);
+  const [authSuccessMessage, setAuthSuccessMessage] = useState<string | null>(null);
   const [creationError, setCreationError] = useState<string | null>(null);
 
-  const [courses, setCourses] = useState<Course[]>(() => {
-    const saved = localStorage.getItem('dg_cache_courses');
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [assignments, setAssignments] = useState<Assignment[]>(() => {
-    const saved = localStorage.getItem('dg_cache_assignments');
-    return saved ? JSON.parse(saved) : [];
-  });
-  
-  const [students, setStudents] = useState<Student[]>(() => {
-    const saved = localStorage.getItem('dg_cache_students');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [courses, setCourses] = useState<Course[]>(() => safeParseJson<Course[]>(localStorage.getItem('dg_cache_courses'), []));
+  const [assignments, setAssignments] = useState<Assignment[]>(() => safeParseJson<Assignment[]>(localStorage.getItem('dg_cache_assignments'), []));
+  const [students, setStudents] = useState<Student[]>(() => safeParseJson<Student[]>(localStorage.getItem('dg_cache_students'), []));
 
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
   const [gradingMode, setGradingMode] = useState<GradingMode | null>(null);
 
-  const isSignedIn = useMemo(
-    () => !!accessToken || isDemoSignedIn,
-    [accessToken, isDemoSignedIn]
-  );
-  
-  const [gradedWorks, setGradedWorks] = useState<GradedWork[]>(() => {
-    const saved = localStorage.getItem('dg_pending_sync');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [firebaseUser, setFirebaseUser] = useState<import('firebase/auth').User | null>(null);
 
-  const [history, setHistory] = useState<GradedWork[]>(() => {
-    const saved = localStorage.getItem('dg_history');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const isSignedIn = useMemo(() => !!accessToken || !!firebaseUser, [accessToken, firebaseUser]);
+  
+  const [gradedWorks, setGradedWorks] = useState<GradedWork[]>(() => safeParseJson<GradedWork[]>(localStorage.getItem('dg_pending_sync'), []));
+  const [history, setHistory] = useState<GradedWork[]>(() => safeParseJson<GradedWork[]>(localStorage.getItem('dg_history'), []));
+
+  const SCHEDULE_KEY = 'dg_schedule_items_v1';
+  const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>(() =>
+    safeParseJson<ScheduleItem[]>(localStorage.getItem(SCHEDULE_KEY), [])
+  );
+  const [scheduleView, setScheduleView] = useState<ScheduleViewMode>('daily');
+  const [scheduleTitle, setScheduleTitle] = useState('');
+  const [scheduleKind, setScheduleKind] = useState<'event' | 'reminder' | 'teacherBlock' | 'appointment' | 'meeting'>('reminder');
+  const [scheduleDate, setScheduleDate] = useState('');
+  const [scheduleNotes, setScheduleNotes] = useState('');
+  const [scheduleCourseId, setScheduleCourseId] = useState('');
+  const [scheduleAssignmentId, setScheduleAssignmentId] = useState('');
+  const [scheduleTime, setScheduleTime] = useState('');
+  const [scheduleRecurrence, setScheduleRecurrence] = useState<'once' | 'daily' | 'weekly' | 'monthly'>('once');
+  const [scheduleFormOpen, setScheduleFormOpen] = useState(false);
+  const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
+  const [activeScheduleHour, setActiveScheduleHour] = useState<number | null>(null);
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [isGeneratingRubric, setIsGeneratingRubric] = useState(false);
-  const [isSyncingClassroom, setIsSyncingClassroom] = useState(false);
+  const [_isSyncingClassroom, setIsSyncingClassroom] = useState(false);
   const [syncProgress, setSyncProgress] = useState<{
     current: number;
     total: number;
@@ -461,13 +414,13 @@ const App: React.FC = () => {
   const [newAsnMaxScore, setNewAsnMaxScore] = useState<number>(100);
   const [isCreatingAssignment, setIsCreatingAssignment] = useState(false);
   
-  const [isAutoMode, setIsAutoMode] = useState(true);
+  const [_isAutoMode, _setIsAutoMode] = useState(true);
   const [isFlashOn, setIsFlashOn] = useState(false);
   const [showQuickPick, setShowQuickPick] = useState(false);
   const [pendingWork, setPendingWork] = useState<Partial<GradingResponse> & { imageUrls: string[] } | null>(null);
   const [activeGeometry, setActiveGeometry] = useState<GeometricData | null>(null);
   const [scanHealth, setScanHealth] = useState<number>(0);
-  const [oneWordCommand, setOneWordCommand] = useState<string | null>(null);
+  const [_oneWordCommand, setOneWordCommand] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [scanQueueCount, setScanQueueCount] = useState(0);
   const [scanReviewQueueCount, setScanReviewQueueCount] = useState(0);
@@ -509,35 +462,98 @@ const App: React.FC = () => {
   // Phase 2: Voice-to-task (local)
   const GRADE_FOLLOWUPS_KEY = 'dg_grade_followups_v1';
   const QUICK_TODOS_KEY = 'dg_quick_todos_v1';
-  const COMM_VOICE_DRAFT_KEY = 'dg_comm_voice_draft_v1';
-  const [gradeFollowUps, setGradeFollowUps] = useState<{ id: string; text: string; createdAt: number; done?: boolean }[]>(() => {
-    try {
-      const saved = localStorage.getItem(GRADE_FOLLOWUPS_KEY);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
+  const [gradeFollowUps, setGradeFollowUps] = useState<{ id: string; text: string; createdAt: number; done?: boolean }[]>(() =>
+    safeParseJson(localStorage.getItem(GRADE_FOLLOWUPS_KEY), [] as { id: string; text: string; createdAt: number; done?: boolean }[])
+  );
+  const [quickTodos, setQuickTodos] = useState<{ id: string; text: string; createdAt: number; done?: boolean }[]>(() =>
+    safeParseJson(localStorage.getItem(QUICK_TODOS_KEY), [] as { id: string; text: string; createdAt: number; done?: boolean }[])
+  );
+  // Voice capture: bottom mic inserts into currently focused field (no modal UI).
+  const lastFocusedFieldRef = useRef<HTMLElement | null>(null);
+  const voiceTargetRef = useRef<HTMLElement | null>(null);
+  const insertTextIntoFocusedField = useCallback((raw: string) => {
+    const text = (raw || '').trim();
+    if (!text) return;
+
+    const isEditable = (el: HTMLElement | null) =>
+      !!el &&
+      (el instanceof HTMLTextAreaElement ||
+        el instanceof HTMLInputElement ||
+        (el as any).isContentEditable);
+
+    const activeEl = document.activeElement as HTMLElement | null;
+    const el = isEditable(activeEl)
+      ? activeEl
+      : isEditable(lastFocusedFieldRef.current)
+        ? (lastFocusedFieldRef.current as HTMLElement)
+        : null;
+
+    if (!el) return;
+
+    // Inputs: use setRangeText for reliable cursor insert + fire input event for React.
+    if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
+      if (el.disabled || (el as any).readOnly) return;
+      const value = el.value ?? '';
+      const start = typeof el.selectionStart === 'number' ? el.selectionStart : value.length;
+      const end = typeof el.selectionEnd === 'number' ? el.selectionEnd : value.length;
+      const needsSpace = start > 0 && !/\s/.test(value[start - 1]);
+      const insert = `${needsSpace ? ' ' : ''}${text}`;
+      try {
+        el.setRangeText(insert, start, end, 'end');
+      } catch {
+        // Fallback: append
+        (el as any).value = value + (value && !value.endsWith(' ') ? ' ' : '') + text;
+      }
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.focus();
+      return;
     }
-  });
-  const [quickTodos, setQuickTodos] = useState<{ id: string; text: string; createdAt: number; done?: boolean }[]>(() => {
+
+    // ContentEditable fallback
     try {
-      const saved = localStorage.getItem(QUICK_TODOS_KEY);
-      return saved ? JSON.parse(saved) : [];
+      document.execCommand('insertText', false, text);
     } catch {
-      return [];
+      // no-op
     }
-  });
-  const [showVoiceCapture, setShowVoiceCapture] = useState(false);
-  const [voiceDraft, setVoiceDraft] = useState('');
-  const [voiceRoute, setVoiceRoute] = useState<'plan' | 'grade' | 'communicate' | 'todo' | 'reminder'>('grade');
+  }, []);
+
+  useEffect(() => {
+    const onFocusIn = (event: FocusEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      const isField =
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLInputElement ||
+        (target as any).isContentEditable;
+      if (!isField) return;
+      lastFocusedFieldRef.current = target;
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      const t = event.target as HTMLElement | null;
+      if (!t) return;
+      const closest = (t.closest('textarea,input,[contenteditable="true"]') as HTMLElement | null) ?? null;
+      if (closest) lastFocusedFieldRef.current = closest;
+    };
+    window.addEventListener('focusin', onFocusIn);
+    window.addEventListener('pointerdown', onPointerDown, { capture: true });
+    return () => window.removeEventListener('focusin', onFocusIn);
+  }, []);
+
+  const {
+    isListening: isNavListening,
+    toggleListening: toggleNavListening,
+    hasSupport: navHasSupport,
+  } = useSpeechToText(insertTextIntoFocusedField, { continuous: true, interimResults: false, autoRestart: true, lang: 'en-US' });
+  useEffect(() => {
+    if (!isNavListening) {
+      if (voiceTargetRef.current) {
+        voiceTargetRef.current.classList.remove('dg-voice-target');
+        voiceTargetRef.current = null;
+      }
+    }
+  }, [isNavListening]);
   const NAV_USAGE_KEY = 'dg_nav_usage_v1';
-  const [navUsage, setNavUsage] = useState<Record<string, number>>(() => {
-    try {
-      const raw = localStorage.getItem(NAV_USAGE_KEY);
-      return raw ? JSON.parse(raw) : {};
-    } catch {
-      return {};
-    }
-  });
+  const [navUsage, setNavUsage] = useState<Record<string, number>>(() => safeParseJson(localStorage.getItem(NAV_USAGE_KEY), {} as Record<string, number>));
   const [dragCourseId, setDragCourseId] = useState<string | null>(null);
   const [dragAssignmentId, setDragAssignmentId] = useState<string | null>(null);
 
@@ -556,29 +572,24 @@ const App: React.FC = () => {
   const PLAN_US_STATE_KEY = 'dg_plan_us_state';
   const FILE_VAULT_KEY = 'dg_file_vault_links';
 
-  const [lessonTopic, setLessonTopic] = useState('');
+  const [lessonTopic, _setLessonTopic] = useState('');
   const [lessonResult, setLessonResult] = useState<LessonScriptResult | null>(null);
   const [lessonLoading, setLessonLoading] = useState(false);
   const [planAiError, setPlanAiError] = useState<string | null>(null);
   const [planActionLoading, setPlanActionLoading] = useState<null | 'share'>(null);
   const [planActionMessage, setPlanActionMessage] = useState<string | null>(null);
-  const [diffLevel, setDiffLevel] = useState<'simplified' | 'advanced' | null>(null);
+  const [_diffLevel, setDiffLevel] = useState<'simplified' | 'advanced' | null>(null);
   const [differentiationText, setDifferentiationText] = useState('');
   const [diffLoading, setDiffLoading] = useState(false);
-  const [fileVaultLinks, setFileVaultLinks] = useState<{ label: string; url: string }[]>(() => {
-    try {
-      const raw = localStorage.getItem(FILE_VAULT_KEY);
-      return raw ? JSON.parse(raw) : [];
-    } catch { return []; }
-  });
+  const [fileVaultLinks, setFileVaultLinks] = useState<{ label: string; url: string }[]>(() => safeParseJson(localStorage.getItem(FILE_VAULT_KEY), [] as { label: string; url: string }[]));
 
-  const [planLessonTitle, setPlanLessonTitle] = useState('');
-  const [planUnit, setPlanUnit] = useState('Unit 4: Ecosystems');
-  const [planVersion, setPlanVersion] = useState<PlanVersion>('Standard');
+  const [planLessonTitle, _setPlanLessonTitle] = useState('');
+  const [planUnit, _setPlanUnit] = useState('Unit 4: Ecosystems');
+  const [planVersion, _setPlanVersion] = useState<PlanVersion>('Standard');
   const [planTab, setPlanTab] = useState<'context' | 'blocks' | 'resources' | 'assessment'>('context');
   const [planBlockTab, setPlanBlockTab] = useState<'A' | 'B' | 'C' | 'D'>('A');
   const [planLastSaved, setPlanLastSaved] = useState<Date | null>(null);
-  const [isPlanSaving, setIsPlanSaving] = useState(false);
+  const [_isPlanSaving, _setIsPlanSaving] = useState(false);
 
   const [planStateRegion, setPlanStateRegion] = useState<string>(() => {
     try {
@@ -686,6 +697,13 @@ const App: React.FC = () => {
   }, [isDarkMode]);
 
   useEffect(() => localStorage.setItem('dg_pending_sync', JSON.stringify(gradedWorks)), [gradedWorks]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(SCHEDULE_KEY, JSON.stringify(scheduleItems));
+    } catch {
+      // ignore
+    }
+  }, [scheduleItems]);
   useEffect(() => { try { localStorage.setItem(FILE_VAULT_KEY, JSON.stringify(fileVaultLinks)); } catch (_) {} }, [fileVaultLinks, FILE_VAULT_KEY]);
   useEffect(() => {
     // Lightweight autosave for the Plan tab so educators don't lose work.
@@ -907,6 +925,127 @@ const App: React.FC = () => {
     return { pendingGrades: gradedWorks.length, atRiskStudents: atRisk };
   }, [history, gradedWorks.length]);
 
+  // Summary for the signed-in home screen (AuthView when isSignedIn)
+  const homeSummary = useMemo(() => {
+    const now = new Date();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const sameDay = (isoDate: string) => {
+      const d = new Date(isoDate);
+      if (Number.isNaN(d.getTime())) return false;
+      d.setHours(0, 0, 0, 0);
+      return d.getTime() === today.getTime();
+    };
+
+    // Lesson today: first teacher block on today's schedule
+    const teacherBlocksToday = scheduleItems
+      .filter((item) => (item.kind ?? 'reminder') === 'teacherBlock' && sameDay(item.date))
+      .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+
+    let lesson: { title: string; course?: string; timeLabel?: string } | undefined;
+    if (teacherBlocksToday.length > 0) {
+      const item = teacherBlocksToday[0];
+      const courseName = item.courseId ? courses.find((c) => c.id === item.courseId)?.name : undefined;
+      let timeLabel: string | undefined;
+      if (item.time) {
+        const [hRaw, mRaw] = item.time.split(':');
+        const h = Number(hRaw);
+        const m = Number(mRaw ?? '0');
+        if (!Number.isNaN(h) && !Number.isNaN(m)) {
+          const start = new Date();
+          start.setHours(h, m, 0, 0);
+          const diffMs = start.getTime() - now.getTime();
+          if (diffMs > 0) {
+            const diffMins = Math.round(diffMs / 60000);
+            if (diffMins < 60) {
+              timeLabel = `Starts in ${diffMins} minute${diffMins === 1 ? '' : 's'}`;
+            } else {
+              const diffHours = Math.round(diffMins / 60);
+              timeLabel = `Starts in ${diffHours} hour${diffHours === 1 ? '' : 's'}`;
+            }
+          } else {
+            timeLabel = 'Happening now or earlier today';
+          }
+        }
+      }
+      if (!timeLabel) {
+        timeLabel = 'Any time today';
+      }
+      lesson = {
+        title: item.title,
+        course: courseName,
+        timeLabel,
+      };
+    }
+
+    const assignmentsToGrade = dashboardAttention.pendingGrades;
+
+    const parentsToContact = gradeFollowUps.filter((f) => !f.done).length;
+
+    // Upcoming: next scheduled item in the future (any kind)
+    const upcomingCandidates = scheduleItems
+      .map((item) => {
+        const d = new Date(item.date);
+        if (Number.isNaN(d.getTime())) return null;
+        if (item.time) {
+          const [hRaw, mRaw] = item.time.split(':');
+          const h = Number(hRaw);
+          const m = Number(mRaw ?? '0');
+          if (!Number.isNaN(h) && !Number.isNaN(m)) {
+            d.setHours(h, m, 0, 0);
+          }
+        }
+        return { item, when: d };
+      })
+      .filter((x): x is { item: ScheduleItem; when: Date } => !!x && x.when.getTime() > now.getTime())
+      .sort((a, b) => a.when.getTime() - b.when.getTime());
+
+    let upcoming: { title: string; whenLabel: string } | undefined;
+    if (upcomingCandidates.length > 0) {
+      const { item, when } = upcomingCandidates[0];
+      let whenLabel = '';
+      const diffMs = when.getTime() - now.getTime();
+      const oneDayMs = 24 * 60 * 60 * 1000;
+      if (sameDay(when.toISOString().slice(0, 10))) {
+        whenLabel = `Later today at ${when.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+      } else if (diffMs > 0 && diffMs < oneDayMs * 2) {
+        whenLabel = `Tomorrow at ${when.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+      } else {
+        try {
+          whenLabel = when.toLocaleDateString(undefined, {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+          });
+        } catch {
+          whenLabel = 'Coming up';
+        }
+      }
+      upcoming = {
+        title: item.title,
+        whenLabel,
+      };
+    }
+
+    let todayShortLabel = '';
+    try {
+      todayShortLabel = new Date().toLocaleDateString(undefined, {
+        weekday: 'long',
+      });
+    } catch {
+      todayShortLabel = '';
+    }
+
+    return {
+      todayShortLabel,
+      lesson,
+      assignmentsToGrade,
+      parentsToContact,
+      upcoming,
+    };
+  }, [scheduleItems, courses, dashboardAttention, gradeFollowUps]);
+
   const dashboardNotifiedRef = useRef<{ pending: number; atRisk: number } | null>(null);
 
   // Push notification when Grade screen has tasks needing attention
@@ -944,38 +1083,125 @@ const App: React.FC = () => {
     return () => window.clearTimeout(t);
   }, [phase, dashboardAttention]);
 
-  const loginMock = () => {
-    if (courses.length === 0) {
-      setCourses([
-        { id: 'demo1', name: 'AP Biology - Period 3', period: 'Period 3', source: 'local', lastUsed: Date.now() },
-        { id: 'demo2', name: 'Chemistry Honors', period: 'Period 1', source: 'local', lastUsed: Date.now() - 100000 },
-        { id: 'demo3', name: 'Environmental Science', period: 'Period 5', source: 'local', lastUsed: Date.now() - 500000 }
-      ]);
+  const handleEmailLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthSuccessMessage(null);
+    if (authMode === 'signup' && !fullName.trim()) {
+      setAuthError('Please enter your full name.');
+      return;
     }
-    logEvent('auth_demo_login');
-    setIsDemoSignedIn(true);
-    setPhase(AppPhase.AUTHENTICATION);
+    if (!email.trim() || !password) {
+      setAuthError('Please enter your email and password.');
+      return;
+    }
+    if (!isOnline) {
+      setAuthError('You are offline. Connect to the internet to sign in.');
+      return;
+    }
+    setAuthError(null);
+    try {
+      if (authMode === 'signup') {
+        const userCred = await createUserWithEmailAndPassword(auth, email.trim(), password);
+        const name = fullName.trim();
+        if (name && userCred.user) {
+          await updateProfile(userCred.user, { displayName: name });
+          setEducatorName(name);
+          localStorage.setItem('dg_educator_name', name);
+        }
+        setCourses([]);
+        setAssignments([]);
+        setStudents([]);
+        setGradedWorks([]);
+        setHistory([]);
+        localStorage.removeItem('dg_cache_courses');
+        localStorage.removeItem('dg_cache_assignments');
+        localStorage.removeItem('dg_cache_students');
+        localStorage.removeItem('dg_pending_sync');
+        localStorage.removeItem('dg_history');
+        logEvent('auth_email_sign_up');
+        setPhase(AppPhase.AUTHENTICATION);
+      } else {
+        await signInWithEmailAndPassword(auth, email.trim(), password);
+        setCourses([]);
+        setAssignments([]);
+        setStudents([]);
+        setGradedWorks([]);
+        setHistory([]);
+        localStorage.removeItem('dg_cache_courses');
+        localStorage.removeItem('dg_cache_assignments');
+        localStorage.removeItem('dg_cache_students');
+        localStorage.removeItem('dg_pending_sync');
+        localStorage.removeItem('dg_history');
+        logEvent('auth_email_sign_in');
+        setPhase(AppPhase.AUTHENTICATION);
+      }
+    } catch (err: any) {
+      const code = err?.code || '';
+      if (authMode === 'signin' && code === 'auth/user-not-found') {
+        setAuthError('No account found. Switch to "Sign up" to create one.');
+      } else if (authMode === 'signup' && code === 'auth/email-already-in-use') {
+        setAuthError('This email is already registered. Switch to "Sign in" to log in.');
+      } else if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
+        setAuthError('Incorrect password. Please try again.');
+      } else if (code === 'auth/invalid-email') {
+        setAuthError('Please enter a valid email address.');
+      } else if (code === 'auth/weak-password') {
+        setAuthError('Password should be at least 6 characters.');
+      } else {
+        setAuthError(err?.message?.replace('Firebase: ', '') || 'Sign in failed. Please try again.');
+      }
+    }
   };
 
-  const handleEmailLogin = (e: React.FormEvent) => { e.preventDefault(); if (!email || !password) { setAuthError("Email and password required."); return; } loginMock(); };
+  const handlePasswordReset = async () => {
+    setAuthSuccessMessage(null);
+    if (!email.trim()) {
+      setAuthError('Enter your email above to reset your password.');
+      return;
+    }
+    if (!isOnline) {
+      setAuthError('You are offline. Connect to the internet to reset your password.');
+      return;
+    }
+    try {
+      await sendPasswordResetEmail(auth, email.trim());
+      setAuthError(null);
+      setAuthSuccessMessage('Check your email/spam for a link to reset your password.');
+    } catch (err: any) {
+      setAuthSuccessMessage(null);
+      const code = err?.code || '';
+      if (code === 'auth/user-not-found') {
+        setAuthError('No account found with that email.');
+      } else if (code === 'auth/invalid-email') {
+        setAuthError('Please enter a valid email address.');
+      } else if (code === 'auth/too-many-requests') {
+        setAuthError('Too many reset attempts. Try again later.');
+      } else {
+        setAuthError(err?.message?.replace('Firebase: ', '') || 'Could not send reset email. Please try again.');
+      }
+    }
+  };
 
   // Shared logic: complete sign-in after we have an access token (used by both popup callback and redirect hash)
-  const completeGoogleSignIn = useCallback((accessToken: string) => {
-    setAccessToken(accessToken);
-    const service = new ClassroomService(accessToken);
+  const completeGoogleSignIn = useCallback((token: string) => {
+    setAccessToken(token);
+    const service = new ClassroomService(token);
     setClassroom(service);
     setAuthError(null);
     logEvent('auth_google_sign_in');
     setPhase(AppPhase.AUTHENTICATION);
+    saveAuthSession(token, '');
 
     fetch('https://classroom.googleapis.com/v1/userProfiles/me', {
-      headers: { Authorization: `Bearer ${accessToken}` }
+      headers: { Authorization: `Bearer ${token}` }
     })
       .then(res => res.json())
       .then(profileData => {
         if (profileData.name?.fullName) {
-          setEducatorName(profileData.name.fullName);
-          localStorage.setItem('dg_educator_name', profileData.name.fullName);
+          const name = profileData.name.fullName;
+          setEducatorName(name);
+          localStorage.setItem('dg_educator_name', name);
+          saveAuthSession(token, name);
         }
       })
       .catch(e => console.error("Could not fetch educator profile name", e));
@@ -988,17 +1214,58 @@ const App: React.FC = () => {
       });
   }, []);
 
+  // Restore session on load if user signed in within the last week
+  useEffect(() => {
+    const session = loadAuthSession();
+    if (session?.accessToken) {
+      setAccessToken(session.accessToken);
+      const service = new ClassroomService(session.accessToken);
+      setClassroom(service);
+      if (session.educatorName) {
+        setEducatorName(session.educatorName);
+      }
+      service.getCourses().then(setCourses).catch(() => {});
+    }
+  }, []);
+
+  // Sync Firebase Auth state (email sign-in)
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      setFirebaseUser(user);
+      if (user) {
+        const name = user.displayName || user.email?.split('@')[0] || 'Teacher';
+        setEducatorName(name);
+        localStorage.setItem('dg_educator_name', name);
+      }
+    });
+    return () => unsub();
+  }, []);
+
   // Handle return from Google OAuth redirect (token in URL hash) so we never get stuck on "One moment please" in a popup
   useEffect(() => {
     const hash = window.location.hash;
     if (!hash) return;
     const params = new URLSearchParams(hash.replace(/^#/, ''));
-    const accessToken = params.get('access_token');
-    if (accessToken) {
+    const tokenFromUrl = params.get('access_token');
+    if (tokenFromUrl) {
       window.history.replaceState(null, '', window.location.pathname + window.location.search);
-      completeGoogleSignIn(accessToken);
+      completeGoogleSignIn(tokenFromUrl);
     }
   }, [completeGoogleSignIn]);
+
+  // Extend session on activity (phase change, visibility) so 7‑day window resets with use
+  useEffect(() => {
+    if (!accessToken) return;
+    touchAuthSession();
+  }, [accessToken, phase]);
+  useEffect(() => {
+    if (!accessToken) return;
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') touchAuthSession();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [accessToken]);
 
   const handleGoogleLogin = () => {
     if (!isOnline) {
@@ -1015,7 +1282,7 @@ const App: React.FC = () => {
       const redirectUri = `${window.location.origin}${window.location.pathname || '/'}`;
 
       const client = g.accounts.oauth2.initTokenClient({
-        client_id: GOOGLE_CLIENT_ID,
+        client_id: effectiveGoogleClientId,
         scope: "https://www.googleapis.com/auth/classroom.courses https://www.googleapis.com/auth/classroom.courses.readonly https://www.googleapis.com/auth/classroom.coursework.me https://www.googleapis.com/auth/classroom.rosters.readonly https://www.googleapis.com/auth/classroom.coursework.students https://www.googleapis.com/auth/classroom.profile.emails https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets",
         prompt: 'consent',
         ux_mode: 'redirect',
@@ -1032,6 +1299,39 @@ const App: React.FC = () => {
     } catch (err: any) { 
       setAuthError(`OAuth Failure: ${err.message}`); 
     }
+  };
+
+  const handleAppleLogin = () => {
+    if (!isOnline) {
+      setAuthError('You are offline. Connect to the internet to sign in with Apple.');
+      return;
+    }
+    const clientId = import.meta.env.VITE_APPLE_CLIENT_ID;
+    const AppleIDAuth = (window as any).AppleID?.auth;
+    if (!clientId || !AppleIDAuth?.init) {
+      setAuthError('Apple Sign-In is not yet configured. Please use Sign in with Google for now.');
+      return;
+    }
+    AppleIDAuth.init({
+      clientId,
+      scope: 'name email',
+      redirectURI: `${window.location.origin}${window.location.pathname || '/'}`,
+      usePopup: true,
+    })
+      .then(() =>
+        AppleIDAuth.signIn().then(
+          (res: any) => {
+            if (res?.authorization?.code) {
+              // TODO: exchange code for tokens and complete sign-in
+              setAuthError('Apple Sign-In integration is in progress. Please use Sign in with Google.');
+            }
+          },
+          () => setAuthError('Apple Sign-In was cancelled or failed.')
+        )
+      )
+      .catch(() =>
+        setAuthError('Apple Sign-In is not yet configured. Please use Sign in with Google for now.')
+      );
   };
 
   const selectCourse = async (course: Course) => {
@@ -1067,46 +1367,7 @@ const App: React.FC = () => {
 
   const startGrading = (mode: GradingMode) => { setGradingMode(mode); setPhase(AppPhase.GRADING_LOOP); };
 
-  const classifyVoiceIntent = useCallback((text: string): 'todo' | 'message' | 'note' | 'reminder' => {
-    const t = (text || '').toLowerCase();
-    if (!t.trim()) return 'note';
-    if (t.includes('remind me') || t.startsWith('remind') || t.includes('reminder')) return 'reminder';
-    if (t.includes('message') || t.includes('text ') || t.includes('sms') || t.includes('email') || t.includes('call ')) return 'message';
-    if (t.includes('todo') || t.includes('to do') || t.includes('task')) return 'todo';
-    return 'note';
-  }, []);
-
-  const openVoiceCapture = useCallback(() => {
-    setVoiceRoute('reminder');
-    setVoiceDraft('');
-    setShowVoiceCapture(true);
-  }, []);
-
-  const saveVoiceCapture = useCallback(() => {
-    const text = voiceDraft.trim();
-    if (!text) { setShowVoiceCapture(false); return; }
-
-    const inferred = classifyVoiceIntent(text);
-    const now = Date.now();
-    const id = `${now}_${Math.random().toString(16).slice(2)}`;
-
-    if (voiceRoute === 'plan') {
-      setReflectionNote((prev) => (prev ? `${prev}\n` : '') + text);
-    } else if (voiceRoute === 'communicate') {
-      try { localStorage.setItem(COMM_VOICE_DRAFT_KEY, text); } catch {}
-      setPhase(AppPhase.RECORDS);
-    } else if (voiceRoute === 'reminder') {
-      setQuickTodos((prev) => [{ id, text: `Reminder: ${text}`, createdAt: now, done: false }, ...prev].slice(0, 50));
-    } else if (voiceRoute === 'todo' || inferred === 'todo') {
-      setQuickTodos((prev) => [{ id, text, createdAt: now, done: false }, ...prev].slice(0, 50));
-    } else {
-      // Grade follow-up note by default
-      setGradeFollowUps((prev) => [{ id, text, createdAt: now, done: false }, ...prev].slice(0, 50));
-    }
-
-    setShowVoiceCapture(false);
-    setVoiceDraft('');
-  }, [voiceDraft, voiceRoute, classifyVoiceIntent, COMM_VOICE_DRAFT_KEY, setPhase]);
+  // (Removed) old modal voice capture flow.
   
   const handleScanPaperRubric = () => { 
     setCameraError(null);
@@ -1157,7 +1418,7 @@ const App: React.FC = () => {
 
   const handleShareApp = async () => {
     const shareUrl = window.location.origin;
-    const shareText = 'DoneGrading – scan, grade, and sync to Google Classroom.';
+    const shareText = 'Checkout DoneGrading! An app made for educators to plan lessons, teach with timers, grade with AI, schedule classes, and communicate with students—all in one place.';
     try {
       if ((navigator as any).share) {
         await (navigator as any).share({
@@ -1166,21 +1427,35 @@ const App: React.FC = () => {
           url: shareUrl,
         });
       } else if (navigator.clipboard && (navigator.clipboard as any).writeText) {
-        await navigator.clipboard.writeText(shareUrl);
-        alert('Link copied to clipboard: ' + shareUrl);
+        await navigator.clipboard.writeText(`${shareText}\n\n${shareUrl}`);
+        alert('Message and link copied to clipboard!');
       }
     } catch (e) {
       console.error('Share failed', e);
     }
   };
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
+    clearAuthSession();
+    if (firebaseUser) {
+      await firebaseSignOut(auth);
+      setFirebaseUser(null);
+    }
     setAccessToken(null);
     setClassroom(null);
-    setIsDemoSignedIn(false);
     setSelectedCourse(null);
     setSelectedAssignment(null);
     setAuthError(null);
+    setCourses([]);
+    setAssignments([]);
+    setStudents([]);
+    setGradedWorks([]);
+    setHistory([]);
+    localStorage.removeItem('dg_cache_courses');
+    localStorage.removeItem('dg_cache_assignments');
+    localStorage.removeItem('dg_cache_students');
+    localStorage.removeItem('dg_pending_sync');
+    localStorage.removeItem('dg_history');
     setPhase(AppPhase.AUTHENTICATION);
   };
 
@@ -1830,247 +2105,38 @@ const App: React.FC = () => {
     setNavUsage(prev => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
   }, []);
 
-  const renderAuth = () => {
-    if (isSignedIn) {
-      const signedInVia = accessToken ? 'Google Classroom' : 'demo mode';
-      const quickActions = [
-        {
-          key: 'grade' as const,
-          label: 'Grade student work',
-          icon: LayoutDashboard,
-          onClick: () => { bumpNavUsage('grade'); setPhase(AppPhase.DASHBOARD); },
-        },
-        {
-          key: 'teach' as const,
-          label: 'Teach class',
-          icon: Timer,
-          onClick: () => { bumpNavUsage('teach'); setPhase(AppPhase.CLASSROOM); },
-        },
-        {
-          key: 'plan' as const,
-          label: 'Plan lessons',
-          icon: Calendar,
-          onClick: () => { bumpNavUsage('plan'); setPhase(AppPhase.PLAN); },
-        },
-        {
-          key: 'communicate' as const,
-          label: 'Communicate',
-          icon: MessageCircle,
-          onClick: () => { bumpNavUsage('communicate'); setPhase(AppPhase.RECORDS); },
-        },
-      ].sort((a, b) => (navUsage[b.key] || 0) - (navUsage[a.key] || 0));
-
-      return (
-        <PageWrapper
-          headerTitle={educatorName || 'Welcome'}
-          headerSubtitle={todayLabel || undefined}
-          isOnline={isOnline}
-          isDarkMode={isDarkMode}
-          setIsDarkMode={setIsDarkMode}
-          syncStatus={syncStatus}
-        >
-          <div className="h-full w-full flex flex-col max-w-sm mx-auto py-4 gap-4">
-            <div className="flex flex-col items-center gap-5">
-              <img
-                src="/DoneGradingLogo.png"
-                alt="DoneGrading"
-                className="w-48 max-w-full drop-shadow-lg"
-              />
-              <p className="text-center text-slate-700 dark:text-slate-200 font-semibold text-[13px]">
-                Welcome back, {educatorName || 'teacher'}.
-              </p>
-              <p className="text-center text-[10px] font-bold text-slate-500 dark:text-slate-400">
-                You’re signed in via {signedInVia}.
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-2">
-              {quickActions.map(action => {
-                const baseColor =
-                  action.key === 'grade'
-                    ? 'bg-emerald-500 hover:bg-emerald-600 text-white border-emerald-500'
-                    : action.key === 'teach'
-                      ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-500'
-                      : action.key === 'plan'
-                        ? 'bg-indigo-500 hover:bg-indigo-600 text-white border-indigo-500'
-                        : 'bg-sky-500 hover:bg-sky-600 text-white border-sky-500';
-                return (
-                  <button
-                    key={action.key}
-                    type="button"
-                    onClick={action.onClick}
-                    className={`w-full py-2.5 rounded-xl border text-[11px] font-semibold flex items-center justify-between px-3 active:scale-[0.98] transition-all ${baseColor}`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <action.icon className="w-4 h-4" />
-                      <span className="font-black uppercase tracking-[0.16em]">{action.label}</span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="mt-auto pb-2 space-y-2">
-              <button
-                type="button"
-                onClick={handleShareApp}
-                className="w-full py-2.5 bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-700 rounded-xl text-[11px] font-semibold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
-              >
-                Share DoneGrading
-              </button>
-              <button
-                type="button"
-                onClick={handleSignOut}
-                className="w-full py-2 text-[10px] font-semibold text-slate-500 dark:text-slate-400 underline underline-offset-2"
-              >
-                Sign out
-              </button>
-              <div className="w-full text-[9px] text-slate-500 dark:text-slate-400 text-center space-y-1">
-                <p>
-                  <a href="http://donegrading.com/terms-of-services" target="_blank" rel="noreferrer" className="underline underline-offset-2">
-                    Terms of Service
-                  </a>
-                  {" | "}
-                  <a href="http://donegrading.com/Privacy-Policy" target="_blank" rel="noreferrer" className="underline underline-offset-2">
-                    Privacy Policy
-                  </a>
-                  {" | "}
-                  <a href="http://donegrading.com/Contact" target="_blank" rel="noreferrer" className="underline underline-offset-2">
-                    Contact
-                  </a>
-                </p>
-                <p>
-                  © DoneGrading | Created with ♥ by an educator for educators.
-                </p>
-              </div>
-            </div>
-          </div>
-        </PageWrapper>
-      );
-    }
-
-    return (
-      <PageWrapper
-        headerTitle="Welcome"
-        headerSubtitle={undefined}
-        isOnline={isOnline}
-        isDarkMode={isDarkMode}
-        setIsDarkMode={setIsDarkMode}
-        syncStatus={syncStatus}
-      >
-          <div className="h-full w-full flex flex-col max-w-sm mx-auto py-4 gap-4">
-          {/* Top: logo + promise */}
-          <div className="flex flex-col items-center gap-5">
-            <img
-              src="/DoneGradingLogo.png"
-              alt="DoneGrading"
-              className="w-48 max-w-full drop-shadow-lg"
-            />
-            <p className="text-center text-slate-700 dark:text-slate-200 font-semibold text-[13px]">
-              Cut grading time & focus on teaching.
-            </p>
-            <p className="text-center text-[10px] font-bold text-slate-500 dark:text-slate-400">
-              30-day free trial · then $19.99/month · Cancel anytime.
-            </p>
-            {authError && (
-              <div className="mt-2 px-3 py-2 bg-red-500/10 border border-red-500/50 rounded-xl text-red-500 text-[10px] font-bold w-full text-center">
-                {authError}
-              </div>
-            )}
-          </div>
-
-          {/* Middle: primary actions */}
-          <div className="flex flex-col gap-2">
-            <button
-              onClick={handleGoogleLogin}
-              className="w-full py-3 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-slate-200 dark:border-slate-700 rounded-xl flex items-center justify-center gap-3 shadow-sm active:scale-[0.98] transition-all"
-            >
-              <Chrome className="w-5 h-5 text-indigo-500" />
-              <span className="font-black text-[11px] uppercase tracking-[0.16em] text-slate-700 dark:text-slate-200">
-                Sign in with Google
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={loginMock}
-              className="w-full py-3 bg-slate-900/85 dark:bg-slate-100/95 border border-slate-900/20 dark:border-slate-100/20 rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition-all text-white dark:text-slate-900 text-[11px] font-black uppercase tracking-[0.16em]"
-            >
-              <Zap className="w-4 h-4" />
-              Try a live demo
-            </button>
-
-            {/* Rotating educational snippet */}
-            {welcomeSnippets[welcomeSnippetIndex]?.render()}
-          </div>
-
-          {/* Bottom: compact reveal for secondary options + tiny footer */}
-          <div className="mt-auto space-y-2 pb-2">
-            <button
-              type="button"
-              onClick={() => setShowMoreAuthOptions(v => !v)}
-              className="w-full py-2 rounded-xl bg-white/40 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-700/80 text-[10px] font-semibold text-slate-600 dark:text-slate-300 flex items-center justify-between px-3 active:scale-[0.98] transition-all"
-            >
-              <span>{showMoreAuthOptions ? 'Hide other sign-in options' : 'More sign-in options'}</span>
-              <ChevronRight className={`w-4 h-4 transition-transform ${showMoreAuthOptions ? 'rotate-90' : ''}`} />
-            </button>
-
-            {showMoreAuthOptions && (
-              <div className="w-full bg-white/80 dark:bg-slate-950/85 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 grid grid-cols-1 gap-2">
-                <form onSubmit={handleEmailLogin} className="space-y-1.5">
-                  <input
-                    type="email"
-                    placeholder="Email"
-                    value={email}
-                    onChange={e => setEmail(e.target.value)}
-                    className="w-full px-3 py-2 bg-white/90 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 rounded-lg text-[12px] font-semibold outline-none focus:border-indigo-400 transition-all"
-                  />
-                  <input
-                    type="password"
-                    placeholder="Password"
-                    value={password}
-                    onChange={e => setPassword(e.target.value)}
-                    className="w-full px-3 py-2 bg-white/90 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 rounded-lg text-[12px] font-semibold outline-none focus:border-indigo-400 transition-all"
-                  />
-                  <button
-                    type="submit"
-                    className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-black uppercase tracking-[0.12em] text-[10px] shadow-sm active:scale-[0.98] transition-all"
-                  >
-                    Sign in with Email
-                  </button>
-                </form>
-
-                <button
-                  type="button"
-                  className="w-full py-2.5 bg-black dark:bg-white border border-slate-900 dark:border-white rounded-lg flex items-center justify-center gap-3 shadow-sm active:scale-[0.98] transition-all text-white dark:text-slate-900 text-[10px] font-black uppercase tracking-[0.16em]"
-                >
-                  <AppleIcon className="w-4 h-4" />
-                  Sign in with Apple
-                </button>
-              </div>
-            )}
-
-            <div className="w-full text-[9px] text-slate-500 dark:text-slate-400 text-center space-y-1">
-              <p>
-                <a href="http://donegrading.com/terms-of-services" target="_blank" rel="noreferrer" className="underline underline-offset-2">
-                  Terms of Service
-                </a>
-                {" | "}
-                <a href="http://donegrading.com/Privacy-Policy" target="_blank" rel="noreferrer" className="underline underline-offset-2">
-                  Privacy Policy
-                </a>
-                {" | "}
-                <a href="http://donegrading.com/Contact" target="_blank" rel="noreferrer" className="underline underline-offset-2">
-                  Contact
-                </a>
-              </p>
-              <p>
-                © DoneGrading | Created with ♥ by an educator for educators.
-              </p>
-            </div>
-          </div>
-        </div>
-      </PageWrapper>
-    );
+  const appContextValue: import('./context/AppContext').AppContextValue = {
+    phase,
+    setPhase,
+    isSignedIn,
+    accessToken,
+    educatorName,
+    todayLabel,
+    isOnline,
+    isDarkMode,
+    setIsDarkMode,
+    syncStatus,
+    navUsage,
+    bumpNavUsage,
+    homeSummary,
+    handleShareApp,
+    handleSignOut,
+    authError,
+    authSuccessMessage,
+    handleGoogleLogin,
+    handleAppleLogin,
+    handlePasswordReset,
+    showMoreAuthOptions,
+    setShowMoreAuthOptions,
+    authMode,
+    setAuthMode,
+    handleEmailLogin,
+    email,
+    setEmail,
+    password,
+    setPassword,
+    fullName,
+    setFullName,
   };
 
   const renderDashboard = () => {
@@ -2129,7 +2195,7 @@ const App: React.FC = () => {
           })();
         }}
       >
-        <div className="h-full flex flex-col gap-4 overflow-y-auto pb-20 custom-scrollbar">
+        <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-y-auto pb-20 custom-scrollbar">
           {/* What needs your attention – at top */}
           <div className="p-4 rounded-xl bg-white/90 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 shadow-sm">
             <div className="flex items-center justify-between mb-3">
@@ -2300,7 +2366,7 @@ const App: React.FC = () => {
               </p>
             </div>
 
-            {dashboardResults.courses.map((course, index) => (
+            {dashboardResults.courses.map((course) => (
               <div
                 key={course.id}
                 draggable
@@ -2416,6 +2482,8 @@ const App: React.FC = () => {
               </button>
             </div>
           </div>
+          {/* Spacer so content has same vertical gap to Add sheet as Add sheet to bottom nav */}
+          <div aria-hidden="true" className="shrink-0" style={{ height: '6rem' }} />
         </div>
       </PageWrapper>
     );
@@ -2448,8 +2516,8 @@ const App: React.FC = () => {
         })();
       }}
     >
-       <div className="h-full overflow-y-auto flex flex-col gap-4 custom-scrollbar">
-         {filteredAssignmentsList.map((assignment, index) => (
+       <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4 custom-scrollbar">
+         {filteredAssignmentsList.map((assignment) => (
             <div
               key={assignment.id}
               draggable
@@ -2558,7 +2626,8 @@ const App: React.FC = () => {
 
   const renderCourseCreation = () => (
     <PageWrapper headerTitle="New Course" headerSubtitle="Google Classroom" onBack={() => setPhase(AppPhase.DASHBOARD)} isOnline={isOnline} isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode} syncStatus={syncStatus}>
-       <form onSubmit={handleCreateCourseLocal} className="flex flex-col gap-4 max-w-sm mx-auto w-full pt-10">
+       <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+       <form onSubmit={handleCreateCourseLocal} className="flex flex-col gap-4 max-w-sm mx-auto w-full pt-10 pb-8">
           <div className="text-center mb-6">
             <div className="w-16 h-16 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-xl flex items-center justify-center mx-auto shadow-sm mb-4">
               <BookOpen className="w-8 h-8" />
@@ -2571,12 +2640,14 @@ const App: React.FC = () => {
             {isCreatingCourse ? <Loader2 className="animate-spin w-5 h-5" /> : 'Create Course'}
           </button>
        </form>
+       </div>
     </PageWrapper>
   );
 
   const renderAssignmentCreation = () => (
     <PageWrapper headerTitle="New Assignment" headerSubtitle={creationCourse?.name} onBack={() => setPhase(AppPhase.ASSIGNMENT_SELECT)} isOnline={isOnline} isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode} syncStatus={syncStatus}>
-       <form onSubmit={handleCreateAssignment} className="flex flex-col gap-4 max-w-sm mx-auto w-full pt-10">
+       <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+       <form onSubmit={handleCreateAssignment} className="flex flex-col gap-4 max-w-sm mx-auto w-full pt-10 pb-8">
           <div className="text-center mb-6">
             <div className="w-16 h-16 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-xl flex items-center justify-center mx-auto shadow-sm mb-4">
               <Layers className="w-8 h-8" />
@@ -2591,6 +2662,7 @@ const App: React.FC = () => {
             {isCreatingAssignment ? <Loader2 className="animate-spin w-5 h-5" /> : 'Create Assignment'}
           </button>
        </form>
+       </div>
     </PageWrapper>
   );
 
@@ -2605,7 +2677,7 @@ const App: React.FC = () => {
         setIsDarkMode={setIsDarkMode}
         syncStatus={syncStatus}
       >
-        <div className="h-full flex flex-col gap-4">
+        <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-hidden">
           {rubricSuccess && (
             <div className="p-3 bg-emerald-500/10 backdrop-blur-xl border border-emerald-500/30 rounded-xl flex items-center gap-3 text-emerald-600 dark:text-emerald-400 font-bold text-[10px] tracking-widest uppercase animate-in slide-in-from-top shrink-0 shadow-sm">
               <CheckCircle className="w-4 h-4" /> <span>Rubric Captured Successfully</span>
@@ -2634,7 +2706,7 @@ const App: React.FC = () => {
                     value={customRubric} 
                     onChange={(e) => setCustomRubric(e.target.value)} 
                     placeholder="Paste your rubric, tap 'Auto-Generate' to build from the assignment details, or 'Scan Paper' to use your camera..." 
-                    className="w-full h-full p-4 pr-10 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md border border-slate-200 dark:border-slate-700 rounded-xl resize-none outline-none focus:border-indigo-400 text-[16px] italic shadow-inner custom-scrollbar" 
+                className="w-full h-full p-4 pr-10 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md border border-slate-200 dark:border-slate-700 rounded-xl resize-none outline-none focus:border-indigo-400 text-[16px] italic shadow-inner custom-scrollbar" 
                   />
                   <VoiceInputButton onResult={(text) => setCustomRubric(prev => prev + (prev ? '\n' : '') + text)} className="absolute right-3 top-3 p-1.5" />
                 </div>
@@ -3045,7 +3117,7 @@ const App: React.FC = () => {
 
   const renderSyncing = () => (
     <PageWrapper isOnline={isOnline} isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode} syncStatus={syncStatus}>
-       <div className="h-full flex flex-col items-center justify-center">
+       <div className="flex-1 min-h-0 flex flex-col items-center justify-center">
           <Loader2 className="w-12 h-12 text-indigo-500 animate-spin mb-6" />
           <h2 className="text-xl font-black text-slate-800 dark:text-slate-100 mb-2">Syncing Data</h2>
           <p className="text-[16px] font-bold text-slate-500 uppercase tracking-widest">{syncProgress.message}</p>
@@ -3058,7 +3130,7 @@ const App: React.FC = () => {
 
   const renderFinale = () => (
     <PageWrapper isOnline={isOnline} isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode} syncStatus={syncStatus}>
-       <div className="h-full flex flex-col items-center justify-center text-center">
+       <div className="flex-1 min-h-0 flex flex-col items-center justify-center text-center">
           <div className="w-20 h-20 bg-emerald-500 rounded-full flex items-center justify-center text-white mb-6 shadow-lg"><CheckCircle className="w-10 h-10" /></div>
           <h2 className="text-3xl font-black text-emerald-500 mb-2">Published!</h2>
           <p className="text-slate-500 font-bold text-[16px] mb-2">Grades and feedback successfully synced.</p>
@@ -3319,7 +3391,7 @@ const App: React.FC = () => {
         setIsDarkMode={setIsDarkMode}
         syncStatus={syncStatus}
       >
-        <div className="h-full flex flex-col min-h-0 overflow-hidden">
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
           <style>{`
             @media print {
               @page {
@@ -4266,7 +4338,7 @@ const App: React.FC = () => {
                   value={reflectionNote}
                   onChange={(e) => setReflectionNote(e.target.value)}
                   placeholder='“Next time, skip the video—it was too long.” This note will be pinned to this lesson.'
-                  className="w-full min-h-[56px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar pr-12"
+                className="w-full min-h-[56px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar pr-12"
                 />
                 <VoiceInputButton
                   onResult={(text) =>
@@ -4292,6 +4364,741 @@ const App: React.FC = () => {
     );
   };
 
+  const [scheduleCursor, setScheduleCursor] = useState<string>(() => new Date().toISOString().slice(0, 10));
+
+  const renderSchedule = () => {
+    const sorted = [...scheduleItems].sort((a, b) => a.date.localeCompare(b.date));
+
+    const cursorDate = new Date(scheduleCursor);
+    cursorDate.setHours(0, 0, 0, 0);
+    const cursorIso = scheduleCursor;
+    const todayIso = cursorIso;
+
+    const isOnDate = (item: ScheduleItem, target: Date): boolean => {
+      const base = new Date(item.date);
+      base.setHours(0, 0, 0, 0);
+      const t = new Date(target);
+      t.setHours(0, 0, 0, 0);
+
+      const sameDay = base.getTime() === t.getTime();
+      if (item.recurrence === 'daily') {
+        return t.getTime() >= base.getTime();
+      }
+      if (item.recurrence === 'weekly') {
+        return t.getTime() >= base.getTime() && t.getDay() === base.getDay();
+      }
+      if (item.recurrence === 'monthly') {
+        return t.getTime() >= base.getTime() && t.getDate() === base.getDate();
+      }
+      return sameDay;
+    };
+
+    const dailyItems = sorted.filter((item) => isOnDate(item, cursorDate));
+
+    // 6am–6pm day split into AM (6–11) and PM (12–17), each representing a 1‑hour block (e.g. 6–7, 7–8, …, 17–18)
+    const hours = Array.from({ length: 12 }).map((_, idx) => 6 + idx); // 6:00–18:00 end (last block is 17–18)
+    const amHours = hours.filter((h) => h < 12);
+    const pmHours = hours.filter((h) => h >= 12);
+
+    const formatHourRange = (hour: number) => {
+      const start = new Date();
+      start.setHours(hour, 0, 0, 0);
+      const end = new Date(start.getTime() + 60 * 60 * 1000);
+      const fmt = (d: Date) =>
+        d.toLocaleTimeString(undefined, {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+        });
+      return `${fmt(start)} – ${fmt(end)}`;
+    };
+
+    const moveCursor = (delta: number) => {
+      setScheduleCursor((prevIso) => {
+        const d = new Date(prevIso);
+        if (scheduleView === 'daily') {
+          d.setDate(d.getDate() + delta);
+        } else if (scheduleView === 'weekly') {
+          d.setDate(d.getDate() + 7 * delta);
+        } else {
+          d.setMonth(d.getMonth() + delta);
+        }
+        return d.toISOString().slice(0, 10);
+      });
+    };
+
+    const getPeriodLabel = () => {
+      if (scheduleView === 'daily') {
+        try {
+          return cursorDate.toLocaleDateString(undefined, {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+          });
+        } catch {
+          return cursorIso;
+        }
+      }
+      if (scheduleView === 'weekly') {
+        const start = new Date(cursorDate);
+        const day = start.getDay();
+        const diff = (day + 6) % 7; // Monday start
+        start.setDate(start.getDate() - diff);
+        const end = new Date(start);
+        end.setDate(start.getDate() + 6);
+        try {
+          const fmt = (d: Date) =>
+            d.toLocaleDateString(undefined, {
+              month: 'short',
+              day: 'numeric',
+            });
+          return `${fmt(start)} – ${fmt(end)}`;
+        } catch {
+          return 'This week';
+        }
+      }
+      try {
+        return cursorDate.toLocaleDateString(undefined, {
+          month: 'long',
+          year: 'numeric',
+        });
+      } catch {
+        return 'This month';
+      }
+    };
+
+    const resetScheduleForm = () => {
+      setScheduleTitle('');
+      setScheduleDate('');
+      setScheduleNotes('');
+      setScheduleCourseId('');
+      setScheduleAssignmentId('');
+      setScheduleTime('');
+      setScheduleRecurrence('once');
+      setScheduleKind('reminder');
+      setEditingScheduleId(null);
+      setActiveScheduleHour(null);
+    };
+
+    const computeFirstOccurrence = (item: ScheduleItem): Date | null => {
+      if (!item.date || !item.time) return null;
+      const [hRaw, mRaw] = item.time.split(':');
+      const h = Number(hRaw);
+      const m = Number(mRaw ?? '0');
+      if (Number.isNaN(h) || Number.isNaN(m)) return null;
+      const date = new Date(item.date);
+      if (Number.isNaN(date.getTime())) return null;
+      date.setHours(h, m, 0, 0);
+      if (date.getTime() <= Date.now()) return null;
+      return date;
+    };
+
+    const saveItem = () => {
+      if (!scheduleTitle.trim()) return;
+      const base: ScheduleItem = {
+        id: editingScheduleId || `s_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        title: scheduleTitle.trim(),
+        date: scheduleDate || todayIso,
+        view: scheduleView,
+        kind: scheduleKind,
+        courseId: scheduleCourseId || undefined,
+        assignmentId: scheduleAssignmentId || undefined,
+        notes: scheduleNotes || undefined,
+        time: scheduleTime || undefined,
+        recurrence: scheduleRecurrence,
+      };
+
+      if (editingScheduleId) {
+        setScheduleItems((prev) => prev.map((i) => (i.id === editingScheduleId ? { ...i, ...base } : i)));
+      } else {
+        setScheduleItems((prev) => [base, ...prev]);
+      }
+
+      const when = computeFirstOccurrence(base);
+      if (when) {
+        void scheduleReminderNotification({
+          id: base.id,
+          title: base.title,
+          body: base.notes || undefined,
+          at: when,
+        });
+      }
+
+      resetScheduleForm();
+      setScheduleFormOpen(false);
+    };
+
+    const removeItem = (id: string) => {
+      setScheduleItems((prev) => prev.filter((i) => i.id !== id));
+      if (editingScheduleId === id) {
+        resetScheduleForm();
+        setScheduleFormOpen(false);
+      }
+    };
+
+    const openEditorFor = (hour: number | null, item?: ScheduleItem, dateOverride?: string) => {
+      setScheduleFormOpen(true);
+      setActiveScheduleHour(hour);
+
+      const defaultTime =
+        hour != null ? `${hour.toString().padStart(2, '0')}:00` : scheduleTime || new Date().toTimeString().slice(0, 5);
+
+      const effectiveDate = dateOverride || item?.date || todayIso;
+
+      setScheduleTitle(item?.title ?? '');
+      setScheduleDate(effectiveDate);
+      setScheduleNotes(item?.notes ?? '');
+      setScheduleCourseId(item?.courseId ?? '');
+      setScheduleAssignmentId(item?.assignmentId ?? '');
+      setScheduleTime(item?.time ?? defaultTime);
+      setScheduleRecurrence(item?.recurrence ?? 'once');
+      setScheduleKind(item?.kind ?? (hour != null ? 'teacherBlock' : 'reminder'));
+      setEditingScheduleId(item?.id ?? null);
+    };
+
+    return (
+      <PageWrapper
+        headerTitle={educatorName || 'Schedule'}
+        headerSubtitle={todayLabel || undefined}
+        isOnline={isOnline}
+        isDarkMode={isDarkMode}
+        setIsDarkMode={setIsDarkMode}
+        syncStatus={syncStatus}
+      >
+        <div className="flex-1 min-h-0 flex flex-col gap-2 overflow-hidden">
+          <div className="shrink-0 flex items-center justify-between rounded-xl bg-white/90 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 px-2 py-1.5">
+            <div className="inline-flex text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+              View
+            </div>
+            <div className="inline-flex rounded-full bg-slate-100 dark:bg-slate-800 p-0.5 text-[10px]">
+              {(['daily', 'weekly', 'monthly'] as ScheduleViewMode[]).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setScheduleView(mode)}
+                  className={`px-3 py-1 rounded-full font-semibold capitalize ${
+                    scheduleView === mode
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="shrink-0 flex items-center justify-between px-2 text-[10px] text-slate-600 dark:text-slate-300">
+            <button
+              type="button"
+              onClick={() => moveCursor(-1)}
+              className="px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-900/70"
+            >
+              ‹
+            </button>
+            <span className="font-semibold uppercase tracking-[0.16em] text-center">
+              {getPeriodLabel()}
+            </span>
+            <button
+              type="button"
+              onClick={() => moveCursor(1)}
+              className="px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-900/70"
+            >
+              ›
+            </button>
+          </div>
+
+          {/* Top: compact calendar-style overview per view (hidden when editing/adding) */}
+          {!scheduleFormOpen && (
+            <div
+              className={`flex-1 min-h-0 overflow-y-auto custom-scrollbar rounded-2xl bg-white/95 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-700 p-3 ${
+                scheduleView === 'daily' ? 'space-y-2' : 'space-y-2'
+              }`}
+            >
+              {scheduleView === 'daily' && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                        Today&apos;s schedule
+                      </p>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                        Hour‑by‑hour blocks for classes, prep, lunch, meetings, and reminders.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-3 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300 text-center">
+                      Morning
+                    </p>
+                    {amHours.map((hour) => {
+                      const label = formatHourRange(hour);
+                      const eventsAtHour = dailyItems.filter((item) => {
+                        const time = item.time || '06:00';
+                        const [h] = time.split(':');
+                        return Number(h) === hour;
+                      });
+                      const hasTeacherBlock = eventsAtHour.some((e) => (e.kind ?? 'reminder') === 'teacherBlock');
+                      const isActive = activeScheduleHour === hour;
+                      return (
+                        <div
+                          key={hour}
+                          onClick={() => openEditorFor(hour, eventsAtHour[0])}
+                          className={`cursor-pointer flex flex-col items-center justify-center text-center text-[11px] min-h-14 ${
+                            hasTeacherBlock
+                              ? 'bg-emerald-50/80 dark:bg-emerald-900/30'
+                              : 'bg-emerald-50/40 dark:bg-slate-900/40'
+                          } rounded-2xl px-3 py-2 border ${
+                            isActive ? 'border-emerald-500 dark:border-emerald-400' : 'border-emerald-100/70 dark:border-slate-700'
+                          } shadow-sm`}
+                        >
+                          <div className="whitespace-nowrap text-emerald-700 dark:text-emerald-200 font-semibold">
+                            {label}
+                          </div>
+                          <div className="w-full space-y-1">
+                            {eventsAtHour.length === 0 ? (
+                              <p className="text-[10px] text-emerald-900/40 dark:text-emerald-100/40">&nbsp;</p>
+                            ) : (
+                              eventsAtHour.map((e) => {
+                                const kind = e.kind ?? 'reminder';
+                                const isEventLike = kind === 'event' || kind === 'appointment' || kind === 'meeting';
+                                const chipColor =
+                                  kind === 'teacherBlock'
+                                    ? 'bg-indigo-500 text-white'
+                                    : isEventLike
+                                      ? 'bg-emerald-500 text-white'
+                                      : 'bg-amber-500 text-white';
+                                return (
+                                  <div
+                                    key={e.id}
+                                    onClick={(ev) => {
+                                      ev.stopPropagation();
+                                      openEditorFor(hour, e);
+                                    }}
+                                    className="px-2 py-1 rounded-lg bg-white/80 dark:bg-slate-900/80 border border-slate-200/70 dark:border-slate-700/70 flex flex-col items-center text-center gap-1"
+                                  >
+                                    <div className="flex items-center justify-center gap-2">
+                                      <span className="font-semibold truncate max-w-[120px]">{e.title}</span>
+                                      <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-[0.16em] ${chipColor}`}>
+                                        {kind === 'teacherBlock'
+                                          ? 'Teacher'
+                                          : isEventLike
+                                            ? 'Event'
+                                            : 'Reminder'}
+                                      </span>
+                                    </div>
+                                    <p className="text-[10px] text-slate-600 dark:text-slate-300">
+                                      {e.time || 'Any time'}
+                                      {e.endTime ? ` – ${e.endTime}` : ''}
+                                      {e.recurrence !== 'once' && ` · ${e.recurrence}`}
+                                    </p>
+                                    {e.notes && (
+                                      <p className="text-[10px] text-slate-600 dark:text-slate-200 line-clamp-2">
+                                        {e.notes}
+                                      </p>
+                                    )}
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300 text-center">
+                      Afternoon
+                    </p>
+                    {pmHours.map((hour) => {
+                      const label = formatHourRange(hour);
+                      const eventsAtHour = dailyItems.filter((item) => {
+                        const time = item.time || '06:00';
+                        const [h] = time.split(':');
+                        return Number(h) === hour;
+                      });
+                      const hasTeacherBlock = eventsAtHour.some((e) => (e.kind ?? 'reminder') === 'teacherBlock');
+                      const isActive = activeScheduleHour === hour;
+                      return (
+                        <div
+                          key={hour}
+                          onClick={() => openEditorFor(hour, eventsAtHour[0])}
+                          className={`cursor-pointer flex flex-col items-center justify-center text-center text-[11px] min-h-14 ${
+                            hasTeacherBlock
+                              ? 'bg-emerald-50/80 dark:bg-emerald-900/30'
+                              : 'bg-emerald-50/40 dark:bg-slate-900/40'
+                          } rounded-2xl px-3 py-2 border ${
+                            isActive ? 'border-emerald-500 dark:border-emerald-400' : 'border-emerald-100/70 dark:border-slate-700'
+                          } shadow-sm`}
+                        >
+                          <div className="whitespace-nowrap text-emerald-700 dark:text-emerald-200 font-semibold">
+                            {label}
+                          </div>
+                          <div className="w-full space-y-1">
+                            {eventsAtHour.length === 0 ? (
+                              <p className="text-[10px] text-emerald-900/40 dark:text-emerald-100/40">&nbsp;</p>
+                            ) : (
+                              eventsAtHour.map((e) => {
+                                const kind = e.kind ?? 'reminder';
+                                const isEventLike = kind === 'event' || kind === 'appointment' || kind === 'meeting';
+                                const chipColor =
+                                  kind === 'teacherBlock'
+                                    ? 'bg-indigo-500 text-white'
+                                    : isEventLike
+                                      ? 'bg-emerald-500 text-white'
+                                      : 'bg-amber-500 text-white';
+                                return (
+                                  <div
+                                    key={e.id}
+                                    onClick={(ev) => {
+                                      ev.stopPropagation();
+                                      openEditorFor(hour, e);
+                                    }}
+                                    className="px-2 py-1 rounded-lg bg-white/80 dark:bg-slate-900/80 border border-slate-200/70 dark:border-slate-700/70 flex flex-col items-center text-center gap-1"
+                                  >
+                                    <div className="flex items-center justify-center gap-2">
+                                      <span className="font-semibold truncate max-w-[120px]">{e.title}</span>
+                                      <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-[0.16em] ${chipColor}`}>
+                                        {kind === 'teacherBlock'
+                                          ? 'Teacher'
+                                          : isEventLike
+                                            ? 'Event'
+                                            : 'Reminder'}
+                                      </span>
+                                    </div>
+                                    <p className="text-[10px] text-slate-600 dark:text-slate-300">
+                                      {e.time || 'Any time'}
+                                      {e.endTime ? ` – ${e.endTime}` : ''}
+                                      {e.recurrence !== 'once' && ` · ${e.recurrence}`}
+                                    </p>
+                                    {e.notes && (
+                                      <p className="text-[10px] text-slate-600 dark:text-slate-200 line-clamp-2">
+                                        {e.notes}
+                                      </p>
+                                    )}
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </>
+              )}
+
+              {scheduleView === 'weekly' && (
+                <>
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400 mb-1">
+                    This week
+                  </p>
+                  <div className="space-y-1 max-h-40 overflow-y-auto custom-scrollbar text-[9px]">
+                    {[
+                      { label: 'Mon', idx: 1 },
+                      { label: 'Tue', idx: 2 },
+                      { label: 'Wed', idx: 3 },
+                      { label: 'Thu', idx: 4 },
+                      { label: 'Fri', idx: 5 },
+                      { label: 'Sat', idx: 6 },
+                      { label: 'Sun', idx: 0 },
+                    ].map(({ label, idx }) => {
+                      const weekStart = (() => {
+                        const d = new Date(cursorDate);
+                        const day = d.getDay();
+                        const diff = (day + 6) % 7; // Monday
+                        d.setDate(d.getDate() - diff);
+                        d.setHours(0, 0, 0, 0);
+                        return d;
+                      })();
+                      const dayDate = new Date(weekStart);
+                      dayDate.setDate(weekStart.getDate() + (idx === 0 ? 6 : idx - 1));
+                      const dayEvents = sorted
+                        .filter((item) => isOnDate(item, dayDate))
+                        .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+                      const isWeekend = idx === 0 || idx === 6;
+                      return (
+                        <div
+                          key={label}
+                          className={`flex items-start gap-2 rounded-lg border px-1.5 py-1 ${
+                            isWeekend
+                              ? 'border-amber-300/70 bg-amber-50/70 dark:bg-amber-900/20'
+                              : 'border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/70'
+                          }`}
+                        >
+                          <div className="w-10 text-[9px] font-bold text-slate-600 dark:text-slate-300">
+                            {label}
+                          </div>
+                          <div className="flex-1 flex flex-wrap gap-1">
+                            {dayEvents.length === 0 ? (
+                              <span className="text-[8px] text-slate-400 dark:text-slate-500">No items</span>
+                            ) : (
+                              dayEvents.map((e) => {
+                                const kind = e.kind ?? 'reminder';
+                                const isEventLike = kind === 'event' || kind === 'appointment' || kind === 'meeting';
+                                const chipColor =
+                                  isEventLike
+                                    ? 'bg-emerald-500/90 text-white'
+                                    : kind === 'teacherBlock'
+                                      ? 'bg-indigo-500/90 text-white'
+                                      : 'bg-amber-500/90 text-white';
+                                return (
+                                  <button
+                                    key={e.id}
+                                    type="button"
+                                    onClick={() => openEditorFor(null, e)}
+                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full ${chipColor} whitespace-nowrap max-w-full`}
+                                  >
+                                    <span className="text-[8px] font-mono">
+                                      {e.time || '—'}
+                                    </span>
+                                    <span className="text-[8px] font-semibold truncate max-w-[96px]">
+                                      {e.title}
+                                    </span>
+                                  </button>
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+
+              {scheduleView === 'monthly' && (
+                <>
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-600 dark:text-emerald-300">
+                    This month at a glance
+                  </p>
+                  <div className="mt-1 text-[9px] text-slate-700 dark:text-slate-200 bg-gradient-to-b from-emerald-50/90 via-white/95 to-white/90 dark:from-emerald-900/40 dark:via-slate-900/80 dark:to-slate-950/90 rounded-2xl border border-emerald-200/80 dark:border-emerald-700/60 px-2 py-2 shadow-inner">
+                    <div className="grid grid-cols-7 gap-1 mb-1">
+                      {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((label) => (
+                        <div key={label} className="text-center font-semibold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-300">
+                          {label}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-7 gap-1 text-[9px]">
+                      {(() => {
+                        const year = cursorDate.getFullYear();
+                        const month = cursorDate.getMonth();
+                        const firstOfMonth = new Date(year, month, 1);
+                        const startOffset = (firstOfMonth.getDay() + 6) % 7; // Monday as first column
+                        const daysInMonth = new Date(year, month + 1, 0).getDate();
+                        const cells = 42; // 6 weeks
+
+                        const itemsForMonth = sorted.filter((item) => {
+                          if (item.kind === 'teacherBlock') return false;
+                          const d = new Date(item.date);
+                          return d.getFullYear() === year && d.getMonth() === month;
+                        });
+
+                        const cellsArray = [];
+                        for (let i = 0; i < cells; i += 1) {
+                          const dayNumber = i - startOffset + 1;
+                          const inMonth = dayNumber >= 1 && dayNumber <= daysInMonth;
+                          const cellDate = new Date(year, month, dayNumber);
+                          const iso = cellDate.toISOString().slice(0, 10);
+
+                          const dayItems = inMonth
+                            ? itemsForMonth.filter((item) => isOnDate(item, cellDate))
+                            : [];
+
+                          const isToday =
+                            inMonth &&
+                            (() => {
+                              const now = new Date();
+                              return (
+                                now.getFullYear() === year &&
+                                now.getMonth() === month &&
+                                now.getDate() === dayNumber
+                              );
+                            })();
+
+                          cellsArray.push(
+                            <div
+                              key={i}
+                              onClick={() => {
+                                if (!inMonth) return;
+                                openEditorFor(null, undefined, iso);
+                              }}
+                              className={`min-h-[48px] rounded-lg border px-1 py-1 flex flex-col gap-0.5 ${
+                                !inMonth
+                                  ? 'border-transparent'
+                                  : 'border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/80'
+                              }`}
+                            >
+                              <div
+                                className={`text-[9px] font-semibold ${
+                                  isToday
+                                    ? 'text-emerald-700 dark:text-emerald-300'
+                                    : 'text-slate-600 dark:text-slate-300'
+                                }`}
+                              >
+                                {inMonth ? dayNumber : ''}
+                              </div>
+                              <div className="flex-1 space-y-0.5 overflow-hidden">
+                                {dayItems.slice(0, 3).map((item) => {
+                                  const kind = item.kind ?? 'reminder';
+                                  const isEventLike = kind === 'event' || kind === 'appointment' || kind === 'meeting';
+                                  const chipColor = isEventLike
+                                    ? 'bg-emerald-500/90 text-white'
+                                    : 'bg-lime-400/90 text-emerald-950';
+                                  return (
+                                    <div
+                                      key={item.id}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        openEditorFor(null, item, iso);
+                                      }}
+                                      className={`rounded-full px-1.5 py-0.5 text-[8px] font-semibold truncate ${chipColor}`}
+                                    >
+                                      {item.title}
+                                    </div>
+                                  );
+                                })}
+                                {dayItems.length > 3 && (
+                                  <div className="text-[8px] text-slate-400 dark:text-slate-500">
+                                    +{dayItems.length - 3} more
+                                  </div>
+                                )}
+                              </div>
+                            </div>,
+                          );
+                        }
+                        return cellsArray;
+                      })()}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Bottom: sticky add/edit sheet (rendered fixed above bottom nav) */}
+          <div
+            className="fixed left-1/2 -translate-x-1/2 z-[91] w-full max-w-md px-4"
+            style={{ bottom: '6rem' }}
+          >
+            <div className="rounded-2xl bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-700 shadow-lg overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setScheduleFormOpen((open) => !open)}
+                className="w-full flex items-center justify-between px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300"
+              >
+                <span>{editingScheduleId ? 'Edit item' : `Add ${scheduleView} item`}</span>
+                <span className="text-[11px] font-semibold">{scheduleFormOpen ? '−' : '+'}</span>
+              </button>
+              {scheduleFormOpen && (
+                <div className="p-3 space-y-2 border-t border-slate-200 dark:border-slate-700 max-h-[55vh] overflow-y-auto custom-scrollbar">
+                  <input
+                    type="text"
+                    value={scheduleTitle}
+                    onChange={(e) => setScheduleTitle(e.target.value)}
+                    placeholder="Title"
+                    className="w-full mb-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[11px] text-slate-800 dark:text-slate-100 outline-none focus:border-indigo-400"
+                  />
+                  <div className="flex gap-2">
+                    <select
+                      value={scheduleKind}
+                      onChange={(e) => setScheduleKind(e.target.value as 'event' | 'reminder' | 'teacherBlock')}
+                      className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[11px] text-slate-800 dark:text-slate-100 outline-none focus:border-indigo-400"
+                    >
+                      <option value="reminder">Reminder</option>
+                      <option value="event">Event</option>
+                      <option value="appointment">Appointment</option>
+                      <option value="meeting">Meeting</option>
+                    </select>
+                    <input
+                      type="time"
+                      step={900}
+                      value={scheduleTime}
+                      onChange={(e) => setScheduleTime(e.target.value)}
+                      className="w-[130px] px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[11px] text-slate-800 dark:text-slate-100 outline-none focus:border-indigo-400"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="date"
+                      value={scheduleDate}
+                      onChange={(e) => setScheduleDate(e.target.value)}
+                      className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[11px] text-slate-800 dark:text-slate-100 outline-none focus:border-indigo-400"
+                    />
+                    <select
+                      value={scheduleRecurrence}
+                      onChange={(e) => setScheduleRecurrence(e.target.value as any)}
+                      className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[11px] text-slate-800 dark:text-slate-100 outline-none focus:border-indigo-400"
+                    >
+                      <option value="once">Once</option>
+                      <option value="daily">Daily</option>
+                      <option value="weekly">Weekly</option>
+                      <option value="monthly">Monthly</option>
+                    </select>
+                  </div>
+                  <div className="flex gap-2">
+                    <select
+                      value={scheduleCourseId}
+                      onChange={(e) => setScheduleCourseId(e.target.value)}
+                      className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[11px] text-slate-800 dark:text-slate-100 outline-none focus:border-indigo-400"
+                    >
+                      <option value="">Course (optional)</option>
+                      {courses.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <select
+                    value={scheduleAssignmentId}
+                    onChange={(e) => setScheduleAssignmentId(e.target.value)}
+                    className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[11px] text-slate-800 dark:text-slate-100 outline-none focus:border-indigo-400"
+                  >
+                    <option value="">Assignment (optional)</option>
+                    {assignments.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.title}
+                      </option>
+                    ))}
+                  </select>
+                  <textarea
+                    value={scheduleNotes}
+                    onChange={(e) => setScheduleNotes(e.target.value)}
+                    placeholder="Notes (optional)"
+                    className="w-full h-16 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[11px] text-slate-800 dark:text-slate-100 resize-none outline-none focus:border-indigo-400"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={saveItem}
+                      className="mt-1 flex-1 py-2 rounded-xl bg-indigo-600 text-white text-[11px] font-black uppercase tracking-[0.16em] active:scale-[0.98] transition-all"
+                    >
+                      {editingScheduleId ? 'Update schedule' : 'Add to schedule'}
+                    </button>
+                    {editingScheduleId && (
+                      <button
+                        type="button"
+                        onClick={() => editingScheduleId && removeItem(editingScheduleId)}
+                        className="mt-1 px-3 py-2 rounded-xl border border-red-300 text-[11px] font-semibold text-red-600"
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </PageWrapper>
+    );
+  };
+
   const renderClassroom = () => (
     <PageWrapper
       headerTitle={educatorName || 'Classroom'}
@@ -4301,7 +5108,7 @@ const App: React.FC = () => {
       setIsDarkMode={setIsDarkMode}
       syncStatus={syncStatus}
     >
-      <div className="space-y-4 pb-4">
+      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar space-y-4 pb-4">
         <div className="flex justify-end">
           <button
             type="button"
@@ -4449,7 +5256,7 @@ const App: React.FC = () => {
       syncStatus={syncStatus}
       onBack={() => setPhase(AppPhase.CLASSROOM)}
     >
-      <div className="h-full w-full flex flex-col gap-4 items-center justify-center px-2">
+      <div className="flex-1 min-h-0 w-full flex flex-col gap-4 items-center justify-center px-2 overflow-hidden">
         {/* Big timer + controls */}
         <div className="flex flex-col items-center gap-2">
           <p className="text-xs font-semibold tracking-[0.2em] uppercase text-slate-500 dark:text-slate-400">
@@ -4569,7 +5376,17 @@ const App: React.FC = () => {
     </PageWrapper>
   );
 
+  if (showOnboarding) {
+    return (
+      <Onboarding
+        onComplete={() => setShowOnboarding(false)}
+        onSkip={() => setShowOnboarding(false)}
+      />
+    );
+  }
+
   return (
+    <AppContext.Provider value={appContextValue}>
     <>
       <style>{`
         @media print {
@@ -4578,7 +5395,7 @@ const App: React.FC = () => {
           }
         }
       `}</style>
-      <div className="min-h-screen font-sans text-slate-800 dark:text-slate-200 selection:bg-indigo-500/30 overflow-hidden relative gradient-animate">
+      <div id="main-content" className="h-full font-sans text-slate-800 dark:text-slate-200 selection:bg-indigo-500/30 overflow-hidden relative gradient-animate flex flex-col" tabIndex={-1}>
 
       {(!isOnline && !isOfflineBannerDismissed) && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] animate-in slide-in-from-top duration-500 w-[90%] max-w-sm">
@@ -4602,9 +5419,11 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* RENDER ROUTER */}
-      {phase === AppPhase.AUTHENTICATION && renderAuth()}
+      {/* RENDER ROUTER — single flex child so content fits viewport */}
+      <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+      {phase === AppPhase.AUTHENTICATION && <AuthView />}
       {phase === AppPhase.PLAN && renderPlan()}
+      {phase === AppPhase.SCHEDULE && renderSchedule()}
       {phase === AppPhase.DASHBOARD && renderDashboard()}
       {phase === AppPhase.CLASSROOM && renderClassroom()}
       {phase === AppPhase.CLASS_PRESENTER && renderClassPresenter()}
@@ -4627,166 +5446,175 @@ const App: React.FC = () => {
           setIsDarkMode={setIsDarkMode}
           syncStatus={syncStatus}
         >
-          <CommunicationDashboard educatorName={educatorName} courses={courses} classroom={classroom} students={students} accessToken={accessToken} isDemoMode={isDemoSignedIn && !accessToken} />
+          <CommunicationDashboard educatorName={educatorName} courses={courses} classroom={classroom} students={students} accessToken={accessToken} />
         </PageWrapper>
       )}
+      </div>
 
-      {showVoiceCapture && (
-        <div className="fixed inset-0 z-[95] bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-2xl p-5">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex flex-col">
-                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300 flex items-center gap-2">
-                  <Mic className="w-4 h-4 text-indigo-500" />
-                  Voice capture
-                </p>
-                <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                  Route: <span className="font-semibold">{voiceRoute === 'plan' ? 'Plan note' : voiceRoute === 'communicate' ? 'Communicate draft' : voiceRoute === 'todo' ? 'To‑do' : voiceRoute === 'reminder' ? 'Reminder' : 'Grade follow‑up'}</span>
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => { setShowVoiceCapture(false); setVoiceDraft(''); }}
-                className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-[11px] font-semibold"
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="relative">
-              <textarea
-                value={voiceDraft}
-                onChange={(e) => setVoiceDraft(e.target.value)}
-                placeholder="Tap the mic, then speak. We'll transcribe it here."
-                className="w-full min-h-[120px] text-[13px] px-3 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar pr-12"
-              />
-              <VoiceInputButton
-                onResult={(text) => setVoiceDraft((prev) => (prev ? `${prev} ` : '') + text)}
-                className="absolute right-2 bottom-2"
-              />
-            </div>
-
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button type="button" onClick={() => setVoiceRoute('plan')} className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border transition-colors ${voiceRoute === 'plan' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white/80 dark:bg-slate-800/80 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700'}`}>Plan</button>
-              <button type="button" onClick={() => setVoiceRoute('grade')} className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border transition-colors ${voiceRoute === 'grade' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white/80 dark:bg-slate-800/80 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700'}`}>Grade</button>
-              <button type="button" onClick={() => setVoiceRoute('communicate')} className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border transition-colors ${voiceRoute === 'communicate' ? 'bg-sky-600 text-white border-sky-600' : 'bg-white/80 dark:bg-slate-800/80 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700'}`}>Communicate</button>
-              <button type="button" onClick={() => setVoiceRoute('todo')} className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border transition-colors ${voiceRoute === 'todo' ? 'bg-slate-900 text-white border-slate-900 dark:bg-slate-100 dark:text-slate-900 dark:border-slate-100' : 'bg-white/80 dark:bg-slate-800/80 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700'}`}>To‑do</button>
-              <button type="button" onClick={() => setVoiceRoute('reminder')} className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border transition-colors ${voiceRoute === 'reminder' ? 'bg-amber-500 text-white border-amber-500' : 'bg-white/80 dark:bg-slate-800/80 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700'}`}>Reminder</button>
-            </div>
-
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => { setVoiceDraft(''); }}
-                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-[11px] font-semibold"
-              >
-                Clear
-              </button>
-              <button
-                type="button"
-                onClick={saveVoiceCapture}
-                className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-[11px] font-black uppercase tracking-widest shadow-sm hover:-translate-y-0.5 transition-all"
-              >
-                Save
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Global voice capture overlay disabled – voice handled inline via VoiceInputButton components */}
 
       {/* GLOBAL BOTTOM NAV (hidden in Class Presenter for clean projection) */}
       {phase !== AppPhase.CLASS_PRESENTER && (
       <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-[90] w-full max-w-md px-4">
         <div className="relative">
-          {isSignedIn && (
+          <div className="bg-white/95 dark:bg-slate-900/95 border border-slate-200/80 dark:border-slate-700/80 rounded-xl shadow-lg px-2 h-16 flex items-center justify-between gap-1">
             <button
               type="button"
-              onClick={openVoiceCapture}
-              className="absolute -top-14 left-1/2 -translate-x-[58%] w-12 h-12 rounded-full bg-indigo-600 text-white shadow-xl border-[3px] border-white/80 dark:border-slate-900/80 flex items-center justify-center active:scale-95 transition-transform"
-              title="Voice capture"
+              onClick={() => setPhase(AppPhase.AUTHENTICATION)}
+              className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
+                phase === AppPhase.AUTHENTICATION
+                  ? 'text-red-500'
+                  : 'text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              <Home className="w-4 h-4 mb-0.5" />
+              <span className="text-[7px] font-semibold uppercase tracking-[0.16em]">Home</span>
+            </button>
+            <button
+              type="button"
+              disabled={!isSignedIn}
+              onClick={() => {
+                if (!isSignedIn) return;
+                setPhase(AppPhase.PLAN);
+              }}
+              className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
+                phase === AppPhase.PLAN
+                  ? 'text-blue-500'
+                  : isSignedIn
+                    ? 'text-slate-600 dark:text-slate-300'
+                    : 'text-slate-400 dark:text-slate-600'
+              }`}
+            >
+              <BookOpen className="w-4 h-4 mb-0.5" />
+              <span className="text-[7px] font-semibold uppercase tracking-[0.16em]">Plan</span>
+            </button>
+            <button
+              type="button"
+              disabled={!isSignedIn}
+              onClick={() => {
+                if (!isSignedIn) return;
+                setPhase(AppPhase.CLASSROOM);
+              }}
+              className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
+                phase === AppPhase.CLASSROOM
+                  ? 'text-orange-500'
+                  : isSignedIn
+                    ? 'text-slate-600 dark:text-slate-300'
+                    : 'text-slate-400 dark:text-slate-600'
+              }`}
+            >
+              <Timer className="w-4 h-4 mb-0.5" />
+              <span className="text-[7px] font-semibold uppercase tracking-[0.16em]">Teach</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (!navHasSupport) return;
+                const isEditable = (el: HTMLElement | null) =>
+                  !!el &&
+                  (el instanceof HTMLTextAreaElement ||
+                    el instanceof HTMLInputElement ||
+                    (el as any).isContentEditable);
+                const activeEl = document.activeElement as HTMLElement | null;
+                const target = isEditable(activeEl)
+                  ? activeEl
+                  : isEditable(lastFocusedFieldRef.current)
+                    ? (lastFocusedFieldRef.current as HTMLElement)
+                    : null;
+                if (!target) return;
+                if (!isNavListening) {
+                  if (voiceTargetRef.current && voiceTargetRef.current !== target) {
+                    voiceTargetRef.current.classList.remove('dg-voice-target');
+                  }
+                  voiceTargetRef.current = target;
+                  target.classList.add('dg-voice-target');
+                  // Keep focus on the field so cursor insertion works.
+                  try { target.focus(); } catch {}
+                }
+                toggleNavListening();
+              }}
+              className={`flex items-center justify-center w-11 h-11 rounded-full border-[2px] ${
+                !navHasSupport
+                  ? 'bg-indigo-400/30 text-white/60 border-white/40 dark:border-slate-900/40 cursor-not-allowed'
+                  : isNavListening
+                    ? 'bg-red-500 text-white border-white/80 dark:border-slate-900/80 animate-pulse'
+                    : 'bg-slate-950 text-white border-white/80 dark:bg-white dark:text-slate-950 dark:border-slate-900/80 active:scale-95 transition-transform'
+              }`}
+              title={
+                !navHasSupport
+                  ? 'Voice input unavailable'
+                  : isNavListening
+                    ? 'Stop voice input'
+                    : 'Start voice input for the focused field'
+              }
               aria-label="Voice capture"
             >
               <Mic className="w-5 h-5" />
             </button>
-          )}
 
-          <div className="bg-white/95 dark:bg-slate-900/95 border border-slate-200/80 dark:border-slate-700/80 rounded-xl shadow-lg px-3 py-1.5 flex items-center justify-between">
-          <button
-            type="button"
-            onClick={() => setPhase(AppPhase.AUTHENTICATION)}
-            className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
-              phase === AppPhase.AUTHENTICATION
-                ? 'text-indigo-500'
-                : 'text-slate-600 dark:text-slate-300'
-            }`}
-          >
-            <Home className="w-4 h-4 mb-0.5" />
-            <span className="text-[9px] font-semibold uppercase tracking-[0.14em]">Home</span>
-          </button>
-          <button
-            type="button"
-            disabled={!isSignedIn}
-            onClick={() => { if (!isSignedIn) return; setPhase(AppPhase.PLAN); }}
-            className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
-              phase === AppPhase.PLAN ? 'text-indigo-400' : isSignedIn ? 'text-slate-600 dark:text-slate-300' : 'text-slate-400 dark:text-slate-600'
-            }`}
-          >
-            <Calendar className="w-4 h-4 mb-0.5" />
-            <span className="text-[9px] font-semibold uppercase tracking-[0.14em]">Plan</span>
-          </button>
-          <button
-            type="button"
-            disabled={!isSignedIn}
-            onClick={() => { if (!isSignedIn) return; setPhase(AppPhase.CLASSROOM); }}
-            className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
-              phase === AppPhase.CLASSROOM ? 'text-amber-400' : isSignedIn ? 'text-slate-600 dark:text-slate-300' : 'text-slate-400 dark:text-slate-600'
-            }`}
-          >
-            <Timer className="w-4 h-4 mb-0.5" />
-            <span className="text-[9px] font-semibold uppercase tracking-[0.14em]">Teach</span>
-          </button>
-          <button
-            type="button"
-            disabled={!isSignedIn}
-            onClick={() => {
-              if (!isSignedIn) return;
-              setPhase(AppPhase.DASHBOARD);
-            }}
-            className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
-              phase === AppPhase.DASHBOARD
-                ? 'text-emerald-400'
-                : isSignedIn
-                  ? 'text-slate-600 dark:text-slate-300'
-                  : 'text-slate-400 dark:text-slate-600'
-            }`}
-          >
-            <LayoutDashboard className="w-4 h-4 mb-0.5" />
-            <span className="text-[9px] font-semibold uppercase tracking-[0.14em]">Grade</span>
-          </button>
-          <button
-            type="button"
-            disabled={!isSignedIn}
-            onClick={() => {
-              if (!isSignedIn) return;
-              setPhase(AppPhase.RECORDS);
-            }}
-            className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
-              phase === AppPhase.RECORDS
-                ? 'text-sky-400'
-                : isSignedIn
-                  ? 'text-slate-600 dark:text-slate-300'
-                  : 'text-slate-400 dark:text-slate-600'
-            }`}
-          >
-            <MessageCircle className="w-4 h-4 mb-0.5" />
-            <span className="text-[9px] font-semibold uppercase tracking-[0.14em]">Communicate</span>
-          </button>
+            <button
+              type="button"
+              disabled={!isSignedIn}
+              onClick={() => {
+                if (!isSignedIn) return;
+                setPhase(AppPhase.DASHBOARD);
+              }}
+              className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
+                phase === AppPhase.DASHBOARD
+                  ? 'text-yellow-500'
+                  : isSignedIn
+                    ? 'text-slate-600 dark:text-slate-300'
+                    : 'text-slate-400 dark:text-slate-600'
+              }`}
+            >
+              <LayoutDashboard className="w-4 h-4 mb-0.5" />
+              <span className="text-[7px] font-semibold uppercase tracking-[0.16em]">Grade</span>
+            </button>
+            <button
+              type="button"
+              disabled={!isSignedIn}
+              onClick={() => {
+                if (!isSignedIn) return;
+                setPhase(AppPhase.SCHEDULE);
+              }}
+              className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
+                phase === AppPhase.SCHEDULE
+                  ? 'text-green-500'
+                  : isSignedIn
+                    ? 'text-slate-600 dark:text-slate-300'
+                    : 'text-slate-400 dark:text-slate-600'
+              }`}
+            >
+              <Calendar className="w-4 h-4 mb-0.5" />
+              <span className="text-[7px] font-semibold uppercase tracking-[0.16em]">Schedule</span>
+            </button>
+            <button
+              type="button"
+              disabled={!isSignedIn}
+              onClick={() => {
+                if (!isSignedIn) return;
+                setPhase(AppPhase.RECORDS);
+              }}
+              className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
+                phase === AppPhase.RECORDS
+                  ? 'text-purple-500'
+                  : isSignedIn
+                    ? 'text-slate-600 dark:text-slate-300'
+                    : 'text-slate-400 dark:text-slate-600'
+              }`}
+            >
+              <MessageCircle className="w-4 h-4 mb-0.5" />
+              <span className="text-[7px] font-semibold uppercase tracking-[0.16em]">Communicate</span>
+            </button>
           </div>
         </div>
       </div>
       )}
     </div>
+    <ConsentBanner />
     </>
+    </AppContext.Provider>
   );
 };
 

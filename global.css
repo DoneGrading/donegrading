@@ -1,0 +1,168 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-size: 17px;
+    height: 100%;
+    overflow: hidden;
+  }
+  @supports (height: 100dvh) {
+    html {
+      height: 100dvh;
+    }
+  }
+  @media (min-width: 768px) {
+    html {
+      font-size: 18px;
+    }
+  }
+  body {
+    font-family: 'Inter', sans-serif;
+    transition: background-color 0.3s ease, color 0.3s ease;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    height: 100%;
+  }
+  @supports (height: 100dvh) {
+    body {
+      height: 100dvh;
+    }
+  }
+  /* App root and main content fill viewport; no document scroll */
+  .dg-viewport-full {
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  #main-content {
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  @supports (height: 100dvh) {
+    .dg-viewport-full,
+    #main-content {
+      height: 100dvh;
+    }
+  }
+}
+
+.text-glow {
+  text-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
+}
+
+.scan-line {
+  position: absolute;
+  width: 100%;
+  height: 8px;
+  background: linear-gradient(to bottom, transparent, #22c55e, transparent);
+  box-shadow: 0 0 20px rgba(34, 197, 94, 0.6);
+  top: 0;
+  z-index: 10;
+  animation: scan 2.5s ease-in-out infinite;
+}
+
+.gradient-animate {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(254, 243, 199, 0.95), transparent 60%),
+    radial-gradient(circle at 100% 0%, rgba(191, 219, 254, 0.95), transparent 60%),
+    radial-gradient(circle at 0% 100%, rgba(254, 202, 202, 0.95), transparent 60%),
+    radial-gradient(circle at 100% 100%, rgba(187, 247, 208, 0.95), transparent 60%);
+  background-color: #eef2ff;
+  background-size: 320% 320%;
+  background-repeat: no-repeat;
+  animation: gradient-wave 18s ease-in-out infinite;
+}
+
+.gradient-animate::before {
+  content: '';
+  position: absolute;
+  inset: -60%;
+  z-index: -1;
+  opacity: 0.9;
+  background: conic-gradient(
+    from 180deg,
+    rgba(59, 130, 246, 0.3),
+    rgba(236, 72, 153, 0.3),
+    rgba(34, 197, 94, 0.3),
+    rgba(59, 130, 246, 0.3)
+  );
+  filter: blur(48px);
+  animation: gradient-orbit 22s linear infinite;
+  pointer-events: none;
+}
+
+.dark .gradient-animate {
+  background:
+    radial-gradient(circle at 0% 0%, rgba(15, 23, 42, 0.98), transparent 65%),
+    radial-gradient(circle at 100% 0%, rgba(8, 47, 73, 0.96), transparent 65%),
+    radial-gradient(circle at 0% 100%, rgba(24, 24, 27, 0.96), transparent 65%),
+    radial-gradient(circle at 100% 100%, rgba(30, 64, 175, 0.9), transparent 65%),
+    linear-gradient(135deg, #020617, #020617 40%, #020617);
+  background-size: 340% 340%;
+  animation: gradient-wave 20s ease-in-out infinite;
+}
+
+.dark .gradient-animate::before {
+  background: conic-gradient(
+    from 200deg,
+    rgba(56, 189, 248, 0.38),
+    rgba(129, 140, 248, 0.45),
+    rgba(236, 72, 153, 0.38),
+    rgba(16, 185, 129, 0.35),
+    rgba(56, 189, 248, 0.38)
+  );
+  filter: blur(55px);
+  opacity: 0.95;
+  animation: gradient-orbit 26s linear infinite;
+}
+
+.custom-scrollbar {
+  scrollbar-width: none;
+}
+.custom-scrollbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 10px;
+}
+
+.dg-voice-target {
+  outline: 2px solid #4f46e5;
+  outline-offset: 1px;
+}
+
+.skip-link {
+  @apply absolute left-4 top-4 z-[100] -translate-y-16 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition-transform focus:translate-y-0 focus:outline-none focus:ring-2 focus:ring-indigo-400;
+}
+
+.skeleton {
+  @apply animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700;
+}
+
+/* Share button gradient animation */
+@keyframes share-gradient-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+.share-btn-gradient {
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 25%, #ec4899 50%, #8b5cf6 75%, #6366f1 100%);
+  background-size: 200% 200%;
+  animation: share-gradient-shift 4s ease infinite;
+}

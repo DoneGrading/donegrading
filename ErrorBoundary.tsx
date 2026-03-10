@@ -18,9 +18,11 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
     return { hasError: true };
   }
 
-  componentDidCatch(error: any, info: any) {
-    // TODO: hook up to real logging (e.g., Sentry) if desired
+  componentDidCatch(error: unknown, info: React.ErrorInfo) {
     console.error('Unhandled error in DoneGrading app:', error, info);
+    import('./lib/sentry').then(({ captureException }) => {
+      captureException(error, { componentStack: info.componentStack ?? undefined });
+    });
   }
 
   render() {

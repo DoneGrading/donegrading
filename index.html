@@ -3,133 +3,27 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>DoneGrading | The High-Speed AI Teaching Assistant</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          fontFamily: {
-            sans: ['Inter', 'sans-serif'],
-          },
-        },
-      },
-    }
-  </script>
+  <link rel="icon" href="/DoneGradingLogo.png" type="image/png">
+  <link rel="apple-touch-icon" href="/DoneGradingLogo.png">
+  <title>DoneGrading | Scan, grade, done!</title>
+  <meta name="description" content="Sign in to DoneGrading to scan student work, apply rubrics, sync with Google Classroom, and manage classroom workflows." />
+  <link rel="canonical" href="https://app.donegrading.com/" />
+  <meta name="robots" content="noindex,follow" />
+  <meta property="og:title" content="DoneGrading | Scan, grade, done!" />
+  <meta property="og:description" content="Open the DoneGrading app to scan, grade, and communicate faster with your students and families." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://app.donegrading.com/" />
+  <meta property="og:image" content="https://www.donegrading.com/DoneGradingLogo.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="DoneGrading | Scan, grade, done!" />
+  <meta name="twitter:description" content="Sign in to the DoneGrading app and reclaim hours each week from grading and admin." />
+  <meta name="twitter:image" content="https://www.donegrading.com/DoneGradingLogo.png" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script type="text/javascript" src="https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/auth/2/en_US/appleid.auth.js"></script>
-  <style>
-    html {
-      font-size: 17px;
-    }
-    @media (min-width: 768px) {
-      html {
-        font-size: 18px;
-      }
-    }
-    body { font-family: 'Inter', sans-serif; transition: background-color 0.3s ease, color 0.3s ease; margin: 0; padding: 0; overflow: hidden; }
-    .text-glow { text-shadow: 0 0 20px rgba(255,255,255,0.3); }
-    .scan-line {
-      position: absolute;
-      width: 100%;
-      height: 8px;
-      background: linear-gradient(to bottom, transparent, #22c55e, transparent);
-      box-shadow: 0 0 20px rgba(34, 197, 94, 0.6);
-      top: 0;
-      z-index: 10;
-      animation: scan 2.5s ease-in-out infinite;
-    }
-    @keyframes scan {
-      0% { top: 5%; opacity: 0.3; }
-      50% { top: 90%; opacity: 1; }
-      100% { top: 5%; opacity: 0.3; }
-    }
-    .gradient-animate {
-      position: relative;
-      isolation: isolate;
-      overflow: hidden;
-      /* Light mode: vivid pastel waves with no hard edge */
-      background:
-        radial-gradient(circle at 0% 0%, rgba(254, 243, 199, 0.95), transparent 60%),
-        radial-gradient(circle at 100% 0%, rgba(191, 219, 254, 0.95), transparent 60%),
-        radial-gradient(circle at 0% 100%, rgba(254, 202, 202, 0.95), transparent 60%),
-        radial-gradient(circle at 100% 100%, rgba(187, 247, 208, 0.95), transparent 60%);
-      background-color: #eef2ff;
-      background-size: 320% 320%;
-      background-repeat: no-repeat;
-      animation: gradient-wave 18s ease-in-out infinite;
-    }
-    .gradient-animate::before {
-      content: "";
-      position: absolute;
-      inset: -60%;
-      z-index: -1;
-      opacity: 0.9;
-      background:
-        conic-gradient(
-          from 180deg,
-          rgba(59,130,246,0.30),
-          rgba(236,72,153,0.30),
-          rgba(34,197,94,0.30),
-          rgba(59,130,246,0.30)
-        );
-      filter: blur(48px);
-      animation: gradient-orbit 22s linear infinite;
-      pointer-events: none;
-    }
-    .dark .gradient-animate {
-      /* Dark mode: multiple deep tones with neon wave */
-      background:
-        radial-gradient(circle at 0% 0%, rgba(15, 23, 42, 0.98), transparent 65%),
-        radial-gradient(circle at 100% 0%, rgba(8, 47, 73, 0.96), transparent 65%),
-        radial-gradient(circle at 0% 100%, rgba(24, 24, 27, 0.96), transparent 65%),
-        radial-gradient(circle at 100% 100%, rgba(30, 64, 175, 0.9), transparent 65%),
-        linear-gradient(135deg, #020617, #020617 40%, #020617);
-      background-size: 340% 340%;
-      background-repeat: no-repeat;
-      animation: gradient-wave 20s ease-in-out infinite;
-    }
-    .dark .gradient-animate::before {
-      background:
-        conic-gradient(
-          from 200deg,
-          rgba(56,189,248,0.38),
-          rgba(129,140,248,0.45),
-          rgba(236,72,153,0.38),
-          rgba(16,185,129,0.35),
-          rgba(56,189,248,0.38)
-        );
-      filter: blur(55px);
-      opacity: 0.95;
-      animation: gradient-orbit 26s linear infinite;
-    }
-    @keyframes gradient-wave {
-      0%   { background-position: 40% 50%; }
-      25%  { background-position: 55% 60%; }
-      50%  { background-position: 65% 50%; }
-      75%  { background-position: 55% 40%; }
-      100% { background-position: 40% 50%; }
-    }
-    @keyframes gradient-orbit {
-      0%   { transform: rotate(0deg) scale(1); }
-      50%  { transform: rotate(180deg) scale(1.06); }
-      100% { transform: rotate(360deg) scale(1); }
-    }
-    .custom-scrollbar {
-      scrollbar-width: none; /* Firefox */
-    }
-    .custom-scrollbar::-webkit-scrollbar {
-      width: 0px;
-      height: 0px;
-    }
-    .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-    .custom-scrollbar::-webkit-scrollbar-thumb { background: transparent; border-radius: 10px; }
-  </style>
 </head>
 <body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
-  <div id="root" class="h-screen overflow-hidden"></div>
+  <div id="root" class="overflow-hidden dg-viewport-full"></div>
   <script type="module" src="/main.tsx"></script>
 </body>
 </html>

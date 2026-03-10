@@ -18,6 +18,7 @@ import {
 import type { ClassroomService } from './services/classroomService';
 import type { Course } from './types';
 import { card, sectionTitle, label, input, textarea, btnPrimary, chip, chipInactive, helperText } from './uiStyles';
+import { safeParseJson } from './utils/safeParseJson';
 
 type Audience = 'student' | 'parent' | 'admin' | 'staff';
 type GenderKey = 'male' | 'female' | 'neutral';
@@ -176,12 +177,7 @@ type PersistedCommunicateState = {
 
 const loadPersistedState = (): PersistedCommunicateState | null => {
   if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(COMM_STATE_KEY);
-    return raw ? (JSON.parse(raw) as PersistedCommunicateState) : null;
-  } catch {
-    return null;
-  }
+  return safeParseJson<PersistedCommunicateState | null>(window.localStorage.getItem(COMM_STATE_KEY), null);
 };
 
 export const CommunicationDashboard: React.FC<{
@@ -219,7 +215,7 @@ export const CommunicationDashboard: React.FC<{
   const [subject, setSubject] = useState(() => persisted?.subject ?? "ENL / ESL");
   const [period, setPeriod] = useState(() => persisted?.period ?? "none");
   const [note, setNote] = useState(() => persisted?.note ?? "");
-  const [search, setSearch] = useState("");
+  const [search, _setSearch] = useState("");
   const [activeMsg, setActiveMsg] = useState<MessageTemplate | null>(null);
   const [selectedBehaviors, setSelectedBehaviors] = useState<Set<number>>(new Set());
   const [englishText, setEnglishText] = useState("");
@@ -332,7 +328,7 @@ export const CommunicationDashboard: React.FC<{
           setThreads(list);
 
           const raw = window.localStorage.getItem(THREADS_LAST_SEEN_KEY);
-          const seen: Record<string, string> = raw ? JSON.parse(raw) : {};
+          const seen: Record<string, string> = safeParseJson(raw, {} as Record<string, string>);
           let changed = false;
 
           if (!isQuietNow()) {
@@ -686,7 +682,8 @@ export const CommunicationDashboard: React.FC<{
   };
 
   return (
-    <div className="h-full flex flex-col gap-2 pb-2">
+    <div className="flex-1 min-h-0 flex flex-col gap-2 pb-2 overflow-hidden">
+      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar flex flex-col gap-2">
       {/* Step 1: Who to contact – master selection */}
       <div className={card}>
         <p className={`${sectionTitle} mb-2`}>1. Who are you contacting?</p>
@@ -1178,6 +1175,7 @@ export const CommunicationDashboard: React.FC<{
             )}
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

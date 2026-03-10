@@ -1,0 +1,33 @@
+{
+  "common": {
+    "loading": "Loading...",
+    "retry": "Retry",
+    "save": "Save",
+    "cancel": "Cancel",
+    "close": "Close",
+    "skip": "Skip"
+  },
+  "auth": {
+    "signInGoogle": "Sign in with Google",
+    "tryDemo": "Try a live demo",
+    "welcomeBack": "Welcome back",
+    "signOut": "Sign out"
+  },
+  "dashboard": {
+    "grade": "Grade",
+    "noCourses": "No courses yet",
+    "noCoursesDesc": "Connect Google Classroom or create a local course to get started.",
+    "noAssignments": "No assignments",
+    "noGradesToSync": "No grades to sync",
+    "startGrading": "Start grading"
+  },
+  "offline": {
+    "banner": "Offline – changes will sync when back online",
+    "indicator": "Offline"
+  },
+  "errors": {
+    "generic": "Something went wrong. Please try again.",
+    "timeout": "Request timed out. Please retry.",
+    "network": "Network error. Check your connection."
+  }
+}

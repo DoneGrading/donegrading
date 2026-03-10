@@ -1,6 +1,14 @@
+import './global.css';
+import './i18n';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { checkEnv } from './lib/envCheck';
+import { initSentry } from './lib/sentry';
 import App from './App';
+import { ErrorBoundary } from './ErrorBoundary';
+
+checkEnv();
+initSentry();
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -10,6 +18,8 @@ if (!rootElement) {
 const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </React.StrictMode>
 );

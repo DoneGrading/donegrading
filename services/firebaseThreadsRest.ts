@@ -12,6 +12,15 @@ const FIREBASE_SESSION_KEY = "dg_firebase_session_v1";
 const getEnv = (key: string): string =>
   (typeof import.meta !== "undefined" && (import.meta as any).env?.[key]) || "";
 
+function safeParseJson<T>(raw: string | null | undefined, fallback: T): T {
+  if (raw == null || raw === "") return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 export const getFirebaseConfig = () => {
   const apiKey = getEnv("VITE_FIREBASE_API_KEY");
   const projectId = getEnv("VITE_FIREBASE_PROJECT_ID");
@@ -19,15 +28,10 @@ export const getFirebaseConfig = () => {
 };
 
 export const loadFirebaseSession = (): FirebaseSession | null => {
-  try {
-    const raw = localStorage.getItem(FIREBASE_SESSION_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as FirebaseSession;
-    if (!parsed?.idToken || !parsed?.expiresAtMs) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
+  const raw = localStorage.getItem(FIREBASE_SESSION_KEY);
+  const parsed = safeParseJson<FirebaseSession | null>(raw, null);
+  if (!parsed?.idToken || !parsed?.expiresAtMs) return null;
+  return parsed;
 };
 
 export const saveFirebaseSession = (s: FirebaseSession | null) => {

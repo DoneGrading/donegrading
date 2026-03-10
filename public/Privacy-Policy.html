@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <title>Privacy Policy | DoneGrading</title>
+    <meta
+      name="description"
+      content="Privacy Policy for DoneGrading, explaining how educator and student data is collected, used, and protected."
+    />
+    <link rel="canonical" href="https://www.donegrading.com/Privacy-Policy" />
+    <meta name="robots" content="index,follow" />
+    <meta property="og:title" content="Privacy Policy | DoneGrading" />
+    <meta
+      property="og:description"
+      content="Learn how DoneGrading handles educator and student data, including FERPA-aware protections and security."
+    />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://www.donegrading.com/Privacy-Policy" />
+    <meta property="og:image" content="https://www.donegrading.com/DoneGradingLogo.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Privacy Policy | DoneGrading" />
+    <meta
+      name="twitter:description"
+      content="Read DoneGrading's Privacy Policy and how we protect educator and student information."
+    />
+    <meta name="twitter:image" content="https://www.donegrading.com/DoneGradingLogo.png" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebPage",
+        "@id": "https://www.donegrading.com/Privacy-Policy#webpage",
+        "url": "https://www.donegrading.com/Privacy-Policy",
+        "name": "Privacy Policy | DoneGrading",
+        "description": "Privacy Policy for DoneGrading, explaining how educator and student data is collected, used, and protected with FERPA aware safeguards.",
+        "inLanguage": "en",
+        "isPartOf": {
+          "@type": "WebSite",
+          "@id": "https://www.donegrading.com/#website",
+          "url": "https://www.donegrading.com/",
+          "name": "DoneGrading"
+        }
+      }
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-surface: #020617;
+        --bg-card: #020617;
+        --accent-indigo: #6366f1;
+        --accent-purple: #a855f7;
+        --accent-pink: #ec4899;
+        --accent-emerald: #22c55e;
+        --border-subtle: rgba(148, 163, 184, 0.35);
+        --text-main: #e5e7eb;
+        --text-muted: #9ca3af;
+        --text-soft: #6b7280;
+        --text-strong: #f9fafb;
+        --radius-lg: 18px;
+        --radius-xl: 24px;
+        --shadow-soft: 0 22px 60px rgba(15, 23, 42, 0.7);
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        background: radial-gradient(
+              circle at top left,
+              rgba(129, 140, 248, 0.18),
+              transparent 55%
+            ),
+          radial-gradient(
+              circle at bottom right,
+              rgba(236, 72, 153, 0.18),
+              transparent 55%
+            ),
+          var(--bg-surface);
+        color: var(--text-main);
+        -webkit-font-smoothing: antialiased;
+        line-height: 1.7;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      img {
+        max-width: 100%;
+        display: block;
+      }
+
+      .page {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .shell {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 1.75rem 1.25rem 2.75rem;
+      }
+
+      .site-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 1.75rem;
+        gap: 1.25rem;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+      }
+
+      .brand-mark {
+        display: inline-block;
+      }
+
+      .brand-mark img {
+        width: 36px;
+        height: 36px;
+        border-radius: 12px;
+        object-fit: contain;
+      }
+
+      .brand-text-main {
+        font-size: 1rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #e5e7eb;
+      }
+
+      .brand-text-sub {
+        font-size: 0.78rem;
+        color: var(--text-soft);
+      }
+
+      .header-links {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        font-size: 0.85rem;
+        color: var(--text-soft);
+      }
+
+      .header-link {
+        position: relative;
+        padding-bottom: 0.05rem;
+      }
+
+      .header-link::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        bottom: -0.05rem;
+        width: 0;
+        height: 2px;
+        border-radius: 999px;
+        background: linear-gradient(
+          90deg,
+          var(--accent-indigo),
+          var(--accent-purple)
+        );
+        transition: width 0.18s ease-out;
+      }
+
+      .header-link:hover::after {
+        width: 100%;
+      }
+
+      @media (max-width: 640px) {
+        .site-header {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+      }
+
+      .doc-card {
+        border-radius: var(--radius-xl);
+        background: linear-gradient(
+          135deg,
+          rgba(15, 23, 42, 0.98),
+          rgba(15, 23, 42, 0.96)
+        );
+        border: 1px solid var(--border-subtle);
+        box-shadow: var(--shadow-soft);
+        padding: 1.6rem 1.6rem 1.9rem;
+      }
+
+      .doc-kicker {
+        font-size: 0.75rem;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: rgba(148, 163, 184, 0.9);
+        margin-bottom: 0.4rem;
+      }
+
+      h1 {
+        font-size: 1.7rem;
+        line-height: 1.2;
+        letter-spacing: -0.02em;
+        margin-bottom: 0.3rem;
+        color: var(--text-strong);
+      }
+
+      .meta {
+        font-size: 0.85rem;
+        color: var(--text-soft);
+        margin-bottom: 1.4rem;
+      }
+
+      .intro {
+        font-size: 0.95rem;
+        color: var(--text-muted);
+        margin-bottom: 1.8rem;
+        padding-bottom: 1.6rem;
+        border-bottom: 1px solid rgba(30, 41, 59, 0.9);
+      }
+
+      h2 {
+        font-size: 1rem;
+        font-weight: 600;
+        margin: 1.6rem 0 0.7rem;
+        color: var(--text-strong);
+      }
+
+      h3 {
+        font-size: 0.95rem;
+        font-weight: 600;
+        margin: 1.1rem 0 0.5rem;
+        color: var(--text-main);
+      }
+
+      p,
+      li {
+        font-size: 0.9rem;
+        color: var(--text-muted);
+        margin-bottom: 0.7rem;
+      }
+
+      ul {
+        margin-left: 1.35rem;
+        margin-bottom: 0.9rem;
+      }
+
+      ul li {
+        margin-bottom: 0.45rem;
+      }
+
+      .contact-box {
+        margin-top: 1.6rem;
+        padding: 1rem 1.1rem;
+        border-radius: var(--radius-lg);
+        border: 1px solid rgba(148, 163, 184, 0.6);
+        background: rgba(15, 23, 42, 0.96);
+      }
+
+      .contact-box a {
+        color: var(--accent-indigo);
+      }
+
+      .contact-box a:hover {
+        text-decoration: underline;
+      }
+
+      .doc-footer {
+        margin-top: 1.8rem;
+        padding-top: 1.2rem;
+        border-top: 1px solid rgba(30, 41, 59, 0.9);
+        font-size: 0.8rem;
+        color: var(--text-soft);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        justify-content: space-between;
+      }
+
+      .doc-footer a {
+        color: rgba(226, 232, 240, 0.9);
+      }
+
+      .doc-footer a:hover {
+        color: var(--accent-indigo);
+        text-decoration: underline;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <main class="shell">
+        <header class="site-header">
+          <div class="brand">
+            <div class="brand-mark">
+              <img src="/DoneGradingLogo.png" alt="DoneGrading logo" />
+            </div>
+            <div>
+              <div class="brand-text-main">DoneGrading</div>
+              <div class="brand-text-sub">Scan. Grade. Done.</div>
+            </div>
+          </div>
+          <div class="header-links">
+            <a href="https://www.donegrading.com" class="header-link">Home</a>
+            <a href="https://app.donegrading.com" class="header-link"
+              >Open app</a
+            >
+          </div>
+        </header>
+
+        <article class="doc-card">
+          <div class="doc-kicker">Legal</div>
+          <h1>Privacy Policy for DoneGrading</h1>
+          <p class="meta">Effective Date: June 2026 · Last Updated: June 2026</p>
+
+          <p class="intro">
+            DoneGrading (“we,” “our,” or “the Service”) is an educational technology application designed to assist
+            educators with grading and feedback. We are committed to protecting the privacy of educators and students
+            and handling data responsibly and transparently. This Privacy Policy explains what information we collect,
+            how we use it, and the choices available to users.
+          </p>
+
+          <h2>1. Who This Service Is For</h2>
+          <p>
+            DoneGrading is intended for use by educators. Student information is processed only at the direction of an
+            educator and solely for educational purposes. DoneGrading does not market to students directly.
+          </p>
+
+          <h2>2. Information We Collect</h2>
+
+          <h3>a. Educator Account Information</h3>
+          <p>When you sign in using Google, we may collect:</p>
+          <ul>
+            <li>Name</li>
+            <li>Email address</li>
+            <li>Google account identifier</li>
+          </ul>
+          <p>This information is used solely to authenticate you and associate data with your account.</p>
+
+          <h3>b. Classroom and Assignment Data</h3>
+          <p>With your permission, DoneGrading may access:</p>
+          <ul>
+            <li>Class and assignment metadata</li>
+            <li>Student names and identifiers provided through Google Classroom</li>
+            <li>Grading rubrics and assignment structure</li>
+          </ul>
+
+          <h3>c. Student Work and Content</h3>
+          <p>Educators may upload images or files of student work for grading purposes. This may include:</p>
+          <ul>
+            <li>Handwritten or typed student responses</li>
+            <li>Feedback and grades generated or edited by the educator</li>
+          </ul>
+
+          <h3>d. Usage and Technical Data</h3>
+          <p>We may collect limited technical data such as:</p>
+          <ul>
+            <li>Device type and browser</li>
+            <li>App usage metrics</li>
+            <li>Error logs</li>
+          </ul>
+          <p>This data is used only to improve reliability and performance.</p>
+
+          <h2>3. How We Use Information</h2>
+          <p>Information is used exclusively to:</p>
+          <ul>
+            <li>Authenticate educators</li>
+            <li>Enable grading and feedback features</li>
+            <li>Generate AI-assisted grading suggestions</li>
+            <li>Improve app functionality and reliability</li>
+          </ul>
+          <p>We do not use data for advertising or profiling.</p>
+
+          <h2>4. AI and Automated Processing</h2>
+          <p>DoneGrading may use artificial intelligence to assist educators by:</p>
+          <ul>
+            <li>Interpreting uploaded student work</li>
+            <li>Suggesting grades or feedback</li>
+          </ul>
+          <p>All AI outputs are advisory only. Final grading decisions are always made by the educator.</p>
+          <p>
+            AI processing is performed only to deliver requested functionality and is not used to train public models.
+          </p>
+
+          <h2>5. Student Privacy &amp; FERPA</h2>
+          <p>DoneGrading is designed to support compliance with the Family Educational Rights and Privacy Act (FERPA).</p>
+          <ul>
+            <li>Student data is processed only on behalf of educators</li>
+            <li>Student data is not sold, shared, or used for advertising</li>
+            <li>Data is not used to build user profiles unrelated to education</li>
+          </ul>
+
+          <h2>6. Data Storage and Security</h2>
+          <p>
+            Data is stored using Google Firebase and Google Cloud infrastructure. Reasonable administrative, technical,
+            and organizational safeguards are used to protect information against unauthorized access, loss, or misuse.
+          </p>
+
+          <h2>7. Data Sharing</h2>
+          <p>We do not sell personal information.</p>
+          <p>Data may be shared only with:</p>
+          <ul>
+            <li>Google services necessary to operate authentication, hosting, and AI functionality</li>
+          </ul>
+          <p>All service providers are bound by confidentiality and security obligations.</p>
+
+          <h2>8. Data Retention and Deletion</h2>
+          <ul>
+            <li>Educators may delete content they upload</li>
+            <li>Accounts and associated data may be deleted upon request</li>
+            <li>Data is retained only as long as necessary to provide the Service</li>
+          </ul>
+
+          <h2>9. Children’s Privacy</h2>
+          <p>
+            DoneGrading does not knowingly collect information directly from children without educator involvement. All
+            student data is provided by or through an educator for educational use.
+          </p>
+
+          <h2>10. Changes to This Policy</h2>
+          <p>
+            We may update this Privacy Policy periodically. Material changes will be reflected by updating the “Last
+            Updated” date above.
+          </p>
+
+          <h2>11. Contact</h2>
+          <div class="contact-box">
+            <p>If you have questions or concerns about this Privacy Policy, contact:</p>
+            <p>
+              <strong>Email:</strong>
+              <a href="mailto:donegrading@gmail.com">donegrading@gmail.com</a>
+            </p>
+          </div>
+
+          <div class="doc-footer">
+            <span>Copyright © 2026 DoneGrading LLC. All rights reserved.</span>
+            <span>
+              <a href="/Terms-of-Service">Terms of Service</a> ·
+              <a href="https://www.donegrading.com">Back to home</a>
+            </span>
+          </div>
+        </article>
+      </main>
+    </div>
+  </body>
+</html>

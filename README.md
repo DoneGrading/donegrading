@@ -23,43 +23,32 @@ View your app in AI Studio: https://ai.studio/apps/4f5b250b-1758-4177-8df6-40c51
    ```
    Open http://localhost:5173.
 
-## Push to GitHub & Deploy to Vercel
+## Architecture & docs
 
-### Push to GitHub
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — App structure, navigation, and workflow (Plan, Grade, Class, Communicate).
+- **[WORLD_CLASS_ROADMAP.md](WORLD_CLASS_ROADMAP.md)** — Roadmap for production-grade improvements.
 
-1. **Create a repo on GitHub** (if you don’t have one): [github.com/new](https://github.com/new). Don’t add a README if the project already has one.
+### Environment variables
 
-2. **Add GitHub as `origin`** (only if you haven’t already):
-   ```bash
-   git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git
-   ```
-   Replace `YOUR_USERNAME` and `YOUR_REPO_NAME` with your GitHub username and repo name.
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `VITE_GEMINI_API_KEY` | Yes | Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey). |
+| `VITE_GOOGLE_CLIENT_ID` | For Classroom | Google OAuth client ID (Cloud Console). |
+| `VITE_FIREBASE_API_KEY` | Optional | Firebase Web API key (threads / push). |
+| `VITE_FIREBASE_PROJECT_ID` | Optional | Firebase project ID. |
+| `VITE_SENTRY_DSN` | Optional | Sentry DSN for error monitoring. |
 
-3. **Commit and push:**
-   ```bash
-   git add .
-   git commit -m "Your commit message"
-   git push -u origin main
-   ```
-   If your default branch is `master`, use `git push -u origin master` instead.
+Copy `.env.example` to `.env.local` and fill in values.
 
-### Deploy to Vercel
+### Running tests
 
-1. **Sign in:** Go to [vercel.com](https://vercel.com) and sign in (GitHub login is easiest).
-
-2. **Import the project:**
-   - Click **Add New…** → **Project**.
-   - Select **Import Git Repository** and choose your GitHub repo (e.g. `donegrading`).
-   - Vercel will detect the Vite app and use the included `vercel.json` settings.
-
-3. **Environment variables:** In the import screen (or later in **Settings → Environment Variables**), add:
-   - **Name:** `VITE_GEMINI_API_KEY`  
-   - **Value:** your Gemini API key  
-   So the built app can call the Gemini API.
-
-4. **Deploy:** Click **Deploy**. Vercel will run `npm run build` and serve the `dist` folder. Each push to `main` will trigger a new deployment.
-
-**Preview URLs:** Every branch and pull request gets a unique preview URL. Production uses the URL Vercel assigns (e.g. `your-project.vercel.app`) or your custom domain.
+```bash
+npm run test        # Unit tests (Vitest) — watch mode
+npm run test:run    # Unit tests — single run
+npm run test:e2e    # E2E tests (Playwright; starts dev server)
+npm run lint        # ESLint
+npm run format:check # Prettier check
+```
 
 ---
 

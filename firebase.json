@@ -1,0 +1,39 @@
+{
+  "apphosting": [
+    {
+      "backendId": "donegrading",
+      "rootDir": ".",
+      "alwaysDeployFromSource": true
+    }
+  ],
+  "hosting": {
+    "public": "public",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "/Privacy-Policy",
+        "destination": "/Privacy-Policy.html"
+      },
+      {
+        "source": "/Terms-of-Service",
+        "destination": "/Terms-of-Service.html"
+      },
+      {
+        "source": "/subscribe",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/",
+        "destination": "/index.html"
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}

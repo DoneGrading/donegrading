@@ -1,0 +1,33 @@
+{
+  "common": {
+    "loading": "Cargando...",
+    "retry": "Reintentar",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "close": "Cerrar",
+    "skip": "Omitir"
+  },
+  "auth": {
+    "signInGoogle": "Iniciar sesión con Google",
+    "tryDemo": "Probar demo en vivo",
+    "welcomeBack": "Bienvenido de nuevo",
+    "signOut": "Cerrar sesión"
+  },
+  "dashboard": {
+    "grade": "Calificar",
+    "noCourses": "Aún no hay cursos",
+    "noCoursesDesc": "Conecta Google Classroom o crea un curso local para comenzar.",
+    "noAssignments": "No hay tareas",
+    "noGradesToSync": "No hay calificaciones para sincronizar",
+    "startGrading": "Empezar a calificar"
+  },
+  "offline": {
+    "banner": "Sin conexión – los cambios se sincronizarán cuando vuelvas a estar en línea",
+    "indicator": "Sin conexión"
+  },
+  "errors": {
+    "generic": "Algo salió mal. Por favor, inténtalo de nuevo.",
+    "timeout": "Tiempo de espera agotado. Por favor, reintenta.",
+    "network": "Error de red. Comprueba tu conexión."
+  }
+}
