@@ -16,7 +16,8 @@ export enum AppPhase {
   RECORDS,
   ROSTER_VIEW,
   ASSIGNMENT_CREATION,
-  PAYWALL
+  PAYWALL,
+  OPTIONS
 }
 
 export enum GradingMode {

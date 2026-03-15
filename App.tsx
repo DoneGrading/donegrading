@@ -33,6 +33,8 @@ import {
   ClipboardList,
   Minus,
   Plus,
+  Settings,
+  Share2,
 } from 'lucide-react';
 import { AppPhase, GradingMode, Course, Assignment, Student, GradedWork, GradingResponse, GeometricData, SubscriptionStatus } from './types';
 import {
@@ -2437,22 +2439,71 @@ const App: React.FC = () => {
               <PlusCircle className="w-5 h-5 text-indigo-600 dark:text-indigo-400 shrink-0" />
               <span className="text-xs font-black text-indigo-700 dark:text-indigo-300 uppercase tracking-wider">Create Course</span>
             </button>
-
-            <div className="pt-2 flex justify-center">
-              <button
-                type="button"
-                onClick={handleSignOut}
-                className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 hover:underline"
-              >
-                Sign out
-              </button>
-            </div>
           </div>
           <div aria-hidden="true" className="shrink-0" style={{ height: '4rem' }} />
         </div>
       </PageWrapper>
     );
   };
+
+  const renderOptions = () => (
+    <PageWrapper
+      headerTitle="Options"
+      headerSubtitle={undefined}
+      isOnline={isOnline}
+      isDarkMode={isDarkMode}
+      setIsDarkMode={setIsDarkMode}
+      syncStatus={syncStatus}
+      onBack={() => setPhase(AppPhase.DASHBOARD)}
+    >
+      <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-y-auto pb-20 custom-scrollbar">
+        <button
+          type="button"
+          onClick={handleShareApp}
+          className="group relative w-full py-3 overflow-hidden rounded-xl text-[11px] font-bold flex items-center justify-center gap-2 active:scale-[0.98] transition-all shadow-lg border-0 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500"
+        >
+          <Share2 className="w-4 h-4 text-white drop-shadow-sm shrink-0" />
+          <span className="text-white drop-shadow-sm uppercase tracking-[0.12em]">Share DoneGrading</span>
+        </button>
+        <button
+          type="button"
+          onClick={handleSignOut}
+          className="w-full py-2.5 text-[11px] font-semibold text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors"
+        >
+          Sign out
+        </button>
+        <div className="space-y-3 pt-2 border-t border-slate-200 dark:border-slate-700">
+          <a
+            href="https://www.donegrading.com/Terms-of-Service"
+            target="_blank"
+            rel="noreferrer"
+            className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300 underline underline-offset-2"
+          >
+            Terms of Service
+          </a>
+          <a
+            href="https://www.donegrading.com/Privacy-Policy"
+            target="_blank"
+            rel="noreferrer"
+            className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300 underline underline-offset-2"
+          >
+            Privacy Policy
+          </a>
+          <a
+            href="https://www.donegrading.com/Contact"
+            target="_blank"
+            rel="noreferrer"
+            className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300 underline underline-offset-2"
+          >
+            Support
+          </a>
+        </div>
+        <p className="text-[10px] text-slate-500 dark:text-slate-400 pt-4">
+          Copyright © 2026 DoneGrading LLC. All rights reserved.
+        </p>
+      </div>
+    </PageWrapper>
+  );
 
   const renderAssignmentSelect = () => (
     <PageWrapper
@@ -5414,6 +5465,7 @@ const App: React.FC = () => {
           <CommunicationDashboard educatorName={educatorName} courses={courses} classroom={classroom} students={students} accessToken={accessToken} />
         </PageWrapper>
       )}
+      {phase === AppPhase.OPTIONS && renderOptions()}
       </div>
 
       {/* Global voice capture overlay disabled – voice handled inline via VoiceInputButton components */}
@@ -5571,6 +5623,24 @@ const App: React.FC = () => {
             >
               <MessageCircle className="w-4 h-4 mb-0.5" />
               <span className="text-[7px] font-semibold uppercase tracking-[0.16em]">Communicate</span>
+            </button>
+            <button
+              type="button"
+              disabled={!isSignedIn}
+              onClick={() => {
+                if (!isSignedIn) return;
+                setPhase(AppPhase.OPTIONS);
+              }}
+              className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
+                phase === AppPhase.OPTIONS
+                  ? 'text-slate-700 dark:text-slate-200'
+                  : isSignedIn
+                    ? 'text-slate-600 dark:text-slate-300'
+                    : 'text-slate-400 dark:text-slate-600'
+              }`}
+            >
+              <Settings className="w-4 h-4 mb-0.5" />
+              <span className="text-[7px] font-semibold uppercase tracking-[0.16em]">Options</span>
             </button>
           </div>
         </div>

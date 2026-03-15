@@ -7,7 +7,6 @@ import {
   Calendar,
   Eye,
   EyeOff,
-  Share2,
   UserPlus,
   LogIn,
   School,
@@ -258,62 +257,6 @@ export function AuthView(): React.ReactElement {
               <p className="text-center text-[9px] text-slate-500 dark:text-slate-400 mt-1.5">Scroll up/down · pauses on touch</p>
             </section>
           </div>
-
-          <div className="shrink-0 pt-1 pb-1 space-y-1">
-            <button
-              type="button"
-              onClick={app.handleShareApp}
-              className="group relative w-full py-1.5 sm:py-2 overflow-hidden rounded-xl text-[11px] font-bold flex items-center justify-center gap-2 active:scale-[0.98] transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-[1.02] border-0"
-            >
-              <span
-                className="absolute inset-0 rounded-xl bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 animate-share-rainbow"
-                aria-hidden
-              />
-              <span className="absolute inset-0 rounded-xl bg-white/0 group-hover:bg-white/20 transition-colors duration-300" aria-hidden />
-              <span className="relative z-10 flex items-center justify-center gap-2">
-                <Share2 className="w-4 h-4 text-white drop-shadow-sm group-hover:scale-110 transition-transform duration-300" />
-                <span className="text-white drop-shadow-sm uppercase tracking-[0.12em]">Share DoneGrading</span>
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={app.handleSignOut}
-              className="w-full py-1 text-[11px] font-semibold text-slate-500 dark:text-slate-400 underline underline-offset-2"
-            >
-              Sign out
-            </button>
-            <div className="w-full text-[12px] text-slate-500 dark:text-slate-400 text-center space-y-1">
-              <p>
-                <a
-                  href="https://www.donegrading.com/Terms-of-Service"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="underline underline-offset-2"
-                >
-                  Terms of Service
-                </a>
-                {' | '}
-                <a
-                  href="https://www.donegrading.com/Privacy-Policy"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="underline underline-offset-2"
-                >
-                  Privacy Policy
-                </a>
-                {' | '}
-                <a
-                  href="http://donegrading.com/Contact"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="underline underline-offset-2"
-                >
-                  Contact
-                </a>
-              </p>
-              <p>Copyright © 2026 DoneGrading LLC. All rights reserved.</p>
-            </div>
-          </div>
         </div>
       </PageWrapper>
     );
@@ -468,37 +411,6 @@ export function AuthView(): React.ReactElement {
               </span>
             </button>
           )}
-          <div className="w-full text-[12px] text-slate-500 dark:text-slate-400 text-center space-y-1">
-            <p>
-              <a
-                href="https://www.donegrading.com/Terms-of-Service"
-                target="_blank"
-                rel="noreferrer"
-                className="underline underline-offset-2"
-              >
-                Terms of Service
-              </a>
-              {' | '}
-              <a
-                href="https://www.donegrading.com/Privacy-Policy"
-                target="_blank"
-                rel="noreferrer"
-                className="underline underline-offset-2"
-              >
-                Privacy Policy
-              </a>
-              {' | '}
-              <a
-                href="http://donegrading.com/Contact"
-                target="_blank"
-                rel="noreferrer"
-                className="underline underline-offset-2"
-              >
-                Contact
-              </a>
-            </p>
-            <p>Copyright © 2026 DoneGrading LLC. All rights reserved.</p>
-          </div>
         </div>
       </div>
     </PageWrapper>
