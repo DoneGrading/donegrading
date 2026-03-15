@@ -81,7 +81,7 @@ export function AuthView(): React.ReactElement {
       },
       {
         key: 'grade' as const,
-        label: 'Grade',
+        label: 'Dashboard',
         icon: LayoutDashboard,
         onClick: () => {
           app.bumpNavUsage('grade');

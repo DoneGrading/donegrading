@@ -5468,7 +5468,7 @@ const App: React.FC = () => {
               }`}
             >
               <Home className="w-4 h-4 mb-0.5" />
-              <span className="text-[7px] font-semibold uppercase tracking-[0.16em]">Home</span>
+              <span className="text-[7px] font-semibold uppercase tracking-[0.16em]">Dashboard</span>
             </button>
             <button
               type="button"
@@ -5569,7 +5569,7 @@ const App: React.FC = () => {
               }`}
             >
               <LayoutDashboard className="w-4 h-4 mb-0.5" />
-              <span className="text-[7px] font-semibold uppercase tracking-[0.16em]">Dashboard</span>
+              <span className="text-[7px] font-semibold uppercase tracking-[0.16em]">Grade</span>
             </button>
             <button
               type="button"
