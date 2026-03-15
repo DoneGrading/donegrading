@@ -12,7 +12,6 @@ import {
   CloudUpload,
   Zap,
   AlertCircle,
-  Mail,
   Check,
   Wifi,
   WifiOff,
@@ -2142,7 +2141,6 @@ const App: React.FC = () => {
   const renderDashboard = () => {
     const totalCourses = courses.length;
     const connectedCourses = courses.filter(c => c.source !== 'local').length;
-    const localCourses = totalCourses - connectedCourses;
     const totalAssignments = assignments.length;
     const totalStudents = students.length;
     const pendingGrades = gradedWorks.length;
