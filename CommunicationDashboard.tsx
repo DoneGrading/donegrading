@@ -437,8 +437,12 @@ export const CommunicationDashboard: React.FC<{
     try {
       const list = await classroom.getStudents(courseId);
       setCommunicateStudents(list);
-    } catch {
+    } catch (e) {
+      console.error('Failed to load students for Communication dashboard', e);
       setCommunicateStudents([]);
+      setThreadsError(
+        'Could not load students from Google Classroom. Check your Classroom access and try again.'
+      );
     } finally {
       setIsLoadingStudents(false);
     }

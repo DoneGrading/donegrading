@@ -1,19 +1,10 @@
 # Firebase App Hosting config for DoneGrading (Vite + React SPA)
 # https://firebase.google.com/docs/app-hosting/configure
 
-# Ensure correct Google OAuth client ID at build time (console can show "unable to queue")
-env:
-  - variable: VITE_GOOGLE_CLIENT_ID
-    value: 705695813275-roaepb7an7bkq4gn9b7fr5c73vp26303.apps.googleusercontent.com
-    availability:
-      - BUILD
-      - RUNTIME
-
 scripts:
   # npm ci is faster and more reliable in CI than npm install
   buildCommand: npm ci && npm run build
-  # Use npm run start so CWD is project root and node finds server.js + node_modules
-  runCommand: npm run start
+  runCommand: node server.js
 
 # Include full project so node_modules (Express) is available; [dist, server.js] alone would exclude deps
 outputFiles:

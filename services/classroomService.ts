@@ -29,7 +29,7 @@ export class ClassroomService {
         } catch (e) {
           errorMessage = await response.text();
         }
-        throw new Error(errorMessage);
+        throw new Error(`Classroom: ${errorMessage}`);
       }
 
       // Some Classroom endpoints (like DELETE) return 204 No Content.
@@ -265,7 +265,7 @@ ${mimeBody}`;
     const base64Encoded = btoa(unescape(encodeURIComponent(fullMessage)));
     const raw = base64Encoded.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
-    await fetch(`${GMAIL_BASE_URL}/users/me/messages/send`, {
+    const response = await fetch(`${GMAIL_BASE_URL}/users/me/messages/send`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.accessToken}`,
@@ -273,5 +273,16 @@ ${mimeBody}`;
       },
       body: JSON.stringify({ raw }),
     });
+
+    if (!response.ok) {
+      let errorMessage = "Gmail API error";
+      try {
+        const err = await response.json();
+        errorMessage = err.error?.message || errorMessage;
+      } catch {
+        errorMessage = await response.text() || errorMessage;
+      }
+      throw new Error(`Email failed: ${errorMessage}`);
+    }
   }
 }

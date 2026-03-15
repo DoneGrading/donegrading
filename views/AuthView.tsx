@@ -1,5 +1,20 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Timer, MessageCircle, LayoutDashboard, BookOpen, Calendar, Eye, EyeOff, Share2, UserPlus, LogIn } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  Timer,
+  MessageCircle,
+  LayoutDashboard,
+  BookOpen,
+  Calendar,
+  Eye,
+  EyeOff,
+  Share2,
+  UserPlus,
+  LogIn,
+  School,
+  CheckCircle2,
+  Bell,
+  Users,
+} from 'lucide-react';
 
 /** Official Google "G" logo for Sign in with Google button */
 const GoogleLogo = () => (
@@ -21,9 +36,27 @@ import { AppPhase } from '../types';
 import { useAppContext } from '../context/AppContext';
 import { PageWrapper } from '../components/PageWrapper';
 
+const CYLINDER_SLOT_HEIGHT = 76;
+const CYLINDER_VIEW_HEIGHT = 200;
+
 export function AuthView(): React.ReactElement {
   const app = useAppContext();
   const [showPassword, setShowPassword] = useState(false);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || isPaused) return;
+    const t = setInterval(() => {
+      if (!scrollRef.current) return;
+      const next = scrollRef.current.scrollTop + 0.35;
+      const max = 4 * CYLINDER_SLOT_HEIGHT;
+      scrollRef.current.scrollTop = next >= max ? 0 : next;
+    }, 24);
+    return () => clearInterval(t);
+  }, [isPaused]);
 
   if (app.isSignedIn) {
     const signedInVia = app.accessToken ? 'Google Classroom' : 'demo mode';
@@ -77,28 +110,6 @@ export function AuthView(): React.ReactElement {
     const lesson = app.homeSummary.lesson;
     const upcoming = app.homeSummary.upcoming;
 
-    const [activeSlide, setActiveSlide] = useState(0);
-    const [isPaused, setIsPaused] = useState(false);
-    const scrollContainerRef = useRef<HTMLDivElement>(null);
-    const slideRefs = useRef<(HTMLDivElement | null)[]>([]);
-
-    const slideCount = 4;
-
-    useEffect(() => {
-      if (isPaused) return;
-      const t = setInterval(() => {
-        setActiveSlide((prev) => (prev + 1) % slideCount);
-      }, 4000);
-      return () => clearInterval(t);
-    }, [isPaused, slideCount]);
-
-    useEffect(() => {
-      const el = slideRefs.current[activeSlide];
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
-      }
-    }, [activeSlide]);
-
     return (
       <PageWrapper
         headerTitle={app.educatorName || 'Welcome'}
@@ -123,168 +134,128 @@ export function AuthView(): React.ReactElement {
             </p>
           </div>
 
-          <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar flex flex-col gap-1.5 py-0.5 mt-1">
+          <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar flex flex-col py-1 mt-1">
             <section
-              className="relative rounded-2xl border border-white/70 dark:border-white/10 bg-gradient-to-br from-emerald-500/20 via-indigo-500/10 to-fuchsia-500/20 shadow-xl px-3.5 py-3.5 ring-1 ring-emerald-400/50 overflow-hidden"
+              className="relative flex-1 rounded-3xl bg-transparent shadow-xl px-3 py-3"
               onMouseEnter={() => setIsPaused(true)}
               onMouseLeave={() => setIsPaused(false)}
               onTouchStart={() => setIsPaused(true)}
               onTouchEnd={() => setIsPaused(false)}
             >
-              <div className="absolute inset-x-6 -top-2 h-6 bg-gradient-to-r from-emerald-400/50 via-indigo-400/40 to-fuchsia-400/50 blur-xl opacity-70 pointer-events-none" />
-              <p className="relative text-[10px] font-black uppercase tracking-[0.2em] text-emerald-900/80 dark:text-emerald-100/80 mb-1.5">
+              <p className="text-center text-[10px] font-black uppercase tracking-[0.2em] text-slate-600 dark:text-slate-400 mb-2">
                 Today — {app.homeSummary.todayShortLabel || 'Your day'}
               </p>
-              <div className="relative">
+              {/* Rotating cylinder: scroll up/down = standing in front of cylinder, menu scrolls vertically */}
+              <div
+                className="relative mx-auto overflow-hidden rounded-2xl"
+                style={{ height: CYLINDER_VIEW_HEIGHT, perspective: '420px', perspectiveOrigin: '50% 50%' }}
+              >
                 <div
-                  ref={scrollContainerRef}
-                  className="relative max-h-44 overflow-y-auto overflow-x-hidden custom-scrollbar pr-1.5 space-y-2 snap-y snap-mandatory scroll-smooth text-[11px] text-slate-800 dark:text-slate-100 [scroll-behavior:smooth]"
+                  ref={scrollRef}
+                  onScroll={() => setScrollTop(scrollRef.current?.scrollTop ?? 0)}
+                  className="h-full overflow-y-auto overflow-x-hidden custom-scrollbar scroll-smooth"
+                  style={{ scrollSnapType: 'y mandatory', scrollPaddingTop: (CYLINDER_VIEW_HEIGHT - CYLINDER_SLOT_HEIGHT) / 2 }}
                 >
-                <div
-                  ref={(el) => { slideRefs.current[0] = el; }}
-                  className="snap-start snap-always min-h-[7.5rem] rounded-xl bg-white/90 dark:bg-slate-950/80 border border-emerald-200/70 dark:border-emerald-500/60 px-3 py-2.5 shadow-sm transition-shadow duration-300"
-                >
-                  <p className="font-semibold flex items-center gap-1">
-                    <span role="img" aria-label="lesson">
-                      📚
-                    </span>
-                    Lesson today
-                  </p>
-                  <p className="text-[11px]">
-                    {lesson ? (
-                      <>
-                        {lesson.course && <span className="font-semibold">{lesson.course}</span>}
-                        {lesson.course && ' — '}
-                        <span>{lesson.title}</span>
-                      </>
-                    ) : (
-                      'No lesson block scheduled for today yet.'
-                    )}
-                  </p>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                    {lesson ? lesson.timeLabel : 'Add a block in Schedule to see it here.'}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={quickActions.find((q) => q.key === 'teach')?.onClick}
-                    className="mt-0.5 text-[10px] font-semibold text-indigo-600 dark:text-indigo-300 underline underline-offset-2"
-                  >
-                    Open Teach mode
-                  </button>
+                  <div style={{ height: (CYLINDER_VIEW_HEIGHT - CYLINDER_SLOT_HEIGHT) / 2, flexShrink: 0 }} aria-hidden />
+                  {[0, 1, 2, 3].map((index) => {
+                    const slotTop = (CYLINDER_VIEW_HEIGHT - CYLINDER_SLOT_HEIGHT) / 2 + index * CYLINDER_SLOT_HEIGHT;
+                    const slotCenter = slotTop + CYLINDER_SLOT_HEIGHT / 2;
+                    const viewportCenter = scrollTop + CYLINDER_VIEW_HEIGHT / 2;
+                    const offset = slotCenter - viewportCenter;
+                    const angle = Math.max(-42, Math.min(42, offset * 0.45));
+                    const scale = Math.max(0.72, 1 - Math.abs(offset) * 0.004);
+                    const opacity = Math.max(0.5, 1 - Math.abs(offset) * 0.006);
+                    return (
+                      <div
+                        key={index}
+                        style={{
+                          height: CYLINDER_SLOT_HEIGHT,
+                          scrollSnapAlign: 'center',
+                          scrollSnapStop: 'always',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0,
+                        }}
+                      >
+                        <div
+                          className="w-full rounded-xl border border-slate-200/80 dark:border-slate-600/80 bg-white/95 dark:bg-slate-900/95 shadow-md origin-center px-2.5 py-2"
+                          style={{
+                            transform: `rotateX(${angle}deg) scale(${scale})`,
+                            transformStyle: 'preserve-3d',
+                            backfaceVisibility: 'hidden',
+                            opacity,
+                            transition: 'transform 0.12s ease-out, opacity 0.12s ease-out',
+                          }}
+                        >
+                          {index === 0 && (
+                  <>
+                    <p className="font-semibold flex items-center gap-1.5 text-[11px]">
+                      <School className="h-4 w-4 text-emerald-600 dark:text-emerald-300 shrink-0" />
+                      Next class
+                    </p>
+                    <p className="text-[11px] mt-0.5 text-slate-700 dark:text-slate-200">
+                      {lesson ? (
+                        <><span className="font-semibold">{lesson.course || 'Class'}{lesson.title ? ' – ' : ''}</span>{lesson.title}</>
+                      ) : (
+                        'No class block on today’s schedule yet.'
+                      )}
+                    </p>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">{lesson ? lesson.timeLabel : 'Add a block in Schedule.'}</p>
+                    <button type="button" onClick={quickActions.find((q) => q.key === 'teach')?.onClick} className="mt-1 text-[10px] font-semibold text-indigo-600 dark:text-indigo-300 underline underline-offset-2">Start Teach mode</button>
+                  </>
+                )}
+                {index === 1 && (
+                  <>
+                    <p className="font-semibold flex items-center gap-1.5 text-[11px]">
+                      <CheckCircle2 className="h-4 w-4 text-amber-600 dark:text-amber-300 shrink-0" />
+                      Assignments to grade
+                    </p>
+                    <p className="text-[11px] mt-0.5 text-slate-700 dark:text-slate-200">
+                      {app.homeSummary.assignmentsToGrade > 0
+                        ? (app.homeSummary.assignmentsPrimaryLabel ?? `${app.homeSummary.assignmentsToGrade} submission${app.homeSummary.assignmentsToGrade === 1 ? '' : 's'} waiting to sync`)
+                        : 'No work waiting to sync right now.'}
+                    </p>
+                    {app.homeSummary.assignmentsSecondaryLabel && <p className="text-[10px] text-slate-500 dark:text-slate-400">{app.homeSummary.assignmentsSecondaryLabel}</p>}
+                    <button type="button" onClick={quickActions.find((q) => q.key === 'grade')?.onClick} className="mt-1 text-[10px] font-semibold text-amber-600 dark:text-amber-300 underline underline-offset-2">Scan, grade &amp; sync</button>
+                  </>
+                )}
+                {index === 2 && (
+                  <>
+                    <p className="font-semibold flex items-center gap-1.5 text-[11px]">
+                      <Users className="h-4 w-4 text-emerald-600 dark:text-emerald-300 shrink-0" />
+                      Parents to contact
+                    </p>
+                    <p className="text-[11px] mt-0.5 text-slate-700 dark:text-slate-200">
+                      {app.homeSummary.parentsToContact > 0
+                        ? (app.homeSummary.parentsLabel ?? `${app.homeSummary.parentsToContact} parent${app.homeSummary.parentsToContact === 1 ? '' : 's'} to contact from your follow‑up list.`)
+                        : 'No parent follow‑ups logged yet.'}
+                    </p>
+                    <button type="button" onClick={quickActions.find((q) => q.key === 'communicate')?.onClick} className="mt-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-300 underline underline-offset-2">Send message</button>
+                  </>
+                )}
+                {index === 3 && (
+                  <>
+                    <p className="font-semibold flex items-center gap-1.5 text-[11px]">
+                      <Bell className="h-4 w-4 text-sky-600 dark:text-sky-300 shrink-0" />
+                      Upcoming
+                    </p>
+                    <p className="text-[11px] mt-0.5 text-slate-700 dark:text-slate-200">
+                      {upcoming ? <><span className="font-semibold">{upcoming.title}</span> · <span className="text-slate-500 dark:text-slate-400">{upcoming.whenLabel}</span></> : 'Add reminders or blocks in Schedule to see what’s coming next.'}
+                    </p>
+                    <button type="button" onClick={quickActions.find((q) => q.key === 'schedule')?.onClick} className="mt-1 text-[10px] font-semibold text-sky-600 dark:text-sky-300 underline underline-offset-2">View schedule</button>
+                  </>
+                )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div style={{ height: (CYLINDER_VIEW_HEIGHT - CYLINDER_SLOT_HEIGHT) / 2, flexShrink: 0 }} aria-hidden />
                 </div>
-
-                <div
-                  ref={(el) => { slideRefs.current[1] = el; }}
-                  className="snap-start snap-always min-h-[7.5rem] rounded-xl bg-white/90 dark:bg-slate-950/80 border border-amber-200/80 dark:border-amber-500/60 px-3 py-2.5 shadow-sm transition-shadow duration-300"
-                >
-                  <p className="font-semibold flex items-center gap-1">
-                    <span role="img" aria-label="grading">
-                      📝
-                    </span>
-                    Assignments to grade
-                  </p>
-                  <p className="text-[11px]">
-                    {app.homeSummary.assignmentsToGrade > 0 ? (
-                      <>
-                        <span className="font-semibold">
-                          {app.homeSummary.assignmentsToGrade} submission
-                          {app.homeSummary.assignmentsToGrade === 1 ? '' : 's'}
-                        </span>{' '}
-                        ready to review and sync.
-                      </>
-                    ) : (
-                      'No work waiting to sync right now.'
-                    )}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={quickActions.find((q) => q.key === 'grade')?.onClick}
-                    className="mt-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-300 underline underline-offset-2"
-                  >
-                    Scan &amp; grade
-                  </button>
-                </div>
-
-                <div
-                  ref={(el) => { slideRefs.current[2] = el; }}
-                  className="snap-start snap-always min-h-[7.5rem] rounded-xl bg-white/90 dark:bg-slate-950/80 border border-emerald-200/80 dark:border-emerald-500/60 px-3 py-2.5 shadow-sm transition-shadow duration-300"
-                >
-                  <p className="font-semibold flex items-center gap-1">
-                    <span role="img" aria-label="parents">
-                      👪
-                    </span>
-                    Parents to contact
-                  </p>
-                  <p className="text-[11px]">
-                    {app.homeSummary.parentsToContact > 0 ? (
-                      <>
-                        <span className="font-semibold">
-                          {app.homeSummary.parentsToContact} follow‑up
-                          {app.homeSummary.parentsToContact === 1 ? '' : 's'}
-                        </span>{' '}
-                        in your voice inbox.
-                      </>
-                    ) : (
-                      'No parent follow‑ups logged yet.'
-                    )}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={quickActions.find((q) => q.key === 'communicate')?.onClick}
-                    className="mt-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-300 underline underline-offset-2"
-                  >
-                    Send message
-                  </button>
-                </div>
-
-                <div
-                  ref={(el) => { slideRefs.current[3] = el; }}
-                  className="snap-start snap-always min-h-[7.5rem] rounded-xl bg-white/90 dark:bg-slate-950/80 border border-sky-200/80 dark:border-sky-500/60 px-3 py-2.5 shadow-sm transition-shadow duration-300"
-                >
-                  <p className="font-semibold flex items-center gap-1">
-                    <span role="img" aria-label="upcoming">
-                      📅
-                    </span>
-                    Upcoming
-                  </p>
-                  <p className="text-[11px]">
-                    {upcoming ? (
-                      <>
-                        <span className="font-semibold">{upcoming.title}</span>{' '}
-                        <span className="text-[10px] text-slate-500 dark:text-slate-400">
-                          · {upcoming.whenLabel}
-                        </span>
-                      </>
-                    ) : (
-                      'Add reminders or blocks in Schedule to see what’s coming next.'
-                    )}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={quickActions.find((q) => q.key === 'schedule')?.onClick}
-                    className="mt-0.5 text-[10px] font-semibold text-sky-600 dark:text-sky-300 underline underline-offset-2"
-                  >
-                    View schedule
-                  </button>
-                </div>
-                </div>
-                <div className="absolute bottom-0 left-0 right-2 h-8 bg-gradient-to-t from-emerald-500/10 via-transparent to-transparent pointer-events-none rounded-b-xl" aria-hidden />
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-slate-50/95 dark:from-slate-950/95 to-transparent" aria-hidden />
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-slate-50/95 dark:from-slate-950/95 to-transparent" aria-hidden />
               </div>
-              <div className="flex justify-center gap-1.5 mt-2" aria-hidden>
-                {[0, 1, 2, 3].map((i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => { setActiveSlide(i); setIsPaused(true); setTimeout(() => setIsPaused(false), 6000); }}
-                    className={`h-1.5 rounded-full transition-all duration-300 ${
-                      i === activeSlide
-                        ? 'w-4 bg-emerald-500 dark:bg-emerald-400'
-                        : 'w-1.5 bg-slate-300/80 dark:bg-slate-600/80'
-                    }`}
-                    aria-label={`Go to slide ${i + 1}`}
-                  />
-                ))}
-              </div>
+              <p className="text-center text-[9px] text-slate-500 dark:text-slate-400 mt-1.5">Scroll up/down · pauses on touch</p>
             </section>
           </div>
 

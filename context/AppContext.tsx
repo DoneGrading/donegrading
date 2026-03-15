@@ -9,7 +9,10 @@ export interface HomeSummary {
     timeLabel?: string;
   };
   assignmentsToGrade: number;
+  assignmentsPrimaryLabel?: string;
+  assignmentsSecondaryLabel?: string;
   parentsToContact: number;
+  parentsLabel?: string;
   upcoming?: {
     title: string;
     whenLabel: string;
