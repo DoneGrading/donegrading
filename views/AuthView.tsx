@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Timer,
   MessageCircle,
   LayoutDashboard,
   BookOpen,
@@ -67,15 +66,6 @@ export function AuthView(): React.ReactElement {
         onClick: () => {
           app.bumpNavUsage('plan');
           app.setPhase(AppPhase.PLAN);
-        },
-      },
-      {
-        key: 'teach' as const,
-        label: 'Teach',
-        icon: Timer,
-        onClick: () => {
-          app.bumpNavUsage('teach');
-          app.setPhase(AppPhase.CLASSROOM);
         },
       },
       {
@@ -201,7 +191,7 @@ export function AuthView(): React.ReactElement {
                       )}
                     </p>
                     <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">{lesson ? lesson.timeLabel : 'Add a block in Schedule.'}</p>
-                    <button type="button" onClick={quickActions.find((q) => q.key === 'teach')?.onClick} className="mt-1 text-[10px] font-semibold text-indigo-600 dark:text-indigo-300 underline underline-offset-2">Start Teach mode</button>
+                    <button type="button" onClick={quickActions.find((q) => q.key === 'grade')?.onClick} className="mt-1 text-[10px] font-semibold text-indigo-600 dark:text-indigo-300 underline underline-offset-2">Open Dashboard</button>
                   </>
                 )}
                 {index === 1 && (

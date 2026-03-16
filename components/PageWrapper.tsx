@@ -55,15 +55,23 @@ export const PageWrapper: React.FC<{
               </button>
             )}
 
-            <div className="flex flex-col backdrop-blur-md bg-white/10 dark:bg-black/10 px-3 py-1.5 rounded-xl shadow-sm">
-              <h1 className="text-lg font-black bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-200 text-transparent bg-clip-text tracking-tight truncate leading-none pb-0.5 drop-shadow-sm">
-                {headerTitle}
-              </h1>
-              {headerSubtitle && (
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-800 dark:text-slate-200 mt-0.5 drop-shadow-sm min-w-0 max-w-[min(100%,280px)]">
-                  {headerSubtitle}
-                </p>
-              )}
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <img
+                src="/DoneGradingLogo.png"
+                alt=""
+                className="h-10 w-auto shrink-0 object-contain"
+                aria-hidden
+              />
+              <div className="flex flex-col backdrop-blur-md bg-white/10 dark:bg-black/10 px-3 py-1.5 rounded-xl shadow-sm min-w-0">
+                <h1 className="text-lg font-black bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-200 text-transparent bg-clip-text tracking-tight truncate leading-none pb-0.5 drop-shadow-sm">
+                  {headerTitle}
+                </h1>
+                {headerSubtitle && (
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-800 dark:text-slate-200 mt-0.5 drop-shadow-sm min-w-0 max-w-[min(100%,280px)]">
+                    {headerSubtitle}
+                  </p>
+                )}
+              </div>
             </div>
           </div>
         </header>

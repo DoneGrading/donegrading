@@ -2326,7 +2326,6 @@ const App: React.FC = () => {
               </button>
             </div>
           </div>
-          <div aria-hidden="true" className="shrink-0" style={{ height: '3rem' }} />
         </div>
       </PageWrapper>
     );
@@ -2334,8 +2333,8 @@ const App: React.FC = () => {
 
   const renderOptions = () => (
     <PageWrapper
-      headerTitle="Options"
-      headerSubtitle={undefined}
+      headerTitle={educatorName || 'Options'}
+      headerSubtitle={todayLabel || undefined}
       isOnline={isOnline}
       isDarkMode={isDarkMode}
       setIsDarkMode={setIsDarkMode}
