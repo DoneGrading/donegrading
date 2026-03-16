@@ -34,8 +34,8 @@ import { AppPhase } from '../types';
 import { useAppContext } from '../context/AppContext';
 import { PageWrapper } from '../components/PageWrapper';
 
-const CYLINDER_SLOT_HEIGHT = 76;
-const CYLINDER_VIEW_HEIGHT = 200;
+const CYLINDER_SLOT_HEIGHT = 88;
+const CYLINDER_VIEW_HEIGHT = 300;
 
 export function AuthView(): React.ReactElement {
   const app = useAppContext();
@@ -57,7 +57,6 @@ export function AuthView(): React.ReactElement {
   }, [isPaused]);
 
   if (app.isSignedIn) {
-    const signedInVia = app.accessToken ? 'Google Classroom' : 'demo mode';
     const quickActions = [
       {
         key: 'plan' as const,
@@ -108,22 +107,8 @@ export function AuthView(): React.ReactElement {
         setIsDarkMode={app.setIsDarkMode}
         syncStatus={app.syncStatus}
       >
-        <div className="flex-1 min-h-0 w-full flex flex-col max-w-sm mx-auto py-0.5 sm:py-1 gap-0.5 sm:gap-1 overflow-hidden">
-          <div className="shrink-0 flex flex-col items-center gap-0.5 sm:gap-1">
-            <img
-              src="/DoneGradingLogo.png"
-              alt="DoneGrading"
-              className="w-24 sm:w-28 max-w-full drop-shadow-lg object-contain shrink-0 mb-3"
-            />
-            <p className="text-center text-slate-700 dark:text-slate-200 font-semibold text-[14px] sm:text-[15px]">
-              Welcome back, {app.educatorName || 'teacher'}.
-            </p>
-            <p className="text-center text-[11px] font-bold text-slate-500 dark:text-slate-400">
-              You're signed in via {signedInVia}.
-            </p>
-          </div>
-
-          <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar flex flex-col py-1 mt-1">
+        <div className="flex-1 min-h-0 w-full flex flex-col max-w-sm mx-auto overflow-hidden">
+          <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar flex flex-col py-1">
             <section
               className="relative flex-1 rounded-3xl bg-transparent shadow-xl px-3 py-3"
               onMouseEnter={() => setIsPaused(true)}
