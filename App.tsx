@@ -27,12 +27,6 @@ import {
   MessageCircle,
   LayoutDashboard,
   Calendar,
-  Timer,
-  Shuffle,
-  Volume2,
-  ClipboardList,
-  Minus,
-  Plus,
   Settings,
   Share2,
 } from 'lucide-react';
@@ -627,19 +621,6 @@ const App: React.FC = () => {
   const [successCriteria, setSuccessCriteria] = useState<string[]>([]);
   const [reflectionNote, setReflectionNote] = useState('');
 
-  // Classroom tab (Control Center)
-  const [timerSeconds, setTimerSeconds] = useState(0);
-  const [timerRunning, setTimerRunning] = useState(false);
-  const [timerInitialMinutes, setTimerInitialMinutes] = useState(5);
-  const [randomPicked, setRandomPicked] = useState<Student | null>(null);
-  const [noiseLevel, setNoiseLevel] = useState(0);
-  const [noiseMeterMicOn, setNoiseMeterMicOn] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [behaviorScores, setBehaviorScores] = useState<Record<string, number>>({});
-  const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const micStreamRef = useRef<MediaStream | null>(null);
-  const micAnimationRef = useRef<number | null>(null);
-
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -767,101 +748,6 @@ const App: React.FC = () => {
     successCriteria,
     reflectionNote,
   ]);
-  useEffect(() => {
-    if (!timerRunning) return;
-    timerIntervalRef.current = setInterval(() => {
-      setTimerSeconds((s) => {
-        if (s <= 1) {
-          if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-          timerIntervalRef.current = null;
-          setTimerRunning(false);
-          return 0;
-        }
-        return s - 1;
-      });
-    }, 1000);
-    return () => { if (timerIntervalRef.current) clearInterval(timerIntervalRef.current); };
-  }, [timerRunning]);
-
-  // Noise meter: real microphone input when enabled
-  useEffect(() => {
-    if (!noiseMeterMicOn) {
-      if (micStreamRef.current) {
-        micStreamRef.current.getTracks().forEach((t) => t.stop());
-        micStreamRef.current = null;
-      }
-      if (micAnimationRef.current != null) {
-        cancelAnimationFrame(micAnimationRef.current);
-        micAnimationRef.current = null;
-      }
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        micStreamRef.current = stream;
-        const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-        if (!AudioContextClass) return;
-        const audioContext = new AudioContextClass();
-        const source = audioContext.createMediaStreamSource(stream);
-        const analyser = audioContext.createAnalyser();
-        analyser.fftSize = 256;
-        analyser.smoothingTimeConstant = 0.7;
-        source.connect(analyser);
-        const dataArray = new Uint8Array(analyser.frequencyBinCount);
-
-        const update = () => {
-          if (cancelled) return;
-          analyser.getByteFrequencyData(dataArray);
-          const sum = dataArray.reduce((a, b) => a + b, 0);
-          const avg = sum / dataArray.length;
-          const level = Math.min(100, Math.round((avg / 255) * 180));
-          setNoiseLevel(level);
-          micAnimationRef.current = requestAnimationFrame(update);
-        };
-        micAnimationRef.current = requestAnimationFrame(update);
-      } catch (e) {
-        console.error('Microphone access failed', e);
-        setNoiseMeterMicOn(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-      if (micStreamRef.current) {
-        micStreamRef.current.getTracks().forEach((t) => t.stop());
-        micStreamRef.current = null;
-      }
-      if (micAnimationRef.current != null) {
-        cancelAnimationFrame(micAnimationRef.current);
-        micAnimationRef.current = null;
-      }
-    };
-  }, [noiseMeterMicOn]);
-
-  useEffect(() => {
-    const onChange = () => setIsFullscreen(!!document.fullscreenElement);
-    document.addEventListener("fullscreenchange", onChange);
-    onChange();
-    return () => document.removeEventListener("fullscreenchange", onChange);
-  }, []);
-
-  const toggleFullscreen = useCallback(async () => {
-    try {
-      if (!document.fullscreenElement) {
-        await document.documentElement.requestFullscreen?.();
-      } else {
-        await document.exitFullscreen?.();
-      }
-    } catch (e) {
-      console.error("Fullscreen toggle failed", e);
-    }
-  }, []);
-
   useEffect(() => localStorage.setItem('dg_history', JSON.stringify(history)), [history]);
   useEffect(() => localStorage.setItem('dg_cache_courses', JSON.stringify(courses)), [courses]);
   useEffect(() => localStorage.setItem('dg_cache_assignments', JSON.stringify(assignments)), [assignments]);
@@ -2195,35 +2081,35 @@ const App: React.FC = () => {
           })();
         }}
       >
-        <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-y-auto pb-20 custom-scrollbar">
-          {/* What needs your attention – compact */}
-          <div className="p-3 rounded-xl bg-white/90 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 shadow-sm">
-            <div className="flex items-center gap-2 mb-2">
-              <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300">
+        <div className="flex-1 min-h-0 flex flex-col gap-5 overflow-y-auto pb-24 pt-1 custom-scrollbar">
+          {/* What needs your attention */}
+          <div className="py-2">
+            <div className="flex items-center gap-2 mb-3">
+              <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
+              <p className="text-sm font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
                 What needs your attention
               </p>
             </div>
-            <div className="space-y-1.5 text-[11px] text-slate-700 dark:text-slate-200">
+            <div className="space-y-2 text-sm text-slate-700 dark:text-slate-200">
               {pendingGrades > 0 && (
                 <button
                   type="button"
                   onClick={() => startSyncProcess()}
-                  className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-emerald-50/80 dark:bg-emerald-500/10 border border-emerald-300/70 dark:border-emerald-500/60 text-emerald-800 dark:text-emerald-200 text-left hover:bg-emerald-100/80 dark:hover:bg-emerald-500/20 transition-colors"
+                  className="w-full flex items-center justify-between py-3 text-left text-emerald-700 dark:text-emerald-200 hover:opacity-90 transition-opacity"
                 >
                   <span className="font-semibold">{pendingGrades} grade{pendingGrades === 1 ? '' : 's'} ready to sync</span>
-                  <ArrowRight className="w-3 h-3 shrink-0" />
+                  <ArrowRight className="w-4 h-4 shrink-0" />
                 </button>
               )}
               {atRiskStudents.length > 0 && (
-                <div className="px-2.5 py-1.5 rounded-lg bg-rose-50/80 dark:bg-rose-500/10 border border-rose-200/80 dark:border-rose-500/60">
-                  <div className="flex items-center gap-1.5 mb-0.5">
-                    <Target className="w-3 h-3 text-rose-500 dark:text-rose-300 shrink-0" />
-                    <span className="font-semibold text-[10px]">Students to check in on</span>
+                <div className="py-2">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Target className="w-4 h-4 text-rose-500 dark:text-rose-300 shrink-0" />
+                    <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Students to check in on</span>
                   </div>
-                  <ul className="space-y-0.5">
+                  <ul className="space-y-1 text-sm">
                     {atRiskStudents.map(s => (
-                      <li key={s.name} className="flex justify-between text-[10px]">
+                      <li key={s.name} className="flex justify-between">
                         <span>{s.name}</span>
                         <span className="font-semibold">{s.pct.toFixed(0)}%</span>
                       </li>
@@ -2232,38 +2118,38 @@ const App: React.FC = () => {
                 </div>
               )}
               {pendingGrades === 0 && atRiskStudents.length === 0 && (
-                <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                <p className="text-sm text-slate-500 dark:text-slate-400">
                   You're all caught up. New work will appear here.
                 </p>
               )}
-              <p className="text-[9px] text-slate-400 dark:text-slate-500 pt-0.5">
+              <p className="text-xs text-slate-400 dark:text-slate-500 pt-1">
                 Emails: {syncProgress.emailSuccesses} sent · {syncProgress.emailFailures} failed
               </p>
             </div>
           </div>
 
           {(gradeFollowUps.length > 0 || quickTodos.length > 0) && (
-            <div className="p-3 rounded-xl bg-white/90 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 shadow-sm">
-              <div className="flex items-center gap-2 mb-2">
-                <Mic className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300">
+            <div className="py-2">
+              <div className="flex items-center gap-2 mb-3">
+                <Mic className="w-5 h-5 text-indigo-500 shrink-0" />
+                <p className="text-sm font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
                   Voice inbox
                 </p>
               </div>
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {gradeFollowUps.length > 0 && (
                   <div>
-                    <p className="text-[9px] font-black uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400 mb-1">Grade follow‑ups</p>
-                    <div className="space-y-1">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">Grade follow‑ups</p>
+                    <div className="space-y-2">
                       {gradeFollowUps.slice(0, 4).map((f) => (
-                        <div key={f.id} className="flex items-start gap-2 px-2 py-1.5 rounded-lg bg-slate-50/80 dark:bg-slate-800/80 border border-slate-200/80 dark:border-slate-700/80">
+                        <div key={f.id} className="flex items-start gap-3 py-1">
                           <button
                             type="button"
                             onClick={() => setGradeFollowUps((prev) => prev.map(p => p.id === f.id ? { ...p, done: !p.done } : p))}
-                            className={`mt-0.5 w-3.5 h-3.5 rounded border shrink-0 ${f.done ? 'bg-emerald-500 border-emerald-500' : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-600'}`}
+                            className={`mt-0.5 w-4 h-4 rounded border shrink-0 ${f.done ? 'bg-emerald-500 border-emerald-500' : 'bg-transparent border-slate-300 dark:border-slate-600'}`}
                             title={f.done ? 'Mark not done' : 'Mark done'}
                           />
-                          <div className="flex-1 text-[10px] text-slate-700 dark:text-slate-200 min-w-0">
+                          <div className="flex-1 text-sm text-slate-700 dark:text-slate-200 min-w-0">
                             <span className={f.done ? 'line-through opacity-70' : ''}>{f.text}</span>
                           </div>
                         </div>
@@ -2273,17 +2159,17 @@ const App: React.FC = () => {
                 )}
                 {quickTodos.length > 0 && (
                   <div>
-                    <p className="text-[9px] font-black uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400 mb-1">To‑dos</p>
-                    <div className="space-y-1">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">To‑dos</p>
+                    <div className="space-y-2">
                       {quickTodos.slice(0, 4).map((t) => (
-                        <div key={t.id} className="flex items-start gap-2 px-2 py-1.5 rounded-lg bg-slate-50/80 dark:bg-slate-800/80 border border-slate-200/80 dark:border-slate-700/80">
+                        <div key={t.id} className="flex items-start gap-3 py-1">
                           <button
                             type="button"
                             onClick={() => setQuickTodos((prev) => prev.map(p => p.id === t.id ? { ...p, done: !p.done } : p))}
-                            className={`mt-0.5 w-3.5 h-3.5 rounded border shrink-0 ${t.done ? 'bg-emerald-500 border-emerald-500' : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-600'}`}
+                            className={`mt-0.5 w-4 h-4 rounded border shrink-0 ${t.done ? 'bg-emerald-500 border-emerald-500' : 'bg-transparent border-slate-300 dark:border-slate-600'}`}
                             title={t.done ? 'Mark not done' : 'Mark done'}
                           />
-                          <div className="flex-1 text-[10px] text-slate-700 dark:text-slate-200 min-w-0">
+                          <div className="flex-1 text-sm text-slate-700 dark:text-slate-200 min-w-0">
                             <span className={t.done ? 'line-through opacity-70' : ''}>{t.text}</span>
                           </div>
                         </div>
@@ -2295,152 +2181,152 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {/* Summary tiles – compact */}
-          <div className="grid grid-cols-2 gap-2">
-            <div className="p-2.5 rounded-lg bg-white/80 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 shadow-sm">
-              <div className="flex items-center justify-between mb-0.5">
-                <span className="text-[9px] font-black uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">Grading queue</span>
-                <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+          {/* Summary tiles */}
+          <div className="grid grid-cols-2 gap-4 py-2">
+            <div className="py-3">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Grading queue</span>
+                <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
               </div>
-              <p className="text-xl font-black text-slate-900 dark:text-slate-50 leading-tight">{pendingGrades}</p>
-              <p className="text-[9px] text-slate-500 dark:text-slate-400">Ready to post</p>
+              <p className="text-2xl font-bold text-slate-900 dark:text-slate-50 leading-tight">{pendingGrades}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Ready to post</p>
             </div>
-            <div className="p-2.5 rounded-lg bg-white/80 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 shadow-sm">
-              <div className="flex items-center justify-between mb-0.5">
-                <span className="text-[9px] font-black uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">Classes</span>
-                <Layers className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+            <div className="py-3">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Classes</span>
+                <Layers className="w-5 h-5 text-indigo-500 shrink-0" />
               </div>
-              <p className="text-sm font-bold text-slate-900 dark:text-slate-50 leading-tight">{totalCourses} courses · {totalAssignments} assignments</p>
-              <p className="text-[9px] text-slate-500 dark:text-slate-400">{connectedCourses} synced</p>
+              <p className="text-base font-semibold text-slate-900 dark:text-slate-50 leading-tight">{totalCourses} courses · {totalAssignments} assignments</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{connectedCourses} synced</p>
             </div>
-            <div className="p-2.5 rounded-lg bg-white/80 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 shadow-sm">
-              <div className="flex items-center justify-between mb-0.5">
-                <span className="text-[9px] font-black uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">Students</span>
-                <Users className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+            <div className="py-3">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Students</span>
+                <Users className="w-5 h-5 text-sky-500 shrink-0" />
               </div>
-              <p className="text-xl font-black text-slate-900 dark:text-slate-50 leading-tight">{totalStudents}</p>
-              <p className="text-[9px] text-slate-500 dark:text-slate-400">All rosters</p>
+              <p className="text-2xl font-bold text-slate-900 dark:text-slate-50 leading-tight">{totalStudents}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">All rosters</p>
             </div>
-            <div className="p-2.5 rounded-lg bg-white/80 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 shadow-sm">
-              <div className="flex items-center justify-between mb-0.5">
-                <span className="text-[9px] font-black uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">Last 7 days</span>
-                <HistoryIcon className="w-3.5 h-3.5 text-purple-500 shrink-0" />
+            <div className="py-3">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Last 7 days</span>
+                <HistoryIcon className="w-5 h-5 text-purple-500 shrink-0" />
               </div>
-              <p className="text-xl font-black text-slate-900 dark:text-slate-50 leading-tight">{gradedLast7}</p>
-              <p className="text-[9px] text-slate-500 dark:text-slate-400">Graded</p>
+              <p className="text-2xl font-bold text-slate-900 dark:text-slate-50 leading-tight">{gradedLast7}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Graded</p>
             </div>
           </div>
 
-          {/* Course list – compact */}
-          <div className="space-y-1.5">
-            <p className="text-[10px] font-black uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400 px-0.5">
+          {/* Course list */}
+          <div className="flex-1 min-h-0 flex flex-col gap-3 pt-2">
+            <p className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
               Courses
             </p>
-            {dashboardResults.courses.map((course) => (
-              <div
-                key={course.id}
-                draggable
-                onDragStart={() => setDragCourseId(course.id)}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  if (!dragCourseId || dragCourseId === course.id) return;
-                  setDashboardSort('manual');
-                  setCourses(prev => {
-                    const next = [...prev];
-                    const from = next.findIndex(c => c.id === dragCourseId);
-                    const to = next.findIndex(c => c.id === course.id);
-                    if (from === -1 || to === -1) return prev;
-                    const [item] = next.splice(from, 1);
-                    next.splice(to, 0, item);
-                    return next;
-                  });
-                  setDragCourseId(null);
-                }}
-                className={`p-2.5 bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl border rounded-lg flex items-center justify-between shadow-sm hover:-translate-y-0.5 transition-all ${
-                  dragCourseId === course.id ? 'border-indigo-400 ring-2 ring-indigo-300' : 'border-slate-200 dark:border-slate-700 hover:border-indigo-400'
-                }`}
-              >
-                <button
-                  type="button"
-                  onClick={() => selectCourse(course)}
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    const name = window.prompt('Rename course', course.name);
-                    if (!name || !name.trim()) return;
-                    if (classroom && isOnline && course.source !== 'local') {
-                      classroom.updateCourse(course.id, name.trim(), course.period)
-                        .then((updated) => {
-                          setCourses(prev => prev.map(c => c.id === course.id ? { ...c, ...updated } : c));
-                        })
-                        .catch(err => {
-                          console.error('Failed to rename course', err);
-                          setAuthError('Could not rename course in Google Classroom.');
-                        });
-                    } else {
-                      setCourses(prev => prev.map(c => c.id === course.id ? { ...c, name: name.trim() } : c));
-                    }
+            <div className="space-y-2 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+              {dashboardResults.courses.map((course) => (
+                <div
+                  key={course.id}
+                  draggable
+                  onDragStart={() => setDragCourseId(course.id)}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (!dragCourseId || dragCourseId === course.id) return;
+                    setDashboardSort('manual');
+                    setCourses(prev => {
+                      const next = [...prev];
+                      const from = next.findIndex(c => c.id === dragCourseId);
+                      const to = next.findIndex(c => c.id === course.id);
+                      if (from === -1 || to === -1) return prev;
+                      const [item] = next.splice(from, 1);
+                      next.splice(to, 0, item);
+                      return next;
+                    });
+                    setDragCourseId(null);
                   }}
-                  className="flex items-center gap-3 flex-1 text-left min-w-0"
+                  className={`py-3 flex items-center justify-between transition-opacity ${dragCourseId === course.id ? 'opacity-80' : ''}`}
                 >
-                  <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-lg flex items-center justify-center text-white shrink-0">
-                    <BookOpen className="w-4 h-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <h4 className="text-xs font-black text-slate-800 dark:text-slate-100 truncate">{course.name}</h4>
-                    <p className="text-indigo-500 text-[8px] font-black uppercase tracking-[0.12em]">
-                      {course.period}{course.source === 'local' ? ' · Local' : ''}
-                    </p>
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (!window.confirm('Delete this course? This will also remove it from Google Classroom if it is synced.')) return;
-                    if (classroom && isOnline && course.source !== 'local') {
-                      classroom.deleteCourse(course.id)
-                        .then(() => {
-                          setCourses(prev => prev.filter(c => c.id !== course.id));
-                          if (selectedCourse?.id === course.id) {
-                            setSelectedCourse(null);
-                            setAssignments([]);
-                            setStudents([]);
-                            setPhase(AppPhase.DASHBOARD);
-                          }
-                        })
-                        .catch(err => {
-                          console.error('Failed to delete course', err);
-                          setAuthError('Could not delete course in Google Classroom.');
-                        });
-                    } else {
-                      setCourses(prev => prev.filter(c => c.id !== course.id));
-                      if (selectedCourse?.id === course.id) {
-                        setSelectedCourse(null);
-                        setAssignments([]);
-                        setStudents([]);
-                        setPhase(AppPhase.DASHBOARD);
+                  <button
+                    type="button"
+                    onClick={() => selectCourse(course)}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      const name = window.prompt('Rename course', course.name);
+                      if (!name || !name.trim()) return;
+                      if (classroom && isOnline && course.source !== 'local') {
+                        classroom.updateCourse(course.id, name.trim(), course.period)
+                          .then((updated) => {
+                            setCourses(prev => prev.map(c => c.id === course.id ? { ...c, ...updated } : c));
+                          })
+                          .catch(err => {
+                            console.error('Failed to rename course', err);
+                            setAuthError('Could not rename course in Google Classroom.');
+                          });
+                      } else {
+                        setCourses(prev => prev.map(c => c.id === course.id ? { ...c, name: name.trim() } : c));
                       }
-                    }
-                  }}
-                  className="p-1 rounded-full bg-white/60 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-rose-500 hover:bg-rose-50 hover:text-rose-600 transition-colors shrink-0"
-                  title="Delete course"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ))}
+                    }}
+                    className="flex items-center gap-4 flex-1 text-left min-w-0"
+                  >
+                    <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-xl flex items-center justify-center text-white shrink-0">
+                      <BookOpen className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="text-base font-semibold text-slate-800 dark:text-slate-100 truncate">{course.name}</h4>
+                      <p className="text-indigo-500 text-xs font-semibold uppercase tracking-wide">
+                        {course.period}{course.source === 'local' ? ' · Local' : ''}
+                      </p>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!window.confirm('Delete this course? This will also remove it from Google Classroom if it is synced.')) return;
+                      if (classroom && isOnline && course.source !== 'local') {
+                        classroom.deleteCourse(course.id)
+                          .then(() => {
+                            setCourses(prev => prev.filter(c => c.id !== course.id));
+                            if (selectedCourse?.id === course.id) {
+                              setSelectedCourse(null);
+                              setAssignments([]);
+                              setStudents([]);
+                              setPhase(AppPhase.DASHBOARD);
+                            }
+                          })
+                          .catch(err => {
+                            console.error('Failed to delete course', err);
+                            setAuthError('Could not delete course in Google Classroom.');
+                          });
+                      } else {
+                        setCourses(prev => prev.filter(c => c.id !== course.id));
+                        if (selectedCourse?.id === course.id) {
+                          setSelectedCourse(null);
+                          setAssignments([]);
+                          setStudents([]);
+                          setPhase(AppPhase.DASHBOARD);
+                        }
+                      }
+                    }}
+                    className="p-2 text-rose-500 hover:text-rose-600 hover:opacity-80 transition-colors shrink-0"
+                    title="Delete course"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
 
-            <button
-              type="button"
-              onClick={() => { setNewCourseName(''); setPhase('COURSE_CREATION'); }}
-              className="w-full p-2.5 bg-white/40 dark:bg-slate-800/40 border-2 border-dashed border-indigo-400 dark:border-indigo-500 rounded-lg flex items-center justify-center gap-2 shadow-sm hover:bg-white/60 dark:hover:bg-slate-800/60 hover:-translate-y-0.5 transition-all"
-            >
-              <PlusCircle className="w-5 h-5 text-indigo-600 dark:text-indigo-400 shrink-0" />
-              <span className="text-xs font-black text-indigo-700 dark:text-indigo-300 uppercase tracking-wider">Create Course</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => { setNewCourseName(''); setPhase('COURSE_CREATION'); }}
+                className="w-full py-4 flex items-center justify-center gap-2 text-indigo-600 dark:text-indigo-400 hover:opacity-80 transition-opacity"
+              >
+                <PlusCircle className="w-6 h-6 shrink-0" />
+                <span className="text-sm font-semibold uppercase tracking-wide">Create Course</span>
+              </button>
+            </div>
           </div>
-          <div aria-hidden="true" className="shrink-0" style={{ height: '4rem' }} />
+          <div aria-hidden="true" className="shrink-0" style={{ height: '3rem' }} />
         </div>
       </PageWrapper>
     );
@@ -2464,13 +2350,6 @@ const App: React.FC = () => {
         >
           <Share2 className="w-4 h-4 text-white drop-shadow-sm shrink-0" />
           <span className="text-white drop-shadow-sm uppercase tracking-[0.12em]">Share DoneGrading</span>
-        </button>
-        <button
-          type="button"
-          onClick={handleSignOut}
-          className="w-full py-2.5 text-[11px] font-semibold text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors"
-        >
-          Sign out
         </button>
         <div className="space-y-3 pt-2 border-t border-slate-200 dark:border-slate-700">
           <a
@@ -2497,6 +2376,13 @@ const App: React.FC = () => {
           >
             Support
           </a>
+          <button
+            type="button"
+            onClick={handleSignOut}
+            className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300 underline underline-offset-2 text-left"
+          >
+            Sign out
+          </button>
         </div>
         <p className="text-[10px] text-slate-500 dark:text-slate-400 pt-4">
           Copyright © 2026 DoneGrading LLC. All rights reserved.
@@ -5115,283 +5001,6 @@ const App: React.FC = () => {
     );
   };
 
-  const renderClassroom = () => (
-    <PageWrapper
-      headerTitle={educatorName || 'Classroom'}
-      headerSubtitle={todayLabel || undefined}
-      isOnline={isOnline}
-      isDarkMode={isDarkMode}
-      setIsDarkMode={setIsDarkMode}
-      syncStatus={syncStatus}
-    >
-      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar space-y-4 pb-4">
-        <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={() => setPhase(AppPhase.CLASS_PRESENTER)}
-            className="px-3 py-1.5 rounded-full text-[10px] font-semibold border border-slate-300 dark:border-slate-600 bg-white/80 dark:bg-slate-900/80 text-slate-700 dark:text-slate-100"
-          >
-            Open Class Presenter
-          </button>
-        </div>
-        <section className="bg-white/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 rounded-xl p-3">
-          <h2 className="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100 mb-3">
-            <Timer className="w-4 h-4 text-amber-500" /> Magic Timer
-          </h2>
-          <div className="flex items-center gap-2 mb-2">
-            <input
-              type="number"
-              min={0}
-              max={60}
-              value={timerInitialMinutes}
-              onChange={(e) => setTimerInitialMinutes(Math.max(0, Math.min(60, parseInt(e.target.value, 10) || 0)))}
-              className="w-20 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm"
-            />
-            <span className="text-sm text-slate-600 dark:text-slate-400">minutes</span>
-          </div>
-          <div className="text-4xl font-mono font-bold text-center py-4 text-slate-800 dark:text-slate-100">
-            {Math.floor(timerSeconds / 60)}:{(timerSeconds % 60).toString().padStart(2, '0')}
-          </div>
-          <div className="flex gap-2 justify-center">
-            {!timerRunning && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setTimerSeconds(timerInitialMinutes * 60)}
-                  className="py-2 px-4 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 text-sm font-semibold"
-                >
-                  Set
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTimerSeconds((s) => (s || timerInitialMinutes * 60));
-                    setTimerRunning(true);
-                  }}
-                  className="py-2 px-4 rounded-xl bg-amber-500 text-white text-sm font-semibold"
-                >
-                  Start
-                </button>
-              </>
-            )}
-            {timerRunning && (
-              <button type="button" onClick={() => setTimerRunning(false)} className="py-2 px-4 rounded-xl bg-red-500 text-white text-sm font-semibold">
-                Pause
-              </button>
-            )}
-            <button type="button" onClick={() => { setTimerRunning(false); setTimerSeconds(0); }} className="py-2 px-4 rounded-xl border border-slate-300 dark:border-slate-600 text-sm font-semibold">
-              Reset
-            </button>
-          </div>
-        </section>
-
-        <section className="bg-white/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 rounded-xl p-3">
-          <h2 className="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100 mb-3">
-            <Shuffle className="w-4 h-4 text-emerald-500" /> Randomizer
-          </h2>
-          <button
-            type="button"
-            onClick={() => {
-              if (students.length === 0) return;
-              const idx = Math.floor(Math.random() * students.length);
-              setRandomPicked(students[idx]);
-            }}
-            className="w-full py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-semibold"
-          >
-            Pick random student
-          </button>
-          {randomPicked && (
-            <p className="mt-2 text-center text-lg font-bold text-slate-800 dark:text-slate-100">{randomPicked.name}</p>
-          )}
-          {students.length === 0 && <p className="mt-2 text-[10px] text-slate-500">Select a course from Grade to load students.</p>}
-        </section>
-
-        <section className="bg-white/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 rounded-xl p-3">
-          <h2 className="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100 mb-3">
-            <Volume2 className="w-4 h-4 text-sky-500" /> Noise Meter
-          </h2>
-          <div className="h-4 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
-            <div className="h-full bg-sky-500 transition-all duration-300" style={{ width: `${noiseLevel}%` }} />
-          </div>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            value={noiseLevel}
-            onChange={(e) => setNoiseLevel(parseInt(e.target.value, 10))}
-            className="w-full mt-2"
-          />
-          <p className="text-[10px] text-slate-500 mt-1">Adjust or use mic when available.</p>
-        </section>
-
-        <section className="bg-white/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 rounded-xl p-3">
-          <h2 className="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100 mb-3">
-            <ClipboardList className="w-4 h-4 text-violet-500" /> Quick Behavior Logger
-          </h2>
-          <p className="text-[10px] text-slate-500 mb-2">+ / − for participation or behavior. Uses current roster.</p>
-          <ul className="space-y-1 max-h-48 overflow-y-auto">
-            {students.length === 0 ? (
-              <li className="text-xs text-slate-500">No students loaded. Pick a course from Grade.</li>
-            ) : (
-              students.slice(0, 30).map((s) => (
-                <li key={s.id} className="flex items-center justify-between gap-2 py-1">
-                  <span className="text-sm truncate flex-1">{s.name}</span>
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => setBehaviorScores((prev) => ({ ...prev, [s.id]: (prev[s.id] ?? 0) - 1 }))}
-                      className="w-7 h-7 rounded-lg border border-slate-300 dark:border-slate-600 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-                    >
-                      <Minus className="w-3 h-3" />
-                    </button>
-                    <span className="w-6 text-center text-sm font-mono">{behaviorScores[s.id] ?? 0}</span>
-                    <button
-                      type="button"
-                      onClick={() => setBehaviorScores((prev) => ({ ...prev, [s.id]: (prev[s.id] ?? 0) + 1 }))}
-                      className="w-7 h-7 rounded-lg border border-slate-300 dark:border-slate-600 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-                    >
-                      <Plus className="w-3 h-3" />
-                    </button>
-                  </div>
-                </li>
-              ))
-            )}
-          </ul>
-        </section>
-      </div>
-    </PageWrapper>
-  );
-
-  const renderClassPresenter = () => (
-    <PageWrapper
-      headerTitle="Class Display"
-      headerSubtitle={todayLabel || undefined}
-      isOnline={isOnline}
-      isDarkMode={isDarkMode}
-      setIsDarkMode={setIsDarkMode}
-      syncStatus={syncStatus}
-      onBack={() => setPhase(AppPhase.CLASSROOM)}
-    >
-      <div className="flex-1 min-h-0 w-full flex flex-col gap-4 items-center justify-center px-2 overflow-hidden">
-        {/* Big timer + controls */}
-        <div className="flex flex-col items-center gap-2">
-          <p className="text-xs font-semibold tracking-[0.2em] uppercase text-slate-500 dark:text-slate-400">
-            Time Remaining
-          </p>
-          <div className="text-6xl md:text-7xl font-mono font-black text-slate-900 dark:text-slate-50 tracking-[0.15em]">
-            {Math.floor(timerSeconds / 60)}:{(timerSeconds % 60).toString().padStart(2, '0')}
-          </div>
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            <input
-              type="number"
-              min={0}
-              max={60}
-              value={timerInitialMinutes}
-              onChange={(e) => setTimerInitialMinutes(Math.max(0, Math.min(60, parseInt(e.target.value, 10) || 0)))}
-              className="w-14 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-center font-semibold"
-            />
-            <span className="text-xs text-slate-500 dark:text-slate-400">min</span>
-            {!timerRunning && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setTimerSeconds(timerInitialMinutes * 60)}
-                  className="py-1.5 px-3 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-semibold"
-                >
-                  Set
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTimerSeconds((s) => s || timerInitialMinutes * 60);
-                    setTimerRunning(true);
-                  }}
-                  className="py-1.5 px-3 rounded-xl bg-amber-500 text-white text-xs font-semibold"
-                >
-                  Start
-                </button>
-              </>
-            )}
-            {timerRunning && (
-              <button type="button" onClick={() => setTimerRunning(false)} className="py-1.5 px-3 rounded-xl bg-red-500 text-white text-xs font-semibold">
-                Pause
-              </button>
-            )}
-            <button type="button" onClick={() => { setTimerRunning(false); setTimerSeconds(0); }} className="py-1.5 px-3 rounded-xl border border-slate-300 dark:border-slate-600 text-xs font-semibold text-slate-700 dark:text-slate-200">
-              Reset
-            </button>
-            <button
-              type="button"
-              onClick={() => void toggleFullscreen()}
-              className="py-1.5 px-3 rounded-xl bg-indigo-600 text-white text-xs font-semibold"
-            >
-              {isFullscreen ? "Exit full screen" : "Full screen"}
-            </button>
-          </div>
-        </div>
-
-        {/* Random student display + pick button */}
-        <div className="w-full max-w-md">
-          <p className="text-[10px] font-semibold tracking-[0.18em] uppercase text-slate-500 dark:text-slate-400 mb-1 text-center">
-            Next up
-          </p>
-          <div className="min-h-[64px] flex items-center justify-center rounded-xl bg-indigo-50 dark:bg-indigo-900/40 border border-indigo-200 dark:border-indigo-600 px-4">
-            <span className="text-xl md:text-2xl font-black text-indigo-700 dark:text-indigo-200 truncate">
-              {randomPicked ? randomPicked.name : 'Waiting for a name…'}
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              if (students.length === 0) return;
-              const idx = Math.floor(Math.random() * students.length);
-              setRandomPicked(students[idx]);
-            }}
-            className="mt-2 w-full py-2 rounded-xl bg-emerald-600 text-white text-sm font-semibold"
-          >
-            Pick random student
-          </button>
-          {students.length === 0 && (
-            <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400 text-center">
-              Select a course from Grade to load students.
-            </p>
-          )}
-        </div>
-
-        {/* Noise meter */}
-        <div className="w-full max-w-md">
-          <p className="text-[10px] font-semibold tracking-[0.18em] uppercase text-slate-500 dark:text-slate-400 mb-1 text-center">
-            Room Volume
-          </p>
-          <div className="h-4 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
-            <div
-              className="h-full transition-all duration-300"
-              style={{
-                width: `${noiseLevel}%`,
-                background:
-                  noiseLevel < 40
-                    ? '#22c55e'
-                    : noiseLevel < 75
-                      ? '#eab308'
-                      : '#ef4444',
-              }}
-            />
-          </div>
-          <button
-            type="button"
-            onClick={() => setNoiseMeterMicOn((on) => !on)}
-            className={"mt-2 w-full py-2 rounded-xl text-sm font-semibold " + (noiseMeterMicOn ? "bg-red-500 text-white" : "bg-sky-600 text-white")}
-          >
-            {noiseMeterMicOn ? "Stop microphone" : "Use microphone"}
-          </button>
-          <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400 text-center">
-            {noiseMeterMicOn ? "Mic is on — the bar shows room volume." : "Tap \"Use microphone\" so the bar picks up sound."}
-          </p>
-        </div>
-      </div>
-    </PageWrapper>
-  );
-
   if (showOnboarding) {
     return (
       <Onboarding
@@ -5441,8 +5050,6 @@ const App: React.FC = () => {
       {phase === AppPhase.PLAN && renderPlan()}
       {phase === AppPhase.SCHEDULE && renderSchedule()}
       {phase === AppPhase.DASHBOARD && renderDashboard()}
-      {phase === AppPhase.CLASSROOM && renderClassroom()}
-      {phase === AppPhase.CLASS_PRESENTER && renderClassPresenter()}
       {phase === 'COURSE_CREATION' && renderCourseCreation()}
       {phase === AppPhase.ASSIGNMENT_SELECT && renderAssignmentSelect()}
       {phase === AppPhase.ASSIGNMENT_CREATION && renderAssignmentCreation()}
@@ -5510,20 +5117,19 @@ const App: React.FC = () => {
               disabled={!isSignedIn}
               onClick={() => {
                 if (!isSignedIn) return;
-                setPhase(AppPhase.CLASSROOM);
+                setPhase(AppPhase.DASHBOARD);
               }}
               className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
-                phase === AppPhase.CLASSROOM
-                  ? 'text-orange-500'
+                phase === AppPhase.DASHBOARD
+                  ? 'text-yellow-500'
                   : isSignedIn
                     ? 'text-slate-600 dark:text-slate-300'
                     : 'text-slate-400 dark:text-slate-600'
               }`}
             >
-              <Timer className="w-4 h-4 mb-0.5" />
-              <span className="text-[7px] font-semibold uppercase tracking-[0.16em]">Teach</span>
+              <LayoutDashboard className="w-4 h-4 mb-0.5" />
+              <span className="text-[7px] font-semibold uppercase tracking-[0.16em]">Grade</span>
             </button>
-
             <button
               type="button"
               onClick={() => {
@@ -5570,24 +5176,6 @@ const App: React.FC = () => {
               <Mic className="w-5 h-5" />
             </button>
 
-            <button
-              type="button"
-              disabled={!isSignedIn}
-              onClick={() => {
-                if (!isSignedIn) return;
-                setPhase(AppPhase.DASHBOARD);
-              }}
-              className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
-                phase === AppPhase.DASHBOARD
-                  ? 'text-yellow-500'
-                  : isSignedIn
-                    ? 'text-slate-600 dark:text-slate-300'
-                    : 'text-slate-400 dark:text-slate-600'
-              }`}
-            >
-              <LayoutDashboard className="w-4 h-4 mb-0.5" />
-              <span className="text-[7px] font-semibold uppercase tracking-[0.16em]">Grade</span>
-            </button>
             <button
               type="button"
               disabled={!isSignedIn}
