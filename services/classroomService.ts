@@ -220,25 +220,74 @@ export class ClassroomService {
   ): Promise<void> {
     if (!toEmail) return;
 
-    const boundary = "DONEGRADING-BOUNDARY";
+    const escapeHtml = (s: string) =>
+      s
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+
+    const textBody = body ?? "";
+    const safeText = escapeHtml(textBody);
+    const htmlBody = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeHtml(subject || "DoneGrading")}</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f6f7fb;">
+    <div style="max-width:640px;margin:0 auto;padding:20px 14px;">
+      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#0f172a;">
+        <div style="padding:2px 2px 12px 2px;">
+          <div style="font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:#64748b;font-weight:700;">
+            DoneGrading feedback
+          </div>
+        </div>
+        <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;padding:16px 16px;box-shadow:0 8px 20px rgba(15,23,42,0.06);">
+          <div style="font-size:15px;line-height:1.6;white-space:pre-wrap;word-wrap:break-word;font-weight:500;">
+            ${safeText}
+          </div>
+        </div>
+        <div style="padding:12px 4px 0 4px;font-size:12px;color:#64748b;">
+          Sent from DoneGrading
+        </div>
+      </div>
+    </div>
+  </body>
+</html>`;
+
+    const mixedBoundary = "DONEGRADING-MIXED-BOUNDARY";
+    const altBoundary = "DONEGRADING-ALT-BOUNDARY";
 
     let mimeBody: string;
     const images = Array.isArray(imageBase64) ? imageBase64 : (imageBase64 ? [imageBase64] : []);
     if (images.length > 0) {
       mimeBody =
 `MIME-Version: 1.0
-Content-Type: multipart/mixed; boundary="${boundary}"
+Content-Type: multipart/mixed; boundary="${mixedBoundary}"
 
---${boundary}
+--${mixedBoundary}
+Content-Type: multipart/alternative; boundary="${altBoundary}"
+
+--${altBoundary}
 Content-Type: text/plain; charset="UTF-8"
 
-${body}
+${textBody}
+
+--${altBoundary}
+Content-Type: text/html; charset="UTF-8"
+
+${htmlBody}
+
+--${altBoundary}--
 ${images
   .slice(0, 10)
   .map(
     (img, idx) =>
       `
---${boundary}
+--${mixedBoundary}
 Content-Type: image/jpeg
 Content-Transfer-Encoding: base64
 Content-Disposition: attachment; filename="work-${idx + 1}.jpg"
@@ -247,14 +296,24 @@ ${img}
 `
   )
   .join("")}
---${boundary}--
+--${mixedBoundary}--
 `;
     } else {
       mimeBody =
 `MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="${altBoundary}"
+
+--${altBoundary}
 Content-Type: text/plain; charset="UTF-8"
 
-${body}`;
+${textBody}
+
+--${altBoundary}
+Content-Type: text/html; charset="UTF-8"
+
+${htmlBody}
+
+--${altBoundary}--`;
     }
 
     const fullMessage =

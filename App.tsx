@@ -632,6 +632,8 @@ const App: React.FC = () => {
     return result; 
   };
 
+  const [showCourses, setShowCourses] = useState(true);
+
   const dashboardResults = useMemo(() => {
     const query = globalSearchQuery.toLowerCase().trim();
     let filteredCourses = sortItems([...courses], dashboardSort);
@@ -2035,7 +2037,12 @@ const App: React.FC = () => {
 
     const now = Date.now();
     const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
-    const gradedLast7 = history.filter(w => now - w.timestamp < sevenDaysMs).length;
+    const gradedLast7Works = history.filter(w => now - w.timestamp < sevenDaysMs);
+    const gradedLast7 = gradedLast7Works.length;
+    const gradedLast7StudentCount = new Set(gradedLast7Works.map(w => w.studentId || w.studentEmail || w.studentName)).size;
+    const gradedLast7Pages = gradedLast7Works.reduce((sum, w) => sum + (w.imageUrls?.length || 1), 0);
+    const minutesSavedApprox = gradedLast7Pages * 3; // assume ~3 minutes saved per scanned page
+    const hoursSavedApprox = minutesSavedApprox / 60;
 
     const studentStats: Record<string, { name: string; totalScore: number; totalMax: number }> = {};
     history.forEach(w => {
@@ -2213,15 +2220,25 @@ const App: React.FC = () => {
                 <HistoryIcon className="w-5 h-5 text-purple-500 shrink-0" />
               </div>
               <p className="text-2xl font-bold text-slate-900 dark:text-slate-50 leading-tight">{gradedLast7}</p>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Graded</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Graded · {gradedLast7StudentCount || 0} students · ~{hoursSavedApprox.toFixed(1)} hrs saved
+              </p>
             </div>
           </div>
 
           {/* Course list */}
-          <div className="flex-1 min-h-0 flex flex-col gap-3 pt-2">
-            <p className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              Courses
-            </p>
+          <div className="flex-1 min-h-0 flex flex-col gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => setShowCourses((prev) => !prev)}
+              className="flex items-center justify-between text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
+            >
+              <span>Courses</span>
+              <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500">
+                {showCourses ? 'Hide' : 'Show'} · {dashboardResults.courses.length}
+              </span>
+            </button>
+            {showCourses && (
             <div className="space-y-2 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
               {dashboardResults.courses.map((course) => (
                 <div
@@ -2325,6 +2342,7 @@ const App: React.FC = () => {
                 <span className="text-sm font-semibold uppercase tracking-wide">Create Course</span>
               </button>
             </div>
+            )}
           </div>
         </div>
       </PageWrapper>
