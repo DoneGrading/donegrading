@@ -275,10 +275,10 @@ export const CommunicationDashboard: React.FC<{
   };
 
   useEffect(() => {
-    try { localStorage.setItem(THREADS_NOTIFY_KEY, notifyEnabled ? "1" : "0"); } catch {}
+    try { localStorage.setItem(THREADS_NOTIFY_KEY, notifyEnabled ? "1" : "0"); } catch { /* ignore */ }
   }, [notifyEnabled]);
   useEffect(() => {
-    try { localStorage.setItem(THREADS_QUIET_KEY, `${quietStart}|${quietEnd}`); } catch {}
+    try { localStorage.setItem(THREADS_QUIET_KEY, `${quietStart}|${quietEnd}`); } catch { /* ignore */ }
   }, [quietStart, quietEnd]);
 
   const isQuietNow = () => {

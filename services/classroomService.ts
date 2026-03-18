@@ -175,7 +175,7 @@ export class ClassroomService {
     const submissions = submissionsData.studentSubmissions || [];
 
     // 2. Find the submission object
-    let submission = submissions.find((s: any) => 
+    const submission = submissions.find((s: any) => 
       String(s.userId) === String(studentId)
     );
     

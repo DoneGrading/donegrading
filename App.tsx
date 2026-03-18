@@ -566,13 +566,13 @@ const App: React.FC = () => {
   const [dragAssignmentId, setDragAssignmentId] = useState<string | null>(null);
 
   useEffect(() => {
-    try { localStorage.setItem(GRADE_FOLLOWUPS_KEY, JSON.stringify(gradeFollowUps)); } catch {}
+    try { localStorage.setItem(GRADE_FOLLOWUPS_KEY, JSON.stringify(gradeFollowUps)); } catch { /* ignore */ }
   }, [gradeFollowUps]);
   useEffect(() => {
-    try { localStorage.setItem(QUICK_TODOS_KEY, JSON.stringify(quickTodos)); } catch {}
+    try { localStorage.setItem(QUICK_TODOS_KEY, JSON.stringify(quickTodos)); } catch { /* ignore */ }
   }, [quickTodos]);
   useEffect(() => {
-    try { localStorage.setItem(NAV_USAGE_KEY, JSON.stringify(navUsage)); } catch {}
+    try { localStorage.setItem(NAV_USAGE_KEY, JSON.stringify(navUsage)); } catch { /* ignore */ }
   }, [navUsage]);
 
   // Plan tab (The Architect)
@@ -728,7 +728,7 @@ const App: React.FC = () => {
       // ignore
     }
   }, [scheduleItems]);
-  useEffect(() => { try { localStorage.setItem(FILE_VAULT_KEY, JSON.stringify(fileVaultLinks)); } catch (_) {} }, [fileVaultLinks, FILE_VAULT_KEY]);
+  useEffect(() => { try { localStorage.setItem(FILE_VAULT_KEY, JSON.stringify(fileVaultLinks)); } catch (_) { /* ignore */ } }, [fileVaultLinks, FILE_VAULT_KEY]);
   useEffect(() => {
     // Lightweight autosave for the Plan tab so educators don't lose work.
     try {
@@ -5861,7 +5861,7 @@ const App: React.FC = () => {
                   voiceTargetRef.current = target;
                   target.classList.add('dg-voice-target');
                   // Keep focus on the field so cursor insertion works.
-                  try { target.focus(); } catch {}
+                  try { target.focus(); } catch { /* ignore */ }
                 }
                 toggleNavListening();
               }}
