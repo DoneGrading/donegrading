@@ -417,6 +417,19 @@ const App: React.FC = () => {
   const [scanHealth, setScanHealth] = useState<number>(0);
   const [_oneWordCommand, setOneWordCommand] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  
+  // Student targeting mode for scan attribution.
+  // - single: match each scan to one student (manual or OCR match)
+  // - batch: teacher selects multiple students once; scans map sequentially
+  const [scanStudentMode, setScanStudentMode] = useState<'single' | 'batch'>('single');
+  const [batchSelectedStudentIds, setBatchSelectedStudentIds] = useState<Set<string>>(new Set());
+  const batchStudentOrderRef = useRef<string[]>([]);
+  const batchNextIndexRef = useRef<number>(0);
+
+  // Audit selection (bulk edit/sync/delete)
+  const [auditSelectedIndexes, setAuditSelectedIndexes] = useState<Set<number>>(new Set());
+  const [auditEditSelectedOnly, setAuditEditSelectedOnly] = useState(false);
+
   const [scanQueueCount, setScanQueueCount] = useState(0);
   const [scanReviewQueueCount, setScanReviewQueueCount] = useState(0);
   const [scanQueueHint, setScanQueueHint] = useState<string | null>(null);
@@ -1296,7 +1309,21 @@ const App: React.FC = () => {
     setPhase(AppPhase.RUBRIC_SETUP);
   };
 
-  const startGrading = (mode: GradingMode) => { setGradingMode(mode); setPhase(AppPhase.GRADING_LOOP); };
+  const startGrading = (mode: GradingMode) => {
+    setGradingMode(mode);
+    // Prepare batch scan ordering (scan attribution).
+    if (scanStudentMode === 'batch') {
+      const ordered = students
+        .filter(s => batchSelectedStudentIds.has(s.id))
+        .map(s => s.id);
+      batchStudentOrderRef.current = ordered;
+      batchNextIndexRef.current = 0;
+    } else {
+      batchStudentOrderRef.current = [];
+      batchNextIndexRef.current = 0;
+    }
+    setPhase(AppPhase.GRADING_LOOP);
+  };
 
   // (Removed) old modal voice capture flow.
   
@@ -1443,10 +1470,23 @@ const App: React.FC = () => {
 
   const handleDeleteScan = (index: number) => {
     setGradedWorks(prev => prev.filter((_, i) => i !== index));
+    setAuditSelectedIndexes(new Set());
+    setAuditEditSelectedOnly(false);
   };
 
   const handleRescan = (index: number) => {
+    // If we are in batch mode, re-align the next scan to the same student.
+    if (scanStudentMode === 'batch') {
+      const targetStudentId = gradedWorks[index]?.studentId;
+      const order = batchStudentOrderRef.current;
+      if (targetStudentId) {
+        const idxInOrder = order.indexOf(targetStudentId);
+        if (idxInOrder >= 0) batchNextIndexRef.current = idxInOrder;
+      }
+    }
     handleDeleteScan(index);
+    setAuditSelectedIndexes(new Set());
+    setAuditEditSelectedOnly(false);
     setPhase(AppPhase.GRADING_LOOP);
   };
 
@@ -1716,19 +1756,30 @@ const App: React.FC = () => {
     setManualFeedback(next.result.feedback || '');
 
     const detectedIds = new Set<string>();
+    const candidateStudents =
+      scanStudentMode === 'batch' && batchSelectedStudentIds.size > 0
+        ? students.filter(s => batchSelectedStudentIds.has(s.id))
+        : students;
+
     if (next.result.studentName) {
       const lowerDetected = next.result.studentName.toLowerCase().replace(/[^a-z]/g, '');
       if (lowerDetected.length > 2) {
-        const match = students.find(s => {
+        const match = candidateStudents.find(s => {
           const sName = s.name.toLowerCase().replace(/[^a-z]/g, '');
           return sName.includes(lowerDetected) || lowerDetected.includes(sName);
         });
         if (match) detectedIds.add(match.id);
       }
     }
+
+    // If we are in batch mode and detection found nothing, attribute this scan to the next student.
+    if (scanStudentMode === 'batch' && detectedIds.size === 0) {
+      const nextId = batchStudentOrderRef.current[batchNextIndexRef.current];
+      if (nextId) detectedIds.add(nextId);
+    }
     setSelectedQuickPickIds(detectedIds);
     setShowQuickPick(true);
-  }, [showQuickPick, students]);
+  }, [showQuickPick, students, scanStudentMode, batchSelectedStudentIds]);
 
   // Background worker: grade queued single-page captures while teacher keeps scanning.
   useEffect(() => {
@@ -1818,6 +1869,16 @@ const App: React.FC = () => {
       };
       setGradedWorks(prev => [...prev, newWork]);
     });
+
+    // Advance batch pointer only after the teacher confirms which student this scan belongs to.
+    if (scanStudentMode === 'batch') {
+      const selectedId = Array.from(selectedQuickPickIds)[0];
+      const order = batchStudentOrderRef.current;
+      const idx = selectedId ? order.indexOf(selectedId) : -1;
+      if (idx >= 0) batchNextIndexRef.current = idx + 1;
+      else batchNextIndexRef.current = batchNextIndexRef.current + 1;
+    }
+
     setStudents(students.map(s => selectedQuickPickIds.has(s.id) ? { ...s, lastUsed: Date.now() } : s));
     setShowQuickPick(false); setPendingWork(null); setActiveGeometry(null); setScanHealth(0); setOneWordCommand(null);
     cooldownRef.current = true; setTimeout(() => { cooldownRef.current = false; }, 1000); 
@@ -1881,16 +1942,28 @@ const App: React.FC = () => {
 
       const detectedName = result.studentName || multiPageCapture.detectedStudentName || '';
       const detectedIds = new Set<string>();
+      const candidateStudents =
+        scanStudentMode === 'batch' && batchSelectedStudentIds.size > 0
+          ? students.filter(s => batchSelectedStudentIds.has(s.id))
+          : students;
+
       if (detectedName) {
         const lowerDetected = detectedName.toLowerCase().replace(/[^a-z]/g, '');
         if (lowerDetected.length > 2) {
-          const match = students.find(s => {
+          const match = candidateStudents.find(s => {
             const sName = s.name.toLowerCase().replace(/[^a-z]/g, '');
             return sName.includes(lowerDetected) || lowerDetected.includes(sName);
           });
           if (match) detectedIds.add(match.id);
         }
       }
+
+      // If detection found nothing and we are batching, attribute to the next student.
+      if (scanStudentMode === 'batch' && detectedIds.size === 0) {
+        const nextId = batchStudentOrderRef.current[batchNextIndexRef.current];
+        if (nextId) detectedIds.add(nextId);
+      }
+
       setSelectedQuickPickIds(detectedIds);
       setShowQuickPick(true);
     } catch (e) {
@@ -1900,18 +1973,26 @@ const App: React.FC = () => {
     }
   };
 
-  const startSyncProcess = async () => {
-    if (!classroom || !isOnline || gradedWorks.length === 0 || !accessToken) return; 
+  const startSyncProcess = async (indexesToSync?: number[]) => {
+    if (!classroom || !isOnline || !accessToken) return;
+    if (gradedWorks.length === 0) return;
+
+    const currentWorks = [...gradedWorks];
+    const indexSet = indexesToSync && indexesToSync.length > 0 ? new Set(indexesToSync) : null;
+    const worksToSync = indexSet
+      ? (indexesToSync ?? []).map(i => currentWorks[i]).filter(Boolean)
+      : currentWorks;
+    if (worksToSync.length === 0) return;
     if (!isPaid) {
       setPhase(AppPhase.PAYWALL);
       return;
     }
     
-    logEvent('sync_start', { count: gradedWorks.length });
+    logEvent('sync_start', { count: worksToSync.length });
     setPhase(AppPhase.SYNCING); 
     setSyncProgress({
       current: 0,
-      total: gradedWorks.length,
+      total: worksToSync.length,
       message: 'Preparing Google Drive...',
       successes: 0,
       failures: 0,
@@ -1923,13 +2004,15 @@ const App: React.FC = () => {
     
     try {
       const rootFolderId = await getOrCreateDriveFolder(accessToken, 'DoneGrading Scans');
-      const safeAssignmentFolderName = gradedWorks[0]?.assignmentName ? gradedWorks[0].assignmentName.replace(/[^a-zA-Z0-9 ]/g, "").trim() : 'Misc Scans';
+      const safeAssignmentFolderName = worksToSync[0]?.assignmentName
+        ? worksToSync[0].assignmentName.replace(/[^a-zA-Z0-9 ]/g, "").trim()
+        : 'Misc Scans';
       targetFolderId = await getOrCreateDriveFolder(accessToken, safeAssignmentFolderName, rootFolderId);
     } catch (e) {
       console.error("Could not set up Drive folders. We will skip Drive upload for this sync.", e);
     }
 
-    const worksToSync = [...gradedWorks];
+    // Important: worksToSync is derived from either selected indexes or the full pending list.
     let successes = 0, failures = 0;
     
     for (let i = 0; i < worksToSync.length; i++) {
@@ -2028,7 +2111,7 @@ const App: React.FC = () => {
       logEvent('sync_error', { total: worksToSync.length, successes, failures });
     }
     setHistory(prev => [...worksToSync, ...prev]);
-    setGradedWorks([]);
+    setGradedWorks(indexSet ? currentWorks.filter((_, i) => !indexSet.has(i)) : []);
     setTimeout(() => setPhase(AppPhase.FINALE), 1000);
   };
 
@@ -3075,27 +3158,165 @@ const App: React.FC = () => {
 
   const renderModeSelection = () => (
     <PageWrapper headerTitle="Scan Student Work" headerSubtitle={educatorName} onBack={() => setPhase(AppPhase.RUBRIC_SETUP)} isOnline={isOnline} isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode} syncStatus={syncStatus}>
-       <div className="flex flex-col gap-4 max-w-sm mx-auto w-full pt-10">
-         <button onClick={() => startGrading(GradingMode.SINGLE_PAGE)} className="p-5 bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl border border-slate-200 dark:border-slate-700 rounded-xl flex items-center justify-between shadow-sm hover:border-emerald-400 hover:-translate-y-0.5 transition-all">
-           <div className="flex items-center gap-4">
-             <div className="w-12 h-12 bg-emerald-500 rounded-xl flex items-center justify-center text-white"><Camera className="w-6 h-6" /></div>
-             <div className="text-left">
-               <h3 className="text-base font-black text-slate-800 dark:text-slate-100">Single Page Mode</h3>
-               <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mt-1">One Scan = One Student</p>
-             </div>
-           </div>
-         </button>
+      <div className="flex flex-col gap-4 max-w-sm mx-auto w-full pt-10 pb-6">
+        <div className="flex flex-col gap-3">
+          <div className="text-slate-500 text-[10px] font-black uppercase tracking-widest">Choose scan attribution</div>
 
-         <button onClick={() => startGrading(GradingMode.MULTI_PAGE)} className="p-5 bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl border border-slate-200 dark:border-slate-700 rounded-xl flex items-center justify-between shadow-sm hover:border-indigo-400 hover:-translate-y-0.5 transition-all">
-           <div className="flex items-center gap-4">
-             <div className="w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center text-white"><FileText className="w-6 h-6" /></div>
-             <div className="text-left">
-               <h3 className="text-base font-black text-slate-800 dark:text-slate-100">Multi Page Mode</h3>
-               <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mt-1">Capture multiple pages per student</p>
-             </div>
-           </div>
-         </button>
-       </div>
+          <div className="flex flex-col gap-3">
+            <button
+              onClick={() => {
+                setScanStudentMode('single');
+                setBatchSelectedStudentIds(new Set());
+              }}
+              className={`p-5 bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl border rounded-xl flex items-center justify-between shadow-sm transition-all ${
+                scanStudentMode === 'single'
+                  ? 'border-emerald-400 hover:border-emerald-400'
+                  : 'border-slate-200 dark:border-slate-700 hover:border-emerald-400/60'
+              }`}
+            >
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-emerald-500 rounded-xl flex items-center justify-center text-white">
+                  <Camera className="w-6 h-6" />
+                </div>
+                <div className="text-left">
+                  <h3 className="text-base font-black text-slate-800 dark:text-slate-100">One student at a time</h3>
+                  <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mt-1">Match each scan to a student</p>
+                </div>
+              </div>
+              <div className={`w-6 h-6 rounded-full border ${scanStudentMode === 'single' ? 'border-emerald-400 bg-emerald-500' : 'border-slate-300 dark:border-slate-600'} flex items-center justify-center`}>
+                {scanStudentMode === 'single' && <Check className="w-4 h-4 text-white" />}
+              </div>
+            </button>
+
+            <button
+              onClick={() => setScanStudentMode('batch')}
+              className={`p-5 bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl border rounded-xl flex items-center justify-between shadow-sm transition-all ${
+                scanStudentMode === 'batch'
+                  ? 'border-indigo-400 hover:border-indigo-400'
+                  : 'border-slate-200 dark:border-slate-700 hover:border-indigo-400/60'
+              }`}
+            >
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center text-white">
+                  <FileText className="w-6 h-6" />
+                </div>
+                <div className="text-left">
+                  <h3 className="text-base font-black text-slate-800 dark:text-slate-100">Batch scan multiple students</h3>
+                  <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mt-1">Select students once, then scan in order</p>
+                </div>
+              </div>
+              <div className={`w-6 h-6 rounded-full border ${scanStudentMode === 'batch' ? 'border-indigo-400 bg-indigo-600' : 'border-slate-300 dark:border-slate-600'} flex items-center justify-center`}>
+                {scanStudentMode === 'batch' && <Check className="w-4 h-4 text-white" />}
+              </div>
+            </button>
+          </div>
+
+          {scanStudentMode === 'batch' && (
+            <div className="p-4 rounded-xl bg-white/50 dark:bg-slate-800/40 backdrop-blur-xl border border-slate-200 dark:border-slate-700">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <div className="text-sm font-black text-slate-800 dark:text-slate-100">Students in this batch</div>
+                  <div className="text-slate-500 text-[10px] font-black uppercase tracking-widest mt-1">
+                    {batchSelectedStudentIds.size} selected
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setBatchSelectedStudentIds(new Set(students.map(s => s.id)))}
+                    className="px-3 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-200 text-[10px] font-black uppercase tracking-widest border border-indigo-200/60"
+                    disabled={students.length === 0}
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBatchSelectedStudentIds(new Set())}
+                    className="px-3 py-1.5 rounded-lg bg-white/60 dark:bg-slate-800/60 text-slate-600 dark:text-slate-300 text-[10px] font-black uppercase tracking-widest border border-slate-200/70"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+
+              <div className="max-h-44 overflow-y-auto pr-1 custom-scrollbar space-y-1">
+                {students.map(s => {
+                  const checked = batchSelectedStudentIds.has(s.id);
+                  return (
+                    <label
+                      key={s.id}
+                      className={`flex items-center justify-between gap-3 p-2 rounded-lg border transition-colors ${
+                        checked
+                          ? 'bg-indigo-50 dark:bg-indigo-900/30 border-indigo-300/70'
+                          : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700'
+                      }`}
+                    >
+                      <span className="text-[13px] font-bold text-slate-800 dark:text-slate-100 truncate">{s.name}</span>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          setBatchSelectedStudentIds(prev => {
+                            const next = new Set(prev);
+                            if (next.has(s.id)) next.delete(s.id);
+                            else next.add(s.id);
+                            return next;
+                          });
+                        }}
+                      />
+                    </label>
+                  );
+                })}
+                {students.length === 0 && (
+                  <div className="text-slate-500 text-[12px] font-bold">No students loaded.</div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-3 mt-2">
+          <button
+            onClick={() => startGrading(GradingMode.SINGLE_PAGE)}
+            disabled={scanStudentMode === 'batch' && batchSelectedStudentIds.size === 0}
+            className={`p-5 bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl border rounded-xl flex items-center justify-between shadow-sm transition-all ${
+              scanStudentMode === 'batch' && batchSelectedStudentIds.size === 0
+                ? 'border-slate-200/70 text-slate-400 cursor-not-allowed'
+                : 'border-slate-200 dark:border-slate-700 hover:border-emerald-400'
+            }`}
+          >
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-emerald-500 rounded-xl flex items-center justify-center text-white">
+                <Camera className="w-6 h-6" />
+              </div>
+              <div className="text-left">
+                <h3 className="text-base font-black text-slate-800 dark:text-slate-100">Single Page Mode</h3>
+                <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mt-1">One scan = one student</p>
+              </div>
+            </div>
+          </button>
+
+          <button
+            onClick={() => startGrading(GradingMode.MULTI_PAGE)}
+            disabled={scanStudentMode === 'batch' && batchSelectedStudentIds.size === 0}
+            className={`p-5 bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl border rounded-xl flex items-center justify-between shadow-sm transition-all ${
+              scanStudentMode === 'batch' && batchSelectedStudentIds.size === 0
+                ? 'border-slate-200/70 text-slate-400 cursor-not-allowed'
+                : 'border-slate-200 dark:border-slate-700 hover:border-indigo-400'
+            }`}
+          >
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center text-white">
+                <FileText className="w-6 h-6" />
+              </div>
+              <div className="text-left">
+                <h3 className="text-base font-black text-slate-800 dark:text-slate-100">Multi Page Mode</h3>
+                <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mt-1">Capture multiple pages per student</p>
+              </div>
+            </div>
+          </button>
+        </div>
+      </div>
     </PageWrapper>
   );
 
@@ -3281,8 +3502,11 @@ const App: React.FC = () => {
                         Select Student to Match
                       </label>
                       <div className="flex-1 overflow-y-auto custom-scrollbar bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 p-2 space-y-1 shadow-inner">
-                         {/* Dynamic Listing: Matches are always pushed to the top */}
-                         {[...students].sort((a, b) => {
+                        {/* Dynamic Listing: Matches are always pushed to the top */}
+                        {(scanStudentMode === 'batch' && batchSelectedStudentIds.size > 0
+                          ? students.filter(s => batchSelectedStudentIds.has(s.id))
+                          : students
+                        ).sort((a, b) => {
                              if (!pendingWork.studentName) return 0;
                              const lowerDetected = pendingWork.studentName.toLowerCase().replace(/[^a-z]/g, '');
                              if (lowerDetected.length <= 2) return 0;
@@ -3293,7 +3517,7 @@ const App: React.FC = () => {
                              if (aMatch && !bMatch) return -1;
                              if (!aMatch && bMatch) return 1;
                              return a.name.localeCompare(b.name);
-                         }).map(student => (
+                        }).map(student => (
                            <div 
                              key={student.id} 
                              onClick={() => setSelectedQuickPickIds(new Set([student.id]))}
@@ -3331,38 +3555,172 @@ const App: React.FC = () => {
 
   const renderAudit = () => (
     <PageWrapper headerTitle="Review Grades" headerSubtitle={`${gradedWorks.length} pending`} onBack={() => setPhase(AppPhase.GRADING_LOOP)} isOnline={isOnline} isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode} syncStatus={syncStatus}>
-       <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-4">
-         {gradedWorks.map((work, idx) => (
-           <div key={idx} className="bg-white/70 dark:bg-slate-800/70 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col">
-              <div className="flex justify-between items-center mb-3">
-                 <h4 className="font-black text-slate-800 dark:text-slate-100 truncate pr-2">{work.studentName}</h4>
-                 <div className="flex items-center gap-1 shrink-0">
-                   <input type="number" value={work.score} onChange={(e) => { const w = [...gradedWorks]; w[idx].score = parseFloat(e.target.value)||0; setGradedWorks(w); }} className="w-12 bg-transparent text-right font-black text-indigo-600 outline-none text-[16px]" />
-                   <span className="text-slate-400 font-bold text-[16px]">/{work.maxScore}</span>
-                 </div>
+      <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-4">
+        <div className="sticky top-0 z-20 bg-white/70 dark:bg-slate-800/70 backdrop-blur-md border border-slate-200 dark:border-slate-700 rounded-xl p-4 shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-slate-500 text-[10px] font-black uppercase tracking-widest">Bulk review</div>
+              <div className="font-black text-slate-800 dark:text-slate-100 text-[14px] mt-1">
+                {auditSelectedIndexes.size > 0 ? `${auditSelectedIndexes.size} selected` : 'All pending are editable'}
               </div>
-              <textarea value={work.feedback} onChange={(e) => { const w = [...gradedWorks]; w[idx].feedback = e.target.value; setGradedWorks(w); }} className="w-full bg-slate-50 dark:bg-slate-900 rounded-xl p-3 text-[16px] border border-slate-200 dark:border-slate-700 outline-none resize-none mb-3" rows={2} />
-              
+            </div>
+
+            <div className="flex flex-col items-end gap-2 shrink-0">
+              <label className="flex items-center gap-2 select-none cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={auditEditSelectedOnly}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    if (checked && auditSelectedIndexes.size === 0) {
+                      setAuditSelectedIndexes(new Set(gradedWorks.map((_, i) => i)));
+                    }
+                    setAuditEditSelectedOnly(checked);
+                  }}
+                />
+                <span className="text-[12px] font-bold text-slate-700 dark:text-slate-200">Edit selected only</span>
+              </label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAuditSelectedIndexes(new Set(gradedWorks.map((_, i) => i)))}
+                  disabled={gradedWorks.length === 0}
+                  className="px-3 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-200 text-[10px] font-black uppercase tracking-widest border border-indigo-200/60 disabled:opacity-50"
+                >
+                  Select all
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuditSelectedIndexes(new Set());
+                    setAuditEditSelectedOnly(false);
+                  }}
+                  disabled={gradedWorks.length === 0}
+                  className="px-3 py-1.5 rounded-lg bg-white/60 dark:bg-slate-800/60 text-slate-600 dark:text-slate-300 text-[10px] font-black uppercase tracking-widest border border-slate-200/70 disabled:opacity-50"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex gap-2 mt-4">
+            <button
+              type="button"
+              onClick={() => {
+                if (auditSelectedIndexes.size === 0) return;
+                setGradedWorks(prev => prev.filter((_, i) => !auditSelectedIndexes.has(i)));
+                setAuditSelectedIndexes(new Set());
+                setAuditEditSelectedOnly(false);
+              }}
+              disabled={auditSelectedIndexes.size === 0}
+              className="flex-1 py-2.5 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-xl font-bold text-[11px] uppercase tracking-widest hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors flex items-center justify-center gap-1.5 border border-red-200/50 dark:border-red-500/20 disabled:opacity-50"
+            >
+              <Trash2 className="w-3.5 h-3.5" /> Delete selected
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (auditSelectedIndexes.size === 0) return;
+                setGradedWorks(prev =>
+                  prev.map((w, i) => (auditSelectedIndexes.has(i) ? { ...w, status: 'draft' as const } : w))
+                );
+              }}
+              disabled={auditSelectedIndexes.size === 0}
+              className="flex-1 py-2.5 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-xl font-bold text-[11px] uppercase tracking-widest hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors flex items-center justify-center gap-1.5 border border-indigo-200/50 dark:border-indigo-500/20 disabled:opacity-50"
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> Mark as draft
+            </button>
+          </div>
+        </div>
+
+        {gradedWorks.map((work, idx) => {
+          const isSelected = auditSelectedIndexes.has(idx);
+          const editAllowed = !auditEditSelectedOnly || isSelected;
+          return (
+            <div key={idx} className="bg-white/70 dark:bg-slate-800/70 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col">
+              <div className="flex justify-between items-center mb-3 gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setAuditSelectedIndexes(prev => {
+                        const next = new Set(prev);
+                        if (checked) next.add(idx);
+                        else next.delete(idx);
+                        return next;
+                      });
+                    }}
+                  />
+                  <h4 className="font-black text-slate-800 dark:text-slate-100 truncate pr-2">
+                    {work.studentName}
+                  </h4>
+                </div>
+
+                <div className="flex items-center gap-1 shrink-0">
+                  <input
+                    type="number"
+                    value={work.score}
+                    disabled={!editAllowed}
+                    onChange={(e) => {
+                      if (!editAllowed) return;
+                      const w = [...gradedWorks];
+                      w[idx].score = parseFloat(e.target.value) || 0;
+                      setGradedWorks(w);
+                    }}
+                    className={`w-12 bg-transparent text-right font-black text-indigo-600 outline-none text-[16px] ${editAllowed ? '' : 'opacity-50 cursor-not-allowed'}`}
+                  />
+                  <span className="text-slate-400 font-bold text-[16px]">/{work.maxScore}</span>
+                </div>
+              </div>
+
+              <textarea
+                value={work.feedback}
+                disabled={!editAllowed}
+                onChange={(e) => {
+                  if (!editAllowed) return;
+                  const w = [...gradedWorks];
+                  w[idx].feedback = e.target.value;
+                  setGradedWorks(w);
+                }}
+                className={`w-full bg-slate-50 dark:bg-slate-900 rounded-xl p-3 text-[16px] border border-slate-200 dark:border-slate-700 outline-none resize-none mb-3 ${editAllowed ? '' : 'opacity-60 cursor-not-allowed'}`}
+                rows={2}
+              />
+
               <div className="flex gap-2 mt-auto">
-                 <button onClick={() => handleRescan(idx)} className="flex-1 py-2.5 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-xl font-bold text-[11px] uppercase tracking-widest hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors flex items-center justify-center gap-1.5 border border-indigo-200/50 dark:border-indigo-500/20">
-                    <RefreshCw className="w-3.5 h-3.5" /> Rescan
-                 </button>
-                 <button onClick={() => handleDeleteScan(idx)} className="flex-1 py-2.5 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-xl font-bold text-[11px] uppercase tracking-widest hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors flex items-center justify-center gap-1.5 border border-red-200/50 dark:border-red-500/20">
-                    <Trash2 className="w-3.5 h-3.5" /> Delete
-                 </button>
+                <button onClick={() => handleRescan(idx)} className="flex-1 py-2.5 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-xl font-bold text-[11px] uppercase tracking-widest hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors flex items-center justify-center gap-1.5 border border-indigo-200/50 dark:border-indigo-500/20">
+                   <RefreshCw className="w-3.5 h-3.5" /> Rescan
+                </button>
+                <button onClick={() => handleDeleteScan(idx)} className="flex-1 py-2.5 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-xl font-bold text-[11px] uppercase tracking-widest hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors flex items-center justify-center gap-1.5 border border-red-200/50 dark:border-red-500/20">
+                   <Trash2 className="w-3.5 h-3.5" /> Delete
+                </button>
               </div>
-           </div>
-         ))}
-         {gradedWorks.length === 0 && (
-           <div className="flex flex-col items-center justify-center h-full text-slate-400 mt-10">
-             <Layers className="w-12 h-12 mb-3 opacity-50" />
-             <p className="font-bold text-[16px]">No scans pending.</p>
-           </div>
-         )}
-       </div>
-       <button onClick={startSyncProcess} disabled={gradedWorks.length === 0} className="w-full mt-4 py-4 bg-emerald-500 text-white rounded-xl font-black uppercase tracking-widest text-[16px] shadow-sm hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:hover:translate-y-0">
-         Sync to Classroom <CloudUpload className="inline ml-2 w-4 h-4" />
-       </button>
+            </div>
+          );
+        })}
+
+        {gradedWorks.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full text-slate-400 mt-10">
+            <Layers className="w-12 h-12 mb-3 opacity-50" />
+            <p className="font-bold text-[16px]">No scans pending.</p>
+          </div>
+        )}
+      </div>
+
+      <button
+        onClick={() => {
+          const idxs = auditSelectedIndexes.size > 0 ? Array.from(auditSelectedIndexes) : undefined;
+          setAuditSelectedIndexes(new Set());
+          setAuditEditSelectedOnly(false);
+          void startSyncProcess(idxs);
+        }}
+        disabled={gradedWorks.length === 0}
+        className="w-full mt-4 py-4 bg-emerald-500 text-white rounded-xl font-black uppercase tracking-widest text-[16px] shadow-sm hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:hover:translate-y-0"
+      >
+         {auditSelectedIndexes.size > 0 ? `Sync selected (${auditSelectedIndexes.size})` : `Sync all (${gradedWorks.length})`} <CloudUpload className="inline ml-2 w-4 h-4" />
+      </button>
     </PageWrapper>
   );
 
