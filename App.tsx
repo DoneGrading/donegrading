@@ -633,6 +633,13 @@ const App: React.FC = () => {
   };
 
   const [showCourses, setShowCourses] = useState(true);
+  const [rosterCourseOpenId, setRosterCourseOpenId] = useState<string | null>(null);
+  const [rosterCourseStudents, setRosterCourseStudents] = useState<Record<string, Student[]>>({});
+  const [rosterCourseAssignments, setRosterCourseAssignments] = useState<Record<string, Assignment[]>>({});
+  const [rosterSelectedStudentIds, setRosterSelectedStudentIds] = useState<Set<string>>(new Set());
+  const [rosterSelectedAssignmentId, setRosterSelectedAssignmentId] = useState<string>('');
+  const [rosterLoadingCourseId, setRosterLoadingCourseId] = useState<string | null>(null);
+  const [rosterError, setRosterError] = useState<string | null>(null);
 
   const dashboardResults = useMemo(() => {
     const query = globalSearchQuery.toLowerCase().trim();
@@ -2211,7 +2218,16 @@ const App: React.FC = () => {
                 <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Students</span>
                 <Users className="w-5 h-5 text-sky-500 shrink-0" />
               </div>
-              <p className="text-2xl font-bold text-slate-900 dark:text-slate-50 leading-tight">{totalStudents}</p>
+              <button
+                type="button"
+                onClick={() => setPhase(AppPhase.ROSTER_VIEW)}
+                className="text-left w-full"
+                title="Open roster"
+              >
+                <p className="text-2xl font-bold text-slate-900 dark:text-slate-50 leading-tight underline underline-offset-4 decoration-slate-300/60 dark:decoration-slate-600/60">
+                  {totalStudents}
+                </p>
+              </button>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">All rosters</p>
             </div>
             <div className="py-3">
@@ -2343,6 +2359,214 @@ const App: React.FC = () => {
               </button>
             </div>
             )}
+          </div>
+        </div>
+      </PageWrapper>
+    );
+  };
+
+  const ensureRosterData = async (course: Course) => {
+    setRosterError(null);
+    if (rosterCourseStudents[course.id] && rosterCourseAssignments[course.id]) return;
+    if (!classroom || !isOnline || course.source === 'local') {
+      setRosterCourseStudents(prev => (prev[course.id] ? prev : { ...prev, [course.id]: prev[course.id] ?? [] }));
+      setRosterCourseAssignments(prev => (prev[course.id] ? prev : { ...prev, [course.id]: prev[course.id] ?? [] }));
+      return;
+    }
+    try {
+      setRosterLoadingCourseId(course.id);
+      const [studentsData, assignmentsData] = await Promise.all([
+        classroom.getStudents(course.id),
+        classroom.getAssignments(course.id),
+      ]);
+      setRosterCourseStudents(prev => ({ ...prev, [course.id]: studentsData }));
+      setRosterCourseAssignments(prev => ({ ...prev, [course.id]: assignmentsData }));
+    } catch (e) {
+      console.error('Failed to load roster data', e);
+      setRosterError('Could not load students/assignments for this course.');
+    } finally {
+      setRosterLoadingCourseId(null);
+    }
+  };
+
+  const renderRosterView = () => {
+    const openCourse = rosterCourseOpenId ? courses.find(c => c.id === rosterCourseOpenId) : null;
+    const openStudents = openCourse ? (rosterCourseStudents[openCourse.id] ?? []) : [];
+    const openAssignments = openCourse ? (rosterCourseAssignments[openCourse.id] ?? []) : [];
+    const selectedAssignment = openAssignments.find(a => a.id === rosterSelectedAssignmentId) ?? null;
+    const canAdd = !!openCourse && !!selectedAssignment && rosterSelectedStudentIds.size > 0;
+
+    return (
+      <PageWrapper
+        headerTitle={educatorName || 'Roster'}
+        headerSubtitle={todayLabel || undefined}
+        onBack={() => setPhase(AppPhase.DASHBOARD)}
+        isOnline={isOnline}
+        isDarkMode={isDarkMode}
+        setIsDarkMode={setIsDarkMode}
+        syncStatus={syncStatus}
+      >
+        <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-y-auto pb-24 custom-scrollbar">
+          <div className="text-sm text-slate-600 dark:text-slate-300">
+            Select a course, choose an assignment, then pick one or more students to add to <span className="font-semibold">Review Grades</span> for manual grading.
+          </div>
+
+          {rosterError && (
+            <div className="px-3 py-2 rounded-xl bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-300 text-sm">
+              {rosterError}
+            </div>
+          )}
+
+          <div className="space-y-2">
+            {courses.map((course) => {
+              const isOpen = rosterCourseOpenId === course.id;
+              const isLoading = rosterLoadingCourseId === course.id;
+              const count = rosterCourseStudents[course.id]?.length;
+              return (
+                <div key={course.id} className="border border-slate-200/60 dark:border-slate-700/60 rounded-xl overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextOpen = isOpen ? null : course.id;
+                      setRosterCourseOpenId(nextOpen);
+                      setRosterSelectedStudentIds(new Set());
+                      setRosterSelectedAssignmentId('');
+                      if (!isOpen) void ensureRosterData(course);
+                    }}
+                    className="w-full flex items-center justify-between px-3 py-3 bg-white/40 dark:bg-slate-900/40 hover:bg-white/60 dark:hover:bg-slate-900/60 transition-colors"
+                  >
+                    <div className="min-w-0 text-left">
+                      <div className="text-base font-semibold text-slate-900 dark:text-slate-100 truncate">{course.name}</div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400">
+                        {course.period}{typeof count === 'number' ? ` · ${count} students` : ''}
+                      </div>
+                    </div>
+                    <div className="text-xs text-slate-500 dark:text-slate-400 shrink-0">
+                      {isLoading ? 'Loading…' : isOpen ? 'Hide' : 'Open'}
+                    </div>
+                  </button>
+
+                  {isOpen && (
+                    <div className="px-3 py-3 space-y-3 bg-white/20 dark:bg-slate-900/20">
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                          Assignment
+                        </label>
+                        <select
+                          value={rosterSelectedAssignmentId}
+                          onChange={(e) => setRosterSelectedAssignmentId(e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none"
+                        >
+                          <option value="">Select an assignment…</option>
+                          {openAssignments.map(a => (
+                            <option key={a.id} value={a.id}>
+                              {a.title} ({a.maxScore})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                            Students
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (openStudents.length === 0) return;
+                              const all = rosterSelectedStudentIds.size !== openStudents.length;
+                              setRosterSelectedStudentIds(all ? new Set(openStudents.map(s => s.id)) : new Set());
+                            }}
+                            className="text-xs font-semibold text-slate-500 dark:text-slate-400 underline underline-offset-2"
+                          >
+                            {openStudents.length === 0 ? '' : rosterSelectedStudentIds.size === openStudents.length ? 'Clear' : 'Select all'}
+                          </button>
+                        </div>
+
+                        {openStudents.length === 0 ? (
+                          <div className="text-sm text-slate-500 dark:text-slate-400">
+                            {course.source === 'local'
+                              ? 'Local courses do not have a roster.'
+                              : isOnline
+                                ? 'No students found.'
+                                : 'Offline — connect to load roster.'}
+                          </div>
+                        ) : (
+                          <div className="max-h-64 overflow-y-auto custom-scrollbar border border-slate-200/60 dark:border-slate-700/60 rounded-xl bg-white/50 dark:bg-slate-900/50">
+                            {openStudents.map((s) => {
+                              const checked = rosterSelectedStudentIds.has(s.id);
+                              return (
+                                <button
+                                  key={s.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setRosterSelectedStudentIds(prev => {
+                                      const next = new Set(prev);
+                                      if (next.has(s.id)) next.delete(s.id);
+                                      else next.add(s.id);
+                                      return next;
+                                    });
+                                  }}
+                                  className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-white/60 dark:hover:bg-slate-900/60 transition-colors"
+                                >
+                                  <div className="min-w-0">
+                                    <div className="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">{s.name}</div>
+                                    {s.email && <div className="text-xs text-slate-500 dark:text-slate-400 truncate">{s.email}</div>}
+                                  </div>
+                                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${checked ? 'border-indigo-500 bg-indigo-500' : 'border-slate-300 dark:border-slate-600'}`}>
+                                    {checked && <Check className="w-3 h-3 text-white" />}
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        <button
+                          type="button"
+                          disabled={!canAdd}
+                          onClick={() => {
+                            if (!openCourse || !selectedAssignment) return;
+                            const picked = openStudents.filter(s => rosterSelectedStudentIds.has(s.id));
+                            if (picked.length === 0) return;
+                            const nowTs = Date.now();
+                            const newWorks: GradedWork[] = picked.map((student) => ({
+                              studentId: student.id,
+                              studentName: student.name,
+                              studentEmail: student.email,
+                              score: 0,
+                              maxScore: selectedAssignment.maxScore,
+                              feedback: '',
+                              imageUrls: [],
+                              status: 'draft',
+                              timestamp: nowTs,
+                              courseName: openCourse.name,
+                              assignmentName: selectedAssignment.title,
+                              courseId: openCourse.id,
+                              assignmentId: selectedAssignment.id,
+                            }));
+                            setGradedWorks(prev => [...prev, ...newWorks]);
+                            setSelectedCourse(openCourse);
+                            setSelectedAssignment(selectedAssignment);
+                            setAssignments(openAssignments);
+                            setStudents(openStudents);
+                            setPhase(AppPhase.AUDIT);
+                          }}
+                          className={`w-full py-3 rounded-xl text-sm font-bold uppercase tracking-wide transition-colors ${
+                            canAdd
+                              ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+                              : 'bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-500 cursor-not-allowed'
+                          }`}
+                        >
+                          Add to Review Grades ({rosterSelectedStudentIds.size || 0})
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       </PageWrapper>
@@ -5067,6 +5291,7 @@ const App: React.FC = () => {
       {phase === AppPhase.PLAN && renderPlan()}
       {phase === AppPhase.SCHEDULE && renderSchedule()}
       {phase === AppPhase.DASHBOARD && renderDashboard()}
+      {phase === AppPhase.ROSTER_VIEW && renderRosterView()}
       {phase === 'COURSE_CREATION' && renderCourseCreation()}
       {phase === AppPhase.ASSIGNMENT_SELECT && renderAssignmentSelect()}
       {phase === AppPhase.ASSIGNMENT_CREATION && renderAssignmentCreation()}
