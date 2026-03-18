@@ -1281,6 +1281,21 @@ const App: React.FC = () => {
     }
   };
 
+  const handleStartGrading = () => {
+    // Scan attribution requires an already selected course + assignment.
+    // Route through the existing selection flow instead of jumping directly to the camera.
+    if (!selectedCourse) {
+      setShowCourses(true);
+      setPhase(AppPhase.DASHBOARD);
+      return;
+    }
+    if (!selectedAssignment) {
+      setPhase(AppPhase.ASSIGNMENT_SELECT);
+      return;
+    }
+    setPhase(AppPhase.RUBRIC_SETUP);
+  };
+
   const startGrading = (mode: GradingMode) => { setGradingMode(mode); setPhase(AppPhase.GRADING_LOOP); };
 
   // (Removed) old modal voice capture flow.
@@ -2170,7 +2185,7 @@ const App: React.FC = () => {
                   )}
                   <button
                     type="button"
-                    onClick={() => setPhase(AppPhase.GRADING_LOOP)}
+                    onClick={handleStartGrading}
                     className="w-full mt-1 py-2.5 rounded-xl bg-emerald-500 text-white font-bold text-xs uppercase tracking-widest hover:bg-emerald-600 transition-colors flex items-center justify-center gap-1.5"
                   >
                     Start grading
