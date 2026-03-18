@@ -642,11 +642,24 @@ const App: React.FC = () => {
   const [rosterError, setRosterError] = useState<string | null>(null);
 
   const [attentionExpanded, setAttentionExpanded] = useState<boolean>(() => {
-    const raw = localStorage.getItem('dg_attention_expanded_v1');
-    return raw === null ? true : raw === 'true';
+    try {
+      const raw = localStorage.getItem('dg_attention_expanded_v1');
+      return raw === null ? true : raw === 'true';
+    } catch {
+      // Some browsers/settings block storage; default to expanded so the UI still works.
+      return true;
+    }
   });
   const [courseSearch, setCourseSearch] = useState('');
   const [showLast7Details, setShowLast7Details] = useState(false);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('dg_attention_expanded_v1', attentionExpanded ? 'true' : 'false');
+    } catch {
+      // Ignore storage errors; UI should continue to work.
+    }
+  }, [attentionExpanded]);
 
   const dashboardResults = useMemo(() => {
     const query = globalSearchQuery.toLowerCase().trim();
@@ -2081,8 +2094,6 @@ const App: React.FC = () => {
       if (!w.courseId) return;
       pendingByCourseId[w.courseId] = (pendingByCourseId[w.courseId] || 0) + 1;
     });
-
-    localStorage.setItem('dg_attention_expanded_v1', attentionExpanded ? 'true' : 'false');
 
     return (
       <PageWrapper
