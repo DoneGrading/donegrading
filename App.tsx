@@ -641,6 +641,13 @@ const App: React.FC = () => {
   const [rosterLoadingCourseId, setRosterLoadingCourseId] = useState<string | null>(null);
   const [rosterError, setRosterError] = useState<string | null>(null);
 
+  const [attentionExpanded, setAttentionExpanded] = useState<boolean>(() => {
+    const raw = localStorage.getItem('dg_attention_expanded_v1');
+    return raw === null ? true : raw === 'true';
+  });
+  const [courseSearch, setCourseSearch] = useState('');
+  const [showLast7Details, setShowLast7Details] = useState(false);
+
   const dashboardResults = useMemo(() => {
     const query = globalSearchQuery.toLowerCase().trim();
     let filteredCourses = sortItems([...courses], dashboardSort);
@@ -2052,6 +2059,7 @@ const App: React.FC = () => {
     const hoursSavedApprox = minutesSavedApprox / 60;
 
     const studentStats: Record<string, { name: string; totalScore: number; totalMax: number }> = {};
+    const atRiskCourseIds = new Set<string>();
     history.forEach(w => {
       if (!w.studentId) return;
       if (!studentStats[w.studentId]) {
@@ -2059,12 +2067,22 @@ const App: React.FC = () => {
       }
       studentStats[w.studentId].totalScore += w.score;
       studentStats[w.studentId].totalMax += w.maxScore || 100;
+      const pct = w.maxScore ? (w.score / w.maxScore) * 100 : 0;
+      if (pct < 70 && w.courseId) atRiskCourseIds.add(w.courseId);
     });
     const atRiskStudents = Object.values(studentStats)
       .map(s => ({ ...s, pct: s.totalMax > 0 ? (s.totalScore / s.totalMax) * 100 : 0 }))
       .filter(s => s.pct < 70)
       .sort((a, b) => a.pct - b.pct)
       .slice(0, 3);
+
+    const pendingByCourseId: Record<string, number> = {};
+    gradedWorks.forEach(w => {
+      if (!w.courseId) return;
+      pendingByCourseId[w.courseId] = (pendingByCourseId[w.courseId] || 0) + 1;
+    });
+
+    localStorage.setItem('dg_attention_expanded_v1', attentionExpanded ? 'true' : 'false');
 
     return (
       <PageWrapper
@@ -2096,49 +2114,66 @@ const App: React.FC = () => {
         }}
       >
         <div className="flex-1 min-h-0 flex flex-col gap-5 overflow-y-auto pb-24 pt-1 custom-scrollbar">
-          {/* What needs your attention */}
-          <div className="py-2">
-            <div className="flex items-center gap-2 mb-3">
-              <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
-              <p className="text-sm font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
-                What needs your attention
-              </p>
-            </div>
-            <div className="space-y-2 text-sm text-slate-700 dark:text-slate-200">
-              {pendingGrades > 0 && (
+          {/* Sticky attention + metrics */}
+          <div className="sticky top-0 z-10 -mx-4 px-4 pt-1 pb-2 bg-gradient-to-b from-slate-950/90 via-slate-950/70 to-transparent backdrop-blur-sm">
+            {/* What needs your attention */}
+            <div className="py-2">
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
+                  <p className="text-sm font-semibold uppercase tracking-wide text-slate-100">
+                    What needs your attention
+                  </p>
+                </div>
                 <button
                   type="button"
-                  onClick={() => setPhase(AppPhase.AUDIT)}
-                  className="w-full flex items-center justify-between py-3 text-left text-emerald-700 dark:text-emerald-200 hover:opacity-90 transition-opacity"
+                  onClick={() => setAttentionExpanded(prev => !prev)}
+                  className="text-[10px] font-semibold uppercase tracking-wide text-slate-300 hover:text-slate-100"
                 >
-                  <span className="font-semibold">{pendingGrades} grade{pendingGrades === 1 ? '' : 's'} ready to sync</span>
-                  <ArrowRight className="w-4 h-4 shrink-0" />
+                  {attentionExpanded ? 'Hide' : 'Show'}
                 </button>
-              )}
-              {atRiskStudents.length > 0 && (
-                <div className="py-2">
-                  <div className="flex items-center gap-2 mb-1">
-                    <Target className="w-4 h-4 text-rose-500 dark:text-rose-300 shrink-0" />
-                    <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Students to check in on</span>
-                  </div>
-                  <ul className="space-y-1 text-sm">
-                    {atRiskStudents.map(s => (
-                      <li key={s.name} className="flex justify-between">
-                        <span>{s.name}</span>
-                        <span className="font-semibold">{s.pct.toFixed(0)}%</span>
-                      </li>
-                    ))}
-                  </ul>
+              </div>
+              {attentionExpanded ? (
+                <div className="space-y-2 text-sm text-slate-100">
+                  {pendingGrades > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setPhase(AppPhase.AUDIT)}
+                      className="w-full flex items-center justify-between py-2.5 text-left text-emerald-100 hover:opacity-90 transition-opacity"
+                    >
+                      <span className="font-semibold">{pendingGrades} grade{pendingGrades === 1 ? '' : 's'} ready to review</span>
+                      <ArrowRight className="w-4 h-4 shrink-0" />
+                    </button>
+                  )}
+                  {atRiskStudents.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setPhase(AppPhase.RECORDS)}
+                      className="w-full flex items-center justify-between py-2 text-left text-rose-100 hover:opacity-90 transition-opacity"
+                    >
+                      <span className="font-semibold">
+                        {atRiskStudents.length} student{atRiskStudents.length === 1 ? '' : 's'} to check in on
+                      </span>
+                      <Target className="w-4 h-4 shrink-0" />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setPhase(AppPhase.GRADING_LOOP)}
+                    className="w-full mt-1 py-2.5 rounded-xl bg-emerald-500 text-white font-bold text-xs uppercase tracking-widest hover:bg-emerald-600 transition-colors flex items-center justify-center gap-1.5"
+                  >
+                    Start grading
+                    <Camera className="w-3.5 h-3.5" />
+                  </button>
+                  <p className="text-[10px] text-slate-300 pt-1">
+                    Emails: {syncProgress.emailSuccesses} sent · {syncProgress.emailFailures} failed
+                  </p>
                 </div>
-              )}
-              {pendingGrades === 0 && atRiskStudents.length === 0 && (
-                <p className="text-sm text-slate-500 dark:text-slate-400">
-                  You're all caught up. New work will appear here.
+              ) : (
+                <p className="text-xs text-slate-200">
+                  Queue: {pendingGrades} · At-risk: {atRiskStudents.length} · Emails failed: {syncProgress.emailFailures}
                 </p>
               )}
-              <p className="text-xs text-slate-400 dark:text-slate-500 pt-1">
-                Emails: {syncProgress.emailSuccesses} sent · {syncProgress.emailFailures} failed
-              </p>
             </div>
           </div>
 
@@ -2243,16 +2278,27 @@ const App: React.FC = () => {
               </button>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">All rosters</p>
             </div>
-            <div className="py-3">
+            <button
+              type="button"
+              onClick={() => setShowLast7Details(prev => !prev)}
+              className="py-3 text-left rounded-xl hover:opacity-90 transition-opacity"
+              title="Show details"
+            >
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Last 7 days</span>
                 <HistoryIcon className="w-5 h-5 text-purple-500 shrink-0" />
               </div>
               <p className="text-2xl font-bold text-slate-900 dark:text-slate-50 leading-tight">{gradedLast7}</p>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Graded · {gradedLast7StudentCount || 0} students · ~{hoursSavedApprox.toFixed(1)} hrs saved
-              </p>
-            </div>
+              {showLast7Details ? (
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Papers: {gradedLast7Pages} · Students: {gradedLast7StudentCount || 0} · ~{hoursSavedApprox.toFixed(1)} hrs saved
+                </p>
+              ) : (
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Graded · {gradedLast7StudentCount || 0} students · tap for details
+                </p>
+              )}
+            </button>
           </div>
 
           {/* Course list */}
@@ -2269,7 +2315,22 @@ const App: React.FC = () => {
             </button>
             {showCourses && (
             <div className="space-y-2 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
-              {dashboardResults.courses.map((course) => (
+              <div className="sticky top-0 z-5 -mx-1 mb-1 px-1 pb-1 bg-gradient-to-b from-slate-950/90 via-slate-950/40 to-transparent">
+                <input
+                  type="search"
+                  value={courseSearch}
+                  onChange={(e) => setCourseSearch(e.target.value)}
+                  placeholder="Search courses…"
+                  className="w-full px-3 py-1.5 rounded-xl bg-slate-900/60 border border-slate-700 text-xs text-slate-100 placeholder:text-slate-500 outline-none"
+                />
+              </div>
+              {dashboardResults.courses
+                .filter((course) =>
+                  courseSearch.trim()
+                    ? course.name.toLowerCase().includes(courseSearch.toLowerCase())
+                    : true
+                )
+                .map((course) => (
                 <div
                   key={course.id}
                   draggable
@@ -2319,10 +2380,18 @@ const App: React.FC = () => {
                     </div>
                     <div className="min-w-0">
                       <h4 className="text-base font-semibold text-slate-800 dark:text-slate-100 truncate">{course.name}</h4>
-                      <p className="text-indigo-500 text-xs font-semibold uppercase tracking-wide">
-                        {course.period}{course.source === 'local' ? ' · Local' : ''}
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        {course.period}{course.source === 'local' ? ' · Local' : ''}{' '}
                       </p>
                     </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => selectCourse(course)}
+                    className="mr-2 px-2 py-1 rounded-lg text-[10px] font-semibold uppercase tracking-wide bg-indigo-600 text-white hover:bg-indigo-700 transition-colors shrink-0"
+                    title="Start grading for this course"
+                  >
+                    Grade
                   </button>
                   <button
                     type="button"
