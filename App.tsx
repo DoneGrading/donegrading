@@ -2108,7 +2108,7 @@ const App: React.FC = () => {
               {pendingGrades > 0 && (
                 <button
                   type="button"
-                  onClick={() => startSyncProcess()}
+                  onClick={() => setPhase(AppPhase.AUDIT)}
                   className="w-full flex items-center justify-between py-3 text-left text-emerald-700 dark:text-emerald-200 hover:opacity-90 transition-opacity"
                 >
                   <span className="font-semibold">{pendingGrades} grade{pendingGrades === 1 ? '' : 's'} ready to sync</span>
@@ -2197,14 +2197,27 @@ const App: React.FC = () => {
 
           {/* Summary tiles */}
           <div className="grid grid-cols-2 gap-4 py-2">
-            <div className="py-3">
+            <button
+              type="button"
+              onClick={() => {
+                if (pendingGrades <= 0) return;
+                setPhase(AppPhase.AUDIT);
+              }}
+              disabled={pendingGrades <= 0}
+              className={`py-3 text-left rounded-xl transition-opacity ${
+                pendingGrades > 0 ? 'hover:opacity-90' : 'opacity-60 cursor-default'
+              }`}
+              title={pendingGrades > 0 ? 'Open pending grades' : 'No pending grades'}
+            >
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Grading queue</span>
                 <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
               </div>
-              <p className="text-2xl font-bold text-slate-900 dark:text-slate-50 leading-tight">{pendingGrades}</p>
+              <p className={`text-2xl font-bold text-slate-900 dark:text-slate-50 leading-tight ${pendingGrades > 0 ? 'underline underline-offset-4 decoration-slate-300/60 dark:decoration-slate-600/60' : ''}`}>
+                {pendingGrades}
+              </p>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Ready to post</p>
-            </div>
+            </button>
             <div className="py-3">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Classes</span>
