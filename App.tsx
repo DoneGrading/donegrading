@@ -625,7 +625,7 @@ const App: React.FC = () => {
   const PLAN_US_STATE_KEY = 'dg_plan_us_state';
   const FILE_VAULT_KEY = 'dg_file_vault_links';
 
-  const [lessonTopic, _setLessonTopic] = useState('');
+  const [lessonTopic, setLessonTopic] = useState('');
   const [lessonResult, setLessonResult] = useState<LessonScriptResult | null>(null);
   const [lessonLoading, setLessonLoading] = useState(false);
   const [planAiError, setPlanAiError] = useState<string | null>(null);
@@ -639,8 +639,15 @@ const App: React.FC = () => {
   const [planLessonTitle, _setPlanLessonTitle] = useState('');
   const [planUnit, _setPlanUnit] = useState('Unit 4: Ecosystems');
   const [planVersion, _setPlanVersion] = useState<PlanVersion>('Standard');
-  const [planTab, setPlanTab] = useState<'context' | 'blocks' | 'resources' | 'assessment'>('context');
+  const [planTab, setPlanTab] = useState<'hub' | 'context' | 'blocks' | 'resources' | 'assessment'>('hub');
+  const [planContextOpen, setPlanContextOpen] = useState(false);
   const [planBlockTab, setPlanBlockTab] = useState<'A' | 'B' | 'C' | 'D'>('A');
+  const [planBlockLocks, setPlanBlockLocks] = useState<Record<'A' | 'B' | 'C' | 'D', boolean>>({
+    A: false,
+    B: false,
+    C: false,
+    D: false,
+  });
   const [planLastSaved, setPlanLastSaved] = useState<Date | null>(null);
   const [_isPlanSaving, _setIsPlanSaving] = useState(false);
 
@@ -4669,6 +4676,24 @@ const App: React.FC = () => {
         setLessonResult(finalRes);
         setDirectPoints(finalRes.outline);
         setCfuIdeas(finalRes.discussionQuestions.join('\n'));
+        // QuickStart: prefill common blocks if empty, then bring teacher to draft.
+        const outlineLines = (finalRes.outline || '')
+          .split('\n')
+          .map((l) => l.trim())
+          .filter(Boolean);
+        if (!planBlockLocks.A && !hookContent.trim()) {
+          const hook = outlineLines.find((l) => /warm-?up|hook/i.test(l)) || `Hook: Quick prompt about ${topic}.`;
+          setHookContent(hook);
+        }
+        if (!planBlockLocks.C && !guidedNotes.trim()) {
+          const guided = outlineLines.find((l) => /guided|practice|think-pair-share/i.test(l)) || `Guided practice: model + 2 examples, then pairs practice.`;
+          setGuidedNotes(guided);
+        }
+        if (!planBlockLocks.D && !independentNotes.trim()) {
+          const indep = outlineLines.find((l) => /independent|task|apply/i.test(l)) || `Independent practice: students apply the concept to a short task.`;
+          setIndependentNotes(indep);
+        }
+        setPlanTab('blocks');
         if (!res) {
           setPlanActionMessage('AI unavailable. Generated a template draft instead.');
         }
@@ -4779,7 +4804,7 @@ const App: React.FC = () => {
               </select>
             </div>
             <div className="flex gap-1 bg-slate-100/70 dark:bg-slate-900/70 p-0.5 rounded-lg">
-              {(['context', 'blocks', 'resources', 'assessment'] as const).map((tab) => (
+              {(['hub', 'context', 'blocks', 'resources', 'assessment'] as const).map((tab) => (
                 <button
                   key={tab}
                   type="button"
@@ -4790,13 +4815,15 @@ const App: React.FC = () => {
                       : 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
                   }`}
                 >
-                  {tab === 'context'
-                    ? '1 Standards'
-                    : tab === 'blocks'
-                      ? '2 Instruction'
-                      : tab === 'resources'
-                        ? '3 Resources'
-                        : '4 Assessment'}
+                  {tab === 'hub'
+                    ? 'Hub'
+                    : tab === 'context'
+                      ? 'Context'
+                      : tab === 'blocks'
+                        ? 'Draft'
+                        : tab === 'resources'
+                          ? 'Resources'
+                          : 'Assess'}
                 </button>
               ))}
             </div>
@@ -4815,6 +4842,254 @@ const App: React.FC = () => {
 
           {/* Single panel: only active tab content, no page scroll */}
           <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+            {planContextOpen && (
+              <div className="plan-no-print absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-xl p-4 flex flex-col">
+                <div className="w-full max-w-md mx-auto bg-white dark:bg-slate-900 rounded-3xl p-5 shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden">
+                  <div className="flex items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-700">
+                    <div>
+                      <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Context drawer</div>
+                      <div className="mt-1 text-sm font-black text-slate-900 dark:text-white">Fast edits</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPlanContextOpen(false)}
+                      className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800"
+                      title="Close"
+                    >
+                      <X className="w-4 h-4 text-slate-600 dark:text-slate-200" />
+                    </button>
+                  </div>
+
+                  <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar space-y-3 pt-4">
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="col-span-3">
+                        <label className={label}>State (standards)</label>
+                        <select
+                          value={planStateRegion}
+                          onChange={(e) => setPlanStateRegion(e.target.value)}
+                          className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none"
+                        >
+                          <option value="National">National / General</option>
+                          <option value="AL">Alabama</option>
+                          <option value="AK">Alaska</option>
+                          <option value="AZ">Arizona</option>
+                          <option value="AR">Arkansas</option>
+                          <option value="CA">California</option>
+                          <option value="CO">Colorado</option>
+                          <option value="CT">Connecticut</option>
+                          <option value="DE">Delaware</option>
+                          <option value="FL">Florida</option>
+                          <option value="GA">Georgia</option>
+                          <option value="HI">Hawaii</option>
+                          <option value="ID">Idaho</option>
+                          <option value="IL">Illinois</option>
+                          <option value="IN">Indiana</option>
+                          <option value="IA">Iowa</option>
+                          <option value="KS">Kansas</option>
+                          <option value="KY">Kentucky</option>
+                          <option value="LA">Louisiana</option>
+                          <option value="ME">Maine</option>
+                          <option value="MD">Maryland</option>
+                          <option value="MA">Massachusetts</option>
+                          <option value="MI">Michigan</option>
+                          <option value="MN">Minnesota</option>
+                          <option value="MS">Mississippi</option>
+                          <option value="MO">Missouri</option>
+                          <option value="MT">Montana</option>
+                          <option value="NE">Nebraska</option>
+                          <option value="NV">Nevada</option>
+                          <option value="NH">New Hampshire</option>
+                          <option value="NJ">New Jersey</option>
+                          <option value="NM">New Mexico</option>
+                          <option value="NY">New York</option>
+                          <option value="NC">North Carolina</option>
+                          <option value="ND">North Dakota</option>
+                          <option value="OH">Ohio</option>
+                          <option value="OK">Oklahoma</option>
+                          <option value="OR">Oregon</option>
+                          <option value="PA">Pennsylvania</option>
+                          <option value="RI">Rhode Island</option>
+                          <option value="SC">South Carolina</option>
+                          <option value="SD">South Dakota</option>
+                          <option value="TN">Tennessee</option>
+                          <option value="TX">Texas</option>
+                          <option value="UT">Utah</option>
+                          <option value="VT">Vermont</option>
+                          <option value="VA">Virginia</option>
+                          <option value="WA">Washington</option>
+                          <option value="WV">West Virginia</option>
+                          <option value="WI">Wisconsin</option>
+                          <option value="WY">Wyoming</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className={label}>Grade</label>
+                        <input
+                          value={planGrade}
+                          onChange={(e) => setPlanGrade(e.target.value)}
+                          className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none"
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <label className={label}>Subject</label>
+                        <input
+                          value={planSubject}
+                          onChange={(e) => setPlanSubject(e.target.value)}
+                          className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none"
+                        />
+                      </div>
+                      <div className="col-span-3">
+                        <label className={label}>Duration (mins)</label>
+                        <input
+                          type="number"
+                          min={10}
+                          max={120}
+                          value={planDuration}
+                          onChange={(e) => setPlanDuration(parseInt(e.target.value || '0', 10))}
+                          className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className={label}>Class profile (remembered)</label>
+                      <textarea
+                        value={classProfile}
+                        onChange={(e) => setClassProfile(e.target.value)}
+                        placeholder='e.g. "3 students with ADHD, 2 ELL Level 1"'
+                        className="mt-1 w-full min-h-[84px] px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none resize-none custom-scrollbar"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-100 dark:border-slate-700 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPlanContextOpen(false);
+                        setPlanTab('context');
+                      }}
+                      className="py-3 rounded-2xl bg-white/70 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-black uppercase tracking-widest text-[11px]"
+                    >
+                      Standards
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPlanContextOpen(false)}
+                      className="py-3 rounded-2xl bg-indigo-600 text-white font-black uppercase tracking-widest text-[11px] shadow-sm hover:bg-indigo-700 transition-colors"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            {planTab === 'hub' && (
+              <div className="flex-1 min-h-0 overflow-hidden p-2 flex flex-col gap-3">
+                <div className="p-4 rounded-2xl bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 shadow-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Planning context</div>
+                      <div className="mt-1 text-sm font-black text-slate-900 dark:text-white truncate">
+                        Grade {planGrade} · {planSubject} · {planDuration} min · {planStateRegion}
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <span className="px-2.5 py-1 rounded-full bg-slate-900/5 dark:bg-white/10 border border-slate-200/60 dark:border-slate-700/60 text-[10px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-200">
+                          Standards · {pinnedStandards.length}
+                        </span>
+                        <span className="px-2.5 py-1 rounded-full bg-slate-900/5 dark:bg-white/10 border border-slate-200/60 dark:border-slate-700/60 text-[10px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-200">
+                          Class profile · {classProfile.trim() ? 'On' : 'Off'}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPlanContextOpen(true)}
+                      className="px-3 py-2 rounded-xl bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest shadow-sm hover:bg-indigo-700 transition-colors shrink-0"
+                    >
+                      Edit
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-emerald-500 text-white shadow-sm">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-emerald-100">90‑second quickstart</div>
+                  <div className="mt-1 text-base font-black">Get a usable draft fast</div>
+                  <div className="mt-3 grid grid-cols-1 gap-2">
+                    <input
+                      value={lessonTopic}
+                      onChange={(e) => setLessonTopic(e.target.value)}
+                      placeholder="Topic or lesson title… (voice-friendly)"
+                      className="w-full px-4 py-3 rounded-xl bg-white/95 text-slate-900 placeholder:text-slate-400 outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleGeneratePlan()}
+                      disabled={lessonLoading}
+                      className="w-full py-3 rounded-xl bg-slate-900/15 hover:bg-slate-900/20 border border-white/20 text-white font-black uppercase tracking-widest text-[12px] flex items-center justify-center gap-2 disabled:opacity-60"
+                    >
+                      {lessonLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                      {lessonLoading ? 'Generating…' : 'Generate draft'}
+                    </button>
+                  </div>
+                  <div className="mt-3 text-[11px] text-emerald-50/90">
+                    Draft lands in <span className="font-black">Draft</span> tab as Hook → Direct → Guided → Independent + CFUs.
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 shadow-sm">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Exports</div>
+                  <div className="mt-2 grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handlePlanActionSelect('save')}
+                      className="py-3 rounded-2xl bg-indigo-600 text-white font-black uppercase tracking-widest text-[11px] shadow-sm hover:bg-indigo-700 transition-colors"
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handlePlanActionSelect('share')}
+                      className="py-3 rounded-2xl bg-white/70 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-slate-700 dark:text-slate-200 font-black uppercase tracking-widest text-[11px] shadow-sm hover:opacity-90 transition-opacity"
+                    >
+                      Share
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handlePlanActionSelect('print')}
+                      className="py-3 rounded-2xl bg-white/70 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-slate-700 dark:text-slate-200 font-black uppercase tracking-widest text-[11px] shadow-sm hover:opacity-90 transition-opacity"
+                    >
+                      Print
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3 mt-auto">
+                  <button
+                    type="button"
+                    onClick={() => setPlanTab('blocks')}
+                    className="py-4 rounded-2xl bg-indigo-600 text-white font-black uppercase tracking-widest text-[12px] shadow-sm hover:bg-indigo-700 transition-colors"
+                  >
+                    Open draft
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPlanTab('assessment')}
+                    className="py-4 rounded-2xl bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 text-slate-900 dark:text-white font-black uppercase tracking-widest text-[12px] shadow-sm hover:opacity-90 transition-opacity"
+                  >
+                    Checks & exit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPlanTab('resources')}
+                    className="py-4 rounded-2xl bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 text-slate-900 dark:text-white font-black uppercase tracking-widest text-[12px] shadow-sm hover:opacity-90 transition-opacity"
+                  >
+                    Resources
+                  </button>
+                </div>
+              </div>
+            )}
+
             {planTab === 'context' && (
             <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2 space-y-2">
             <aside className="space-y-2">
@@ -5050,6 +5325,95 @@ const App: React.FC = () => {
                 <p className={sectionTitle}>
                   Block {planBlockTab}
                 </p>
+
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPlanBlockLocks((prev) => ({ ...prev, [planBlockTab]: !prev[planBlockTab] }))
+                      }
+                      className={`px-3 py-2 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-colors ${
+                        planBlockLocks[planBlockTab]
+                          ? 'bg-rose-500 text-white border-rose-500'
+                          : 'bg-white/60 dark:bg-slate-900/40 text-slate-600 dark:text-slate-200 border-slate-200/70 dark:border-slate-700/60 hover:opacity-90'
+                      }`}
+                      title={planBlockLocks[planBlockTab] ? 'Unlock this block' : 'Lock this block'}
+                    >
+                      {planBlockLocks[planBlockTab] ? 'Locked' : 'Lock'}
+                    </button>
+                    <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                      Smart edits
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {(['shorter', 'longer', 'scaffold', 'rigor'] as const).map((k) => (
+                      <button
+                        key={k}
+                        type="button"
+                        disabled={planBlockLocks[planBlockTab]}
+                        onClick={() => {
+                          if (planBlockLocks[planBlockTab]) return;
+                          const apply = (text: string) => {
+                            const t = (text || '').trim();
+                            if (!t) return t;
+                            if (k === 'shorter') return t.split('\n').slice(0, 2).join('\n');
+                            if (k === 'longer')
+                              return `${t}\n\nExtension: Add one more example and a quick check question.`;
+                            if (k === 'scaffold')
+                              return `${t}\n\nScaffold: sentence frames + worked example + check for understanding.`;
+                            return `${t}\n\nRigor: add “why” and “how do you know?” prompts + an extension task.`;
+                          };
+                          if (planBlockTab === 'A') setHookContent((prev) => apply(prev));
+                          if (planBlockTab === 'B') setDirectPoints((prev) => apply(prev));
+                          if (planBlockTab === 'C') setGuidedNotes((prev) => apply(prev));
+                          if (planBlockTab === 'D') setIndependentNotes((prev) => apply(prev));
+                        }}
+                        className="px-2.5 py-2 rounded-xl bg-white/60 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-[10px] font-black uppercase tracking-widest text-slate-700 dark:text-slate-200 disabled:opacity-50"
+                        title={k}
+                      >
+                        {k}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const applyAll = (t: string) =>
+                        `${(t || '').trim()}\n\nRefine: add a misconception check + 1 concrete example + 1 quick CFU.`;
+                      if (!planBlockLocks.B) setDirectPoints((p) => applyAll(p));
+                      if (!planBlockLocks.C) setGuidedNotes((p) => applyAll(p));
+                      if (!planBlockLocks.D) setIndependentNotes((p) => applyAll(p));
+                      setPlanActionMessage('Refine applied to unlocked blocks.');
+                    }}
+                    className="py-2.5 rounded-xl bg-emerald-500 text-white font-black uppercase tracking-widest text-[10px]"
+                  >
+                    Refine quality
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const applyAll = (t: string) => {
+                        const base = (t || '').trim();
+                        if (!base) return base;
+                        return base
+                          .split('\n')
+                          .slice(0, 3)
+                          .join('\n');
+                      };
+                      if (!planBlockLocks.B) setDirectPoints((p) => applyAll(p));
+                      if (!planBlockLocks.C) setGuidedNotes((p) => applyAll(p));
+                      if (!planBlockLocks.D) setIndependentNotes((p) => applyAll(p));
+                      setPlanActionMessage('Tightened timing (kept top 3 lines).');
+                    }}
+                    className="py-2.5 rounded-xl bg-white/70 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-slate-700 dark:text-slate-200 font-black uppercase tracking-widest text-[10px]"
+                  >
+                    Tighten timing
+                  </button>
+                </div>
 
                 {planBlockTab === 'A' && (
                 <div className="border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
@@ -5408,6 +5772,60 @@ const App: React.FC = () => {
                           <p className="mt-0.5 text-[9px] text-slate-600 dark:text-slate-300">
                             {card.blurb}
                           </p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const line = `- ${card.title} (${card.source}) ${card.url}`;
+                                setHookContent((prev) => (prev ? `${prev}\n${line}` : line));
+                                setPlanTab('blocks');
+                                setPlanBlockTab('A');
+                                setPlanActionMessage('Attached to Hook (A).');
+                              }}
+                              className="px-2 py-1 rounded-full bg-white/70 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-[9px] font-black uppercase tracking-widest"
+                            >
+                              Attach → A
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const line = `- ${card.title} (${card.source}) ${card.url}`;
+                                setDirectPoints((prev) => (prev ? `${prev}\n${line}` : line));
+                                setPlanTab('blocks');
+                                setPlanBlockTab('B');
+                                setPlanActionMessage('Attached to Direct instruction (B).');
+                              }}
+                              className="px-2 py-1 rounded-full bg-white/70 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-[9px] font-black uppercase tracking-widest"
+                            >
+                              Attach → B
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const line = `- ${card.title} (${card.source}) ${card.url}`;
+                                setGuidedNotes((prev) => (prev ? `${prev}\n${line}` : line));
+                                setPlanTab('blocks');
+                                setPlanBlockTab('C');
+                                setPlanActionMessage('Attached to Guided practice (C).');
+                              }}
+                              className="px-2 py-1 rounded-full bg-white/70 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-[9px] font-black uppercase tracking-widest"
+                            >
+                              Attach → C
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const line = `- ${card.title} (${card.source}) ${card.url}`;
+                                setIndependentNotes((prev) => (prev ? `${prev}\n${line}` : line));
+                                setPlanTab('blocks');
+                                setPlanBlockTab('D');
+                                setPlanActionMessage('Attached to Independent practice (D).');
+                              }}
+                              className="px-2 py-1 rounded-full bg-white/70 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-[9px] font-black uppercase tracking-widest"
+                            >
+                              Attach → D
+                            </button>
+                          </div>
                         </div>
                         <button
                           type="button"
