@@ -656,7 +656,15 @@ const App: React.FC = () => {
   const PLAN_US_STATE_KEY = 'dg_plan_us_state';
   const FILE_VAULT_KEY = 'dg_file_vault_links';
 
-  const [lessonTopic, _setLessonTopic] = useState('');
+  const persistedPlan = (() => {
+    try {
+      return safeParseJson<Record<string, unknown> | null>(localStorage.getItem(PLAN_STATE_KEY), null);
+    } catch {
+      return null;
+    }
+  })();
+
+  const [lessonTopic, _setLessonTopic] = useState<string>(() => (persistedPlan?.lessonTopic as string) || '');
   const [lessonResult, setLessonResult] = useState<LessonScriptResult | null>(null);
   const [lessonLoading, setLessonLoading] = useState(false);
   const [planAiError, setPlanAiError] = useState<string | null>(null);
@@ -668,9 +676,12 @@ const App: React.FC = () => {
   const [diffLoading, setDiffLoading] = useState(false);
   const [fileVaultLinks, setFileVaultLinks] = useState<{ label: string; url: string }[]>(() => safeParseJson(localStorage.getItem(FILE_VAULT_KEY), [] as { label: string; url: string }[]));
 
-  const [planLessonTitle, setPlanLessonTitle] = useState('');
-  const [planUnit, setPlanUnit] = useState('Unit 4: Ecosystems');
-  const [planVersion, _setPlanVersion] = useState<PlanVersion>('Standard');
+  const [planLessonTitle, setPlanLessonTitle] = useState(() => (persistedPlan?.lessonTitle as string) || '');
+  const [planUnit, setPlanUnit] = useState(() => (persistedPlan?.unit as string) || 'Unit 4: Ecosystems');
+  const [planVersion, _setPlanVersion] = useState<PlanVersion>(() => {
+    const v = persistedPlan?.version as PlanVersion | undefined;
+    return v === 'Standard' || v === 'Sub Plan' || v === 'Period 2 (Advanced)' ? v : 'Standard';
+  });
   const [planTab, setPlanTab] = useState<'doNow' | 'iDo' | 'weDo' | 'youDo' | 'exit'>('doNow');
   const [planContextOpen, setPlanContextOpen] = useState(false);
   const [planBlockTab, setPlanBlockTab] = useState<'A' | 'B' | 'C' | 'D'>('A');
@@ -684,39 +695,50 @@ const App: React.FC = () => {
   const [_isPlanSaving, _setIsPlanSaving] = useState(false);
 
   const [planStateRegion, setPlanStateRegion] = useState<string>(() => {
+    const persisted = persistedPlan?.state;
+    if (typeof persisted === 'string' && persisted.trim()) return persisted;
     try {
       return localStorage.getItem(PLAN_US_STATE_KEY) || 'National';
     } catch {
       return 'National';
     }
   });
-  const [planGrade, setPlanGrade] = useState('6');
-  const [planSubject, setPlanSubject] = useState('Science');
-  const [planDuration, setPlanDuration] = useState(55);
-  const [standardsQuery, setStandardsQuery] = useState('');
+  const [planGrade, setPlanGrade] = useState<string>(() => (persistedPlan?.grade as string) || '6');
+  const [planSubject, setPlanSubject] = useState<string>(() => (persistedPlan?.subject as string) || 'Science');
+  const [planDuration, setPlanDuration] = useState<number>(() => {
+    const v = persistedPlan?.duration;
+    return typeof v === 'number' && Number.isFinite(v) ? v : 55;
+  });
+  const [standardsQuery, setStandardsQuery] = useState<string>(() => (persistedPlan?.standardsQuery as string) || '');
   const [standardsSuggestions, setStandardsSuggestions] = useState<StandardItem[]>([]);
-  const [pinnedStandards, setPinnedStandards] = useState<StandardItem[]>([]);
-  const [classProfile, setClassProfile] = useState('');
+  const [pinnedStandards, setPinnedStandards] = useState<StandardItem[]>(() => (persistedPlan?.pinnedStandards as StandardItem[]) || []);
+  const [classProfile, setClassProfile] = useState<string>(() => (persistedPlan?.classProfile as string) || '');
   const [safetyStatus, setSafetyStatus] = useState<'idle' | 'scanning' | 'done' | 'error'>('idle');
   const [safetyFindings, setSafetyFindings] = useState<string | null>(null);
 
-  const [hookType, setHookType] = useState<'video' | 'question' | 'mystery'>('question');
-  const [hookContent, setHookContent] = useState('');
-  const [directPoints, setDirectPoints] = useState('');
-  const [cfuIdeas, setCfuIdeas] = useState('');
-  const [guidedTemplate, setGuidedTemplate] = useState<'Socratic Seminar' | 'Jigsaw' | 'Lab' | 'Think-Pair-Share'>('Think-Pair-Share');
-  const [guidedNotes, setGuidedNotes] = useState('');
-  const [independentNotes, setIndependentNotes] = useState('');
+  const [hookType, setHookType] = useState<'video' | 'question' | 'mystery'>(() => {
+    const v = persistedPlan?.hookType;
+    return v === 'video' || v === 'question' || v === 'mystery' ? v : 'question';
+  });
+  const [hookContent, setHookContent] = useState<string>(() => (persistedPlan?.hookContent as string) || '');
+  const [directPoints, setDirectPoints] = useState<string>(() => (persistedPlan?.directPoints as string) || '');
+  const [cfuIdeas, setCfuIdeas] = useState<string>(() => (persistedPlan?.cfuIdeas as string) || '');
+  const [guidedTemplate, setGuidedTemplate] = useState<'Socratic Seminar' | 'Jigsaw' | 'Lab' | 'Think-Pair-Share'>(() => {
+    const v = persistedPlan?.guidedTemplate;
+    return v === 'Socratic Seminar' || v === 'Jigsaw' || v === 'Lab' || v === 'Think-Pair-Share' ? v : 'Think-Pair-Share';
+  });
+  const [guidedNotes, setGuidedNotes] = useState<string>(() => (persistedPlan?.guidedNotes as string) || '');
+  const [independentNotes, setIndependentNotes] = useState<string>(() => (persistedPlan?.independentNotes as string) || '');
   const [attachmentName, setAttachmentName] = useState<string | null>(null);
 
-  const [resourceQuery, setResourceQuery] = useState('');
-  const [resourceCards, setResourceCards] = useState<ResourceCard[]>([]);
+  const [resourceQuery, setResourceQuery] = useState<string>(() => (persistedPlan?.resourceQuery as string) || '');
+  const [resourceCards, setResourceCards] = useState<ResourceCard[]>(() => (persistedPlan?.resourceCards as ResourceCard[]) || []);
   const [levelerValue, setLevelerValue] = useState(8);
 
-  const [exitTicketPrompt, setExitTicketPrompt] = useState('');
-  const [exitTicketQuestions, setExitTicketQuestions] = useState<string[]>([]);
-  const [successCriteria, setSuccessCriteria] = useState<string[]>([]);
-  const [reflectionNote, setReflectionNote] = useState('');
+  const [exitTicketPrompt, setExitTicketPrompt] = useState<string>(() => (persistedPlan?.exitTicketPrompt as string) || '');
+  const [exitTicketQuestions, setExitTicketQuestions] = useState<string[]>(() => (persistedPlan?.exitTicketQuestions as string[]) || []);
+  const [successCriteria, setSuccessCriteria] = useState<string[]>(() => (persistedPlan?.successCriteria as string[]) || []);
+  const [reflectionNote, setReflectionNote] = useState<string>(() => (persistedPlan?.reflectionNote as string) || '');
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -5335,42 +5357,202 @@ const App: React.FC = () => {
                       </div>
                       <div>
                         <label className={label}>Grade</label>
-                        <input
-                          value={planGrade}
-                          onChange={(e) => setPlanGrade(e.target.value)}
-                          className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none"
-                        />
+                        {(() => {
+                          const gradeOptions = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'] as const;
+                          const isCustom = !gradeOptions.includes(planGrade as any);
+                          const selectValue = isCustom ? '__custom__' : planGrade;
+                          return (
+                            <>
+                              <select
+                                value={selectValue}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (v === '__custom__') setPlanGrade('');
+                                  else setPlanGrade(v);
+                                }}
+                                className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none"
+                              >
+                                {gradeOptions.map((g) => (
+                                  <option key={g} value={g}>
+                                    {g}
+                                  </option>
+                                ))}
+                                <option value="__custom__">Custom</option>
+                              </select>
+                              {isCustom && (
+                                <input
+                                  value={planGrade}
+                                  onChange={(e) => setPlanGrade(e.target.value)}
+                                  placeholder="Custom grade (e.g. 3.5)"
+                                  className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none"
+                                />
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
+
                       <div className="col-span-2">
                         <label className={label}>Subject</label>
-                        <input
-                          value={planSubject}
-                          onChange={(e) => setPlanSubject(e.target.value)}
-                          className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none"
-                        />
+                        {(() => {
+                          const subjectOptions = [
+                            'ENL / ESL',
+                            'Language Arts',
+                            'Math',
+                            'Science',
+                            'Social Studies',
+                            'Homeroom / Advisory',
+                          ] as const;
+                          const isCustom = !subjectOptions.includes(planSubject as any);
+                          const selectValue = isCustom ? '__custom__' : planSubject;
+                          return (
+                            <>
+                              <select
+                                value={selectValue}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (v === '__custom__') setPlanSubject('');
+                                  else setPlanSubject(v);
+                                }}
+                                className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none"
+                              >
+                                {subjectOptions.map((s) => (
+                                  <option key={s} value={s}>
+                                    {s}
+                                  </option>
+                                ))}
+                                <option value="__custom__">Custom</option>
+                              </select>
+                              {isCustom && (
+                                <input
+                                  value={planSubject}
+                                  onChange={(e) => setPlanSubject(e.target.value)}
+                                  placeholder="Custom subject"
+                                  className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none"
+                                />
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
+
                       <div className="col-span-3">
                         <label className={label}>Duration (mins)</label>
-                        <input
-                          type="number"
-                          min={10}
-                          max={120}
-                          value={planDuration}
-                          onChange={(e) => setPlanDuration(parseInt(e.target.value || '0', 10))}
-                          className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none"
-                        />
+                        <div className="mt-1 flex items-center gap-2">
+                          <input
+                            type="number"
+                            min={10}
+                            max={120}
+                            value={planDuration}
+                            onChange={(e) => setPlanDuration(parseInt(e.target.value || '0', 10))}
+                            className="w-[120px] px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none"
+                          />
+                          <div className="flex flex-wrap gap-1">
+                            {[30, 45, 55, 60].map((d) => (
+                              <button
+                                key={d}
+                                type="button"
+                                onClick={() => setPlanDuration(d)}
+                                className={`px-2 py-1 rounded-full text-[10px] font-semibold border ${
+                                  planDuration === d
+                                    ? 'bg-indigo-600 text-white border-indigo-600'
+                                    : 'bg-white/90 dark:bg-slate-900/80 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
+                                }`}
+                              >
+                                {d}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
                       </div>
                     </div>
 
-                    <div>
-                      <label className={label}>Class profile (remembered)</label>
-                      <textarea
-                        value={classProfile}
-                        onChange={(e) => setClassProfile(e.target.value)}
-                        placeholder='e.g. "3 students with ADHD, 2 ELL Level 1"'
-                        className="mt-1 w-full min-h-[84px] px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none resize-none custom-scrollbar"
-                      />
-                    </div>
+                      <div>
+                        <label className={label}>Class profile (remembered)</label>
+                        {(() => {
+                          const COMMON_PREFIX = 'Common:';
+                          const commonTags = [
+                            { id: 'ELLs', label: 'ELLs / ESL' },
+                            { id: 'ADHD', label: 'ADHD' },
+                            { id: 'IEP', label: 'IEP' },
+                            { id: '504', label: '504' },
+                            { id: 'Autism', label: 'Autism' },
+                            { id: 'Dyslexia', label: 'Dyslexia' },
+                            { id: 'Gifted', label: 'Gifted & advanced' },
+                            { id: 'Anxiety', label: 'Anxiety' },
+                            { id: 'Behavior', label: 'Behavior needs' },
+                          ] as const;
+
+                          const parse = (profile: string) => {
+                            const raw = profile ?? '';
+                            const trimmed = raw.trim();
+                            if (!trimmed) return { selected: new Set<string>(), customText: '' };
+                            const lines = raw.split('\n');
+                            const first = (lines[0] || '').trim();
+                            if (!first.startsWith(COMMON_PREFIX)) {
+                              return { selected: new Set<string>(), customText: raw };
+                            }
+                            const after = first.slice(COMMON_PREFIX.length).trim();
+                            const selected = new Set<string>(
+                              after
+                                ? after
+                                    .split(',')
+                                    .map((s) => s.trim())
+                                    .filter(Boolean)
+                                : [],
+                            );
+                            const customText = lines.slice(1).join('\n').trimStart();
+                            return { selected, customText };
+                          };
+
+                          const { selected, customText } = parse(classProfile);
+
+                          const rebuild = (nextSelected: Set<string>, nextCustomText: string) => {
+                            const tags = [...nextSelected].filter(Boolean);
+                            const commonLine = tags.length ? `${COMMON_PREFIX} ${tags.join(', ')}` : '';
+                            const ct = nextCustomText ?? '';
+                            if (!commonLine && !ct.trim()) return '';
+                            if (!commonLine) return ct;
+                            if (!ct.trim()) return commonLine;
+                            return `${commonLine}\n\n${ct}`;
+                          };
+
+                          return (
+                            <>
+                              <div className="mt-1 flex flex-wrap gap-1.5">
+                                {commonTags.map((t) => {
+                                  const checked = selected.has(t.id);
+                                  return (
+                                    <button
+                                      key={t.id}
+                                      type="button"
+                                      onClick={() => {
+                                        const next = new Set(selected);
+                                        if (next.has(t.id)) next.delete(t.id);
+                                        else next.add(t.id);
+                                        setClassProfile(rebuild(next, customText));
+                                      }}
+                                      className={`px-2 py-1 rounded-full text-[10px] font-semibold border ${
+                                        checked
+                                          ? 'bg-indigo-600 text-white border-indigo-600'
+                                          : 'bg-white/90 dark:bg-slate-900/80 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
+                                      }`}
+                                    >
+                                      {t.label}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              <textarea
+                                value={customText}
+                                onChange={(e) => setClassProfile(rebuild(selected, e.target.value))}
+                                placeholder='Add any custom class notes… (e.g. "3 students with ADHD, 2 ELL Level 1")'
+                                className="mt-2 w-full min-h-[84px] px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none resize-none custom-scrollbar"
+                              />
+                            </>
+                          );
+                        })()}
+                      </div>
                   </div>
 
                   <div className="pt-3 border-t border-slate-100 dark:border-slate-700 grid grid-cols-2 gap-2">
@@ -5658,7 +5840,7 @@ const App: React.FC = () => {
               )}
             </div>
 
-            {false && (planTab as any) === 'context' && (
+            {(planTab as any) === 'context' && (
             <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2 space-y-2">
             <aside className="space-y-2">
               <section className="plan-print-plain bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-3 space-y-1">
@@ -5876,7 +6058,7 @@ const App: React.FC = () => {
             </div>
             )}
 
-            {false && (planTab as any) === 'blocks' && (
+            {(planTab as any) === 'blocks' && (
             <div className="flex-1 min-h-0 overflow-hidden flex flex-col p-2">
               <section className="plan-print-plain mb-2 bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-2">
                 <p className="text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
@@ -6272,7 +6454,7 @@ const App: React.FC = () => {
             </div>
             )}
 
-            {false && (planTab as any) === 'resources' && (
+            {(planTab as any) === 'resources' && (
             <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2">
             <aside className="w-full space-y-3">
               <section className="plan-print-plain bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-3">
@@ -6546,7 +6728,7 @@ const App: React.FC = () => {
             </div>
             )}
 
-            {false && (planTab as any) === 'assessment' && (
+            {(planTab as any) === 'assessment' && (
             <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2">
           <section className="plan-print-plain bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-3 mb-2">
             <p className="text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
