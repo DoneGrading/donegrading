@@ -72,7 +72,7 @@ type ResourceCard = {
   blurb: string;
 };
 
-type ScheduleViewMode = 'daily' | 'weekly' | 'monthly';
+type ScheduleViewMode = 'agenda' | 'daily' | 'weekly' | 'monthly';
 
 type ScheduleItem = {
   id: string;
@@ -362,7 +362,25 @@ const App: React.FC = () => {
   const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>(() =>
     safeParseJson<ScheduleItem[]>(localStorage.getItem(SCHEDULE_KEY), [])
   );
-  const [scheduleView, setScheduleView] = useState<ScheduleViewMode>('daily');
+  const [scheduleView, setScheduleView] = useState<ScheduleViewMode>(() => {
+    try {
+      const raw = localStorage.getItem('dg_schedule_view_v1');
+      return raw === 'agenda' || raw === 'daily' || raw === 'weekly' || raw === 'monthly' ? raw : 'agenda';
+    } catch {
+      return 'agenda';
+    }
+  });
+  const [scheduleSearch, setScheduleSearch] = useState('');
+  const [scheduleFilterOpen, setScheduleFilterOpen] = useState(false);
+  const [scheduleFilterKinds, setScheduleFilterKinds] = useState<Set<NonNullable<ScheduleItem['kind']>>>(new Set());
+  const [scheduleFilterCourseId, setScheduleFilterCourseId] = useState<string>('');
+  const [scheduleFilterOverdueOnly, setScheduleFilterOverdueOnly] = useState(false);
+  const [scheduleFilterRecurringOnly, setScheduleFilterRecurringOnly] = useState(false);
+  const [scheduleUndo, setScheduleUndo] = useState<{
+    item: ScheduleItem;
+    atIndex: number;
+    expiresAt: number;
+  } | null>(null);
   const [scheduleTitle, setScheduleTitle] = useState('');
   const [scheduleKind, setScheduleKind] = useState<'event' | 'reminder' | 'teacherBlock' | 'appointment' | 'meeting'>('reminder');
   const [scheduleDate, setScheduleDate] = useState('');
@@ -374,6 +392,19 @@ const App: React.FC = () => {
   const [scheduleFormOpen, setScheduleFormOpen] = useState(false);
   const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
   const [activeScheduleHour, setActiveScheduleHour] = useState<number | null>(null);
+
+  const [optionsTab, setOptionsTab] = useState<'cockpit' | 'account' | 'data' | 'legal'>(() => {
+    try {
+      const raw = localStorage.getItem('dg_options_tab_v1');
+      return raw === 'cockpit' || raw === 'account' || raw === 'data' || raw === 'legal' ? raw : 'cockpit';
+    } catch {
+      return 'cockpit';
+    }
+  });
+  const [optionsConfirm, setOptionsConfirm] = useState<{
+    open: boolean;
+    kind: 'clear_classroom' | 'clear_grades' | 'clear_schedule' | 'reset_all' | null;
+  }>({ open: false, kind: null });
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [isGeneratingRubric, setIsGeneratingRubric] = useState(false);
@@ -843,6 +874,20 @@ const App: React.FC = () => {
       // ignore
     }
   }, [scheduleItems]);
+  useEffect(() => {
+    try {
+      localStorage.setItem('dg_options_tab_v1', optionsTab);
+    } catch {
+      // ignore
+    }
+  }, [optionsTab]);
+  useEffect(() => {
+    try {
+      localStorage.setItem('dg_schedule_view_v1', scheduleView);
+    } catch {
+      // ignore
+    }
+  }, [scheduleView]);
   useEffect(() => { try { localStorage.setItem(FILE_VAULT_KEY, JSON.stringify(fileVaultLinks)); } catch (_) { /* ignore */ } }, [fileVaultLinks, FILE_VAULT_KEY]);
   useEffect(() => {
     // Lightweight autosave for the Plan tab so educators don't lose work.
@@ -2336,7 +2381,6 @@ const App: React.FC = () => {
     // - Other: remaining courses (toggleable)
     void dashboardResults;
     void courseSearch;
-    const canScan = !!selectedCourse && !!selectedAssignment;
     const hasSyncError = syncStatus === 'error';
 
     const getResumePhase = (): AppPhase => {
@@ -2358,8 +2402,8 @@ const App: React.FC = () => {
 
     return (
       <PageWrapper
-        headerTitle={educatorName || 'Grade'}
-        headerSubtitle={todayLabel || undefined}
+        headerTitle={educatorName || 'Dashboard'}
+        headerSubtitle={homeSummary?.todayShortLabel || todayLabel || undefined}
         isOnline={isOnline}
         isDarkMode={isDarkMode}
         setIsDarkMode={setIsDarkMode}
@@ -2386,103 +2430,121 @@ const App: React.FC = () => {
         }}
       >
         <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-hidden pb-24 pt-1">
-          <div className="p-4 rounded-2xl bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 shadow-sm">
-            <div className="flex items-center justify-between gap-3">
+          {/* TODAY CARD */}
+          <div className="p-4 rounded-2xl bg-slate-900 text-white border border-white/10 shadow-sm overflow-hidden">
+            <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Current session</div>
-                <div className="mt-1 text-sm font-black text-slate-900 dark:text-white truncate">
-                  {selectedCourse ? selectedCourse.name : 'No course selected'}
-                  {selectedAssignment ? ` · ${selectedAssignment.title}` : ''}
+                <div className="text-[10px] font-black uppercase tracking-widest text-slate-300">Today</div>
+                <div className="mt-1 text-base font-black truncate">
+                  {homeSummary.lesson ? homeSummary.lesson.title : 'No lesson block scheduled'}
+                </div>
+                <div className="mt-1 text-[12px] text-slate-200">
+                  {homeSummary.lesson?.course ? `${homeSummary.lesson.course} · ` : ''}
+                  {homeSummary.lesson?.timeLabel || 'Plan when ready'}
                 </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <div className="px-2.5 py-1 rounded-full bg-slate-900/5 dark:bg-white/10 border border-slate-200/60 dark:border-slate-700/60 text-[10px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-200">
-                  Queue · {pendingGrades}
-                </div>
-                {hasSyncError && (
-                  <div className="px-2.5 py-1 rounded-full bg-rose-500/10 border border-rose-500/30 text-[10px] font-black uppercase tracking-widest text-rose-600 dark:text-rose-300">
-                    Error
-                  </div>
-                )}
-              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  bumpNavUsage('teach');
+                  setPhase(AppPhase.SCHEDULE);
+                }}
+                className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-[10px] font-black uppercase tracking-widest"
+              >
+                Open schedule
+              </button>
             </div>
-
-            <button
-              type="button"
-              onClick={() => setPhase(resumePhase)}
-              className="mt-3 w-full py-3 rounded-xl bg-indigo-600 text-white font-black uppercase tracking-widest text-[12px] shadow-sm hover:bg-indigo-700 transition-colors"
-            >
-              Resume · {resumeLabel}
-            </button>
+            {homeSummary.upcoming && (
+              <div className="mt-3 px-3 py-2 rounded-xl bg-white/10 border border-white/10">
+                <div className="text-[10px] font-black uppercase tracking-widest text-slate-300">Next up</div>
+                <div className="mt-1 text-sm font-black truncate">{homeSummary.upcoming.title}</div>
+                <div className="text-[11px] text-slate-200">{homeSummary.upcoming.whenLabel}</div>
+              </div>
+            )}
           </div>
 
+          {/* LANES */}
           <div className="grid grid-cols-1 gap-3">
             <button
               type="button"
-              onClick={() => setPhase(AppPhase.GRADE_COURSE_PICKER)}
-              className="p-4 rounded-2xl bg-white/70 dark:bg-slate-800/50 border border-slate-200/70 dark:border-slate-700/60 text-left shadow-sm hover:opacity-90 transition-opacity"
+              onClick={() => {
+                bumpNavUsage('plan');
+                setPhase(AppPhase.PLAN);
+              }}
+              className="p-4 rounded-2xl bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 text-left shadow-sm hover:opacity-90 transition-opacity"
             >
-              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Step 1</div>
-              <div className="mt-1 text-base font-black text-slate-900 dark:text-white">
-                {selectedCourse ? selectedCourse.name : 'Select course'}
-              </div>
+              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Plan</div>
+              <div className="mt-1 text-base font-black text-slate-900 dark:text-white">90‑second draft</div>
               <div className="text-sm text-slate-600 dark:text-slate-300 mt-0.5">
-                Choose the class you will post grades to
+                QuickStart → blocks → checks → export
               </div>
             </button>
 
             <button
               type="button"
-              onClick={() => setPhase(AppPhase.ASSIGNMENT_SELECT)}
-              disabled={!selectedCourse}
-              className="p-4 rounded-2xl bg-white/70 dark:bg-slate-800/50 border border-slate-200/70 dark:border-slate-700/60 text-left shadow-sm hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={() => {
+                bumpNavUsage('teach');
+                setPhase(AppPhase.SCHEDULE);
+              }}
+              className="p-4 rounded-2xl bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 text-left shadow-sm hover:opacity-90 transition-opacity"
             >
-              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Step 2</div>
-              <div className="mt-1 text-base font-black text-slate-900 dark:text-white">
-                {selectedAssignment ? selectedAssignment.title : 'Select assignment'}
-              </div>
+              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Teach</div>
+              <div className="mt-1 text-base font-black text-slate-900 dark:text-white">Run class</div>
               <div className="text-sm text-slate-600 dark:text-slate-300 mt-0.5">
-                Pick or create the assignment in Google Classroom
+                Timers, agenda, and teacher blocks
               </div>
             </button>
 
             <button
               type="button"
-              onClick={() => setPhase(AppPhase.GRADE_SCAN_SETUP)}
-              disabled={!canScan}
-              className="p-4 rounded-2xl bg-emerald-500 text-white text-left shadow-sm hover:bg-emerald-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={() => {
+                bumpNavUsage('grade');
+                setPhase(resumePhase);
+              }}
+              className="p-4 rounded-2xl bg-emerald-500 text-white text-left shadow-sm hover:bg-emerald-600 transition-colors"
             >
-              <div className="text-[10px] font-black uppercase tracking-widest text-emerald-100">Step 3</div>
-              <div className="mt-1 text-base font-black">Scan student work</div>
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[10px] font-black uppercase tracking-widest text-emerald-100">Grade</div>
+                <div className="flex items-center gap-2">
+                  <div className="px-2.5 py-1 rounded-full bg-black/15 border border-white/20 text-[10px] font-black uppercase tracking-widest text-emerald-50">
+                    Queue · {pendingGrades}
+                  </div>
+                  {hasSyncError && (
+                    <div className="px-2.5 py-1 rounded-full bg-rose-500/20 border border-rose-500/30 text-[10px] font-black uppercase tracking-widest text-rose-50">
+                      Error
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="mt-1 text-base font-black">Resume · {resumeLabel}</div>
               <div className="text-sm text-emerald-50/90 mt-0.5">
-                Batch by default for bulletproof attribution
+                Batch scan by default for bulletproof attribution
               </div>
             </button>
 
             <button
               type="button"
-              onClick={() => setPhase(AppPhase.AUDIT)}
-              disabled={pendingGrades <= 0}
-              className="p-4 rounded-2xl bg-indigo-600 text-white text-left shadow-sm hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={() => {
+                bumpNavUsage('communicate');
+                setPhase(AppPhase.RECORDS);
+              }}
+              className="p-4 rounded-2xl bg-indigo-600 text-white text-left shadow-sm hover:bg-indigo-700 transition-colors"
             >
-              <div className="text-[10px] font-black uppercase tracking-widest text-indigo-100">Step 4</div>
-              <div className="mt-1 text-base font-black">Review & sync</div>
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[10px] font-black uppercase tracking-widest text-indigo-100">Communicate</div>
+                <div className="px-2.5 py-1 rounded-full bg-black/15 border border-white/20 text-[10px] font-black uppercase tracking-widest text-indigo-50">
+                  Follow‑ups · {homeSummary.parentsToContact || 0}
+                </div>
+              </div>
+              <div className="mt-1 text-base font-black">Inbox & summaries</div>
               <div className="text-sm text-indigo-50/90 mt-0.5">
-                Sync selected ({pendingGrades}) to Classroom
+                Send updates and keep records
               </div>
             </button>
           </div>
 
+          {/* FOOTER CHIPS */}
           <div className="mt-auto grid grid-cols-2 gap-3">
-            <button
-              type="button"
-              onClick={() => setPhase(AppPhase.RECORDS)}
-              disabled={atRiskStudents.length === 0}
-              className="p-3 rounded-2xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 text-left hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">At-risk</div>
-              <div className="text-lg font-black text-slate-900 dark:text-white">{atRiskStudents.length}</div>
-            </button>
             <button
               type="button"
               onClick={() => setPhase(AppPhase.ROSTER_VIEW)}
@@ -2490,6 +2552,15 @@ const App: React.FC = () => {
             >
               <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Students</div>
               <div className="text-lg font-black text-slate-900 dark:text-white">{totalStudents}</div>
+            </button>
+            <button
+              type="button"
+              onClick={() => setPhase(AppPhase.RECORDS)}
+              disabled={atRiskStudents.length === 0}
+              className="p-3 rounded-2xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 text-left hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">At‑risk</div>
+              <div className="text-lg font-black text-slate-900 dark:text-white">{atRiskStudents.length}</div>
             </button>
           </div>
         </div>
@@ -2860,64 +2931,380 @@ const App: React.FC = () => {
     );
   };
 
-  const renderOptions = () => (
-    <PageWrapper
-      headerTitle={educatorName || 'Options'}
-      headerSubtitle={todayLabel || undefined}
-      isOnline={isOnline}
-      isDarkMode={isDarkMode}
-      setIsDarkMode={setIsDarkMode}
-      syncStatus={syncStatus}
-      onBack={() => setPhase(AppPhase.DASHBOARD)}
-    >
-      <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-y-auto pb-20 custom-scrollbar">
-        <button
-          type="button"
-          onClick={handleShareApp}
-          className="group relative w-full py-3 overflow-hidden rounded-xl text-[11px] font-bold flex items-center justify-center gap-2 active:scale-[0.98] transition-all shadow-lg border-0 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500"
-        >
-          <Share2 className="w-4 h-4 text-white drop-shadow-sm shrink-0" />
-          <span className="text-white drop-shadow-sm uppercase tracking-[0.12em]">Share DoneGrading</span>
-        </button>
-        <div className="space-y-3 pt-2 border-t border-slate-200 dark:border-slate-700">
-          <a
-            href="https://www.donegrading.com/Terms-of-Service"
-            target="_blank"
-            rel="noreferrer"
-            className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300 underline underline-offset-2"
-          >
-            Terms of Service
-          </a>
-          <a
-            href="https://www.donegrading.com/Privacy-Policy"
-            target="_blank"
-            rel="noreferrer"
-            className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300 underline underline-offset-2"
-          >
-            Privacy Policy
-          </a>
-          <a
-            href="https://www.donegrading.com/Contact"
-            target="_blank"
-            rel="noreferrer"
-            className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300 underline underline-offset-2"
-          >
-            Support
-          </a>
-          <button
-            type="button"
-            onClick={handleSignOut}
-            className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300 underline underline-offset-2 text-left"
-          >
-            Sign out
-          </button>
+  const renderOptions = () => {
+    const confirmCopy =
+      optionsConfirm.kind === 'clear_classroom'
+        ? {
+            title: 'Clear Classroom cache?',
+            body: 'This removes cached courses, assignments, and students from this device. You can re-sync later.',
+            cta: 'Clear cache',
+          }
+        : optionsConfirm.kind === 'clear_grades'
+          ? {
+              title: 'Clear grade queue + history?',
+              body: 'This deletes your local review queue and sync history from this device.',
+              cta: 'Clear grades',
+            }
+          : optionsConfirm.kind === 'clear_schedule'
+            ? {
+                title: 'Clear schedule items?',
+                body: 'This deletes all schedule items saved on this device.',
+                cta: 'Clear schedule',
+              }
+            : optionsConfirm.kind === 'reset_all'
+              ? {
+                  title: 'Reset all local data?',
+                  body: 'This clears caches, queues, schedule, and local preferences on this device. (Does not delete Google Classroom data.)',
+                  cta: 'Reset',
+                }
+              : null;
+
+    const runConfirm = () => {
+      const kind = optionsConfirm.kind;
+      setOptionsConfirm({ open: false, kind: null });
+      try {
+        if (kind === 'clear_classroom') {
+          setCourses([]);
+          setAssignments([]);
+          setStudents([]);
+          localStorage.removeItem('dg_cache_courses');
+          localStorage.removeItem('dg_cache_assignments');
+          localStorage.removeItem('dg_cache_students');
+        }
+        if (kind === 'clear_grades') {
+          setGradedWorks([]);
+          setHistory([]);
+          localStorage.removeItem('dg_pending_sync');
+          localStorage.removeItem('dg_history');
+        }
+        if (kind === 'clear_schedule') {
+          setScheduleItems([]);
+          localStorage.removeItem(SCHEDULE_KEY);
+        }
+        if (kind === 'reset_all') {
+          setCourses([]);
+          setAssignments([]);
+          setStudents([]);
+          setGradedWorks([]);
+          setHistory([]);
+          setScheduleItems([]);
+          setPinnedCourseIds([]);
+          setScanStudentMode('batch');
+          setBatchRosterSort('manual');
+          setIsDarkMode(false);
+          setOptionsTab('cockpit');
+
+          [
+            'dg_cache_courses',
+            'dg_cache_assignments',
+            'dg_cache_students',
+            'dg_pending_sync',
+            'dg_history',
+            SCHEDULE_KEY,
+            'dg_schedule_view_v1',
+            'dg_pinned_courses_v1',
+            'dg_scan_student_mode_v1',
+            'dg_batch_roster_sort_v1',
+            'dg_dark_mode',
+            'dg_options_tab_v1',
+          ].forEach((k) => {
+            try {
+              localStorage.removeItem(k);
+            } catch {
+              // ignore
+            }
+          });
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    return (
+      <PageWrapper
+        headerTitle={educatorName || 'Options'}
+        headerSubtitle={todayLabel || undefined}
+        isOnline={isOnline}
+        isDarkMode={isDarkMode}
+        setIsDarkMode={setIsDarkMode}
+        syncStatus={syncStatus}
+        onBack={() => setPhase(AppPhase.DASHBOARD)}
+      >
+        {/* confirm modal */}
+        {optionsConfirm.open && confirmCopy && (
+          <div className="fixed inset-0 z-[120]">
+            <button
+              type="button"
+              className="absolute inset-0 bg-slate-950/40"
+              onClick={() => setOptionsConfirm({ open: false, kind: null })}
+            />
+            <div className="absolute left-1/2 -translate-x-1/2 top-24 w-[min(92vw,420px)] rounded-2xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300">
+                  Confirm
+                </p>
+                <p className="mt-1 text-sm font-black text-slate-900 dark:text-white">{confirmCopy.title}</p>
+                <p className="mt-1 text-[11px] text-slate-600 dark:text-slate-300">{confirmCopy.body}</p>
+              </div>
+              <div className="p-4 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setOptionsConfirm({ open: false, kind: null })}
+                  className="flex-1 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={runConfirm}
+                  className="flex-1 py-2 rounded-xl bg-rose-600 text-white text-[11px] font-black uppercase tracking-widest"
+                >
+                  {confirmCopy.cta}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="flex-1 min-h-0 flex flex-col gap-2 overflow-hidden">
+          {/* Settings cockpit (no-scroll) */}
+          <div className="shrink-0 rounded-2xl bg-white/90 dark:bg-slate-900/85 border border-slate-200 dark:border-slate-700 p-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="inline-flex rounded-full bg-slate-100 dark:bg-slate-800 p-0.5 text-[10px]">
+                {(['cockpit', 'account', 'data', 'legal'] as const).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setOptionsTab(t)}
+                    className={`px-3 py-1 rounded-full font-semibold capitalize ${
+                      optionsTab === t ? 'bg-indigo-600 text-white' : 'text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    {t === 'cockpit' ? 'Quick' : t}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={handleShareApp}
+                className="px-3 py-2 rounded-xl bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 text-white text-[10px] font-black uppercase tracking-widest shadow-sm active:scale-[0.98] transition-all inline-flex items-center gap-2"
+              >
+                <Share2 className="w-4 h-4 shrink-0" />
+                Share
+              </button>
+            </div>
+
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setIsDarkMode((v) => !v)}
+                className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-950/40 px-3 py-2 text-left"
+              >
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                  Appearance
+                </p>
+                <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">
+                  {isDarkMode ? 'Dark mode on' : 'Dark mode off'}
+                </p>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400">Tap to toggle</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setOptionsTab('data');
+                }}
+                className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-950/40 px-3 py-2 text-left"
+              >
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                  Storage
+                </p>
+                <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">
+                  Clear caches & queues
+                </p>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400">Fix odd sync issues fast</p>
+              </button>
+            </div>
+          </div>
+
+          {/* Content (scroll) */}
+          <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pb-24 space-y-2">
+            {optionsTab === 'cockpit' && (
+              <>
+                <div className="rounded-2xl bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 p-3">
+                  <p className="text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
+                    Quick settings for the stuff teachers touch weekly: appearance, sign-in, and “fix it” tools.
+                  </p>
+                </div>
+
+                <div className="bg-white/90 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-2xl p-3">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                    Account
+                  </p>
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100 truncate">
+                        {educatorName || 'Teacher'}
+                      </p>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                        Sign out on this device
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleSignOut}
+                      className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-[10px] font-black uppercase tracking-widest"
+                    >
+                      Sign out
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-white/90 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-2xl p-3">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                    One-tap fixes
+                  </p>
+                  <div className="mt-2 grid grid-cols-1 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setOptionsConfirm({ open: true, kind: 'clear_classroom' })}
+                      className="w-full text-left px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/70"
+                    >
+                      <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">Clear Classroom cache</p>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400">Courses · Assignments · Students</p>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOptionsConfirm({ open: true, kind: 'clear_grades' })}
+                      className="w-full text-left px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/70"
+                    >
+                      <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">Clear grade queue + history</p>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400">Pending sync · Local receipts</p>
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {optionsTab === 'account' && (
+              <div className="bg-white/90 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-2xl p-3 space-y-2">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                  Account
+                </p>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100 truncate">
+                      {educatorName || 'Teacher'}
+                    </p>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                      Signing out clears your local auth session.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSignOut}
+                    className="px-3 py-2 rounded-xl bg-rose-600 text-white text-[10px] font-black uppercase tracking-widest"
+                  >
+                    Sign out
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {optionsTab === 'data' && (
+              <div className="space-y-2">
+                <div className="rounded-2xl bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 p-3">
+                  <p className="text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
+                    Use these when something looks “stuck” (sync, roster, schedule). Safe: you can re-sync later.
+                  </p>
+                </div>
+
+                <div className="bg-white/90 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-2xl p-3 space-y-2">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                    Clear
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setOptionsConfirm({ open: true, kind: 'clear_classroom' })}
+                    className="w-full text-left px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/70"
+                  >
+                    <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">Classroom cache</p>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400">Courses · Assignments · Students</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOptionsConfirm({ open: true, kind: 'clear_grades' })}
+                    className="w-full text-left px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/70"
+                  >
+                    <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">Grades</p>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400">Queue · Sync receipts</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOptionsConfirm({ open: true, kind: 'clear_schedule' })}
+                    className="w-full text-left px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/70"
+                  >
+                    <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">Schedule</p>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400">All schedule items on this device</p>
+                  </button>
+                </div>
+
+                <div className="bg-white/90 dark:bg-slate-950/70 border border-rose-200 dark:border-rose-800 rounded-2xl p-3">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-rose-700 dark:text-rose-200">
+                    Nuclear option
+                  </p>
+                  <p className="mt-1 text-[10px] text-slate-600 dark:text-slate-300">
+                    If you want a fresh start on this device.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setOptionsConfirm({ open: true, kind: 'reset_all' })}
+                    className="mt-2 w-full py-2 rounded-xl bg-rose-600 text-white text-[11px] font-black uppercase tracking-widest"
+                  >
+                    Reset local data
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {optionsTab === 'legal' && (
+              <div className="bg-white/90 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-2xl p-3 space-y-3">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                  Legal & support
+                </p>
+                <a
+                  href="https://www.donegrading.com/Terms-of-Service"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300 underline underline-offset-2"
+                >
+                  Terms of Service
+                </a>
+                <a
+                  href="https://www.donegrading.com/Privacy-Policy"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300 underline underline-offset-2"
+                >
+                  Privacy Policy
+                </a>
+                <a
+                  href="https://www.donegrading.com/Contact"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300 underline underline-offset-2"
+                >
+                  Support
+                </a>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 pt-2 border-t border-slate-200 dark:border-slate-800">
+                  Copyright © 2026 DoneGrading LLC. All rights reserved.
+                </p>
+              </div>
+            )}
+          </div>
         </div>
-        <p className="text-[10px] text-slate-500 dark:text-slate-400 pt-4">
-          Copyright © 2026 DoneGrading LLC. All rights reserved.
-        </p>
-      </div>
-    </PageWrapper>
-  );
+      </PageWrapper>
+    );
+  };
 
   const renderAssignmentSelect = () => (
     <PageWrapper
@@ -6124,6 +6511,89 @@ const App: React.FC = () => {
 
     const dailyItems = sorted.filter((item) => isOnDate(item, cursorDate));
 
+    const normalizeKind = (k: ScheduleItem['kind']): NonNullable<ScheduleItem['kind']> => k ?? 'reminder';
+
+    const matchesFilters = (item: ScheduleItem, forDate?: Date) => {
+      const kind = normalizeKind(item.kind);
+      if (scheduleFilterKinds.size > 0 && !scheduleFilterKinds.has(kind)) return false;
+      if (scheduleFilterCourseId && item.courseId !== scheduleFilterCourseId) return false;
+      if (scheduleFilterRecurringOnly && item.recurrence === 'once') return false;
+      if (scheduleFilterOverdueOnly) {
+        const d = forDate ? new Date(forDate) : new Date(item.date);
+        d.setHours(0, 0, 0, 0);
+        const now = new Date();
+        now.setHours(0, 0, 0, 0);
+        if (d.getTime() >= now.getTime()) return false;
+      }
+      if (scheduleSearch.trim()) {
+        const q = scheduleSearch.trim().toLowerCase();
+        const hay = `${item.title} ${item.notes ?? ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    };
+
+    const formatDateLabel = (d: Date) => {
+      try {
+        return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+      } catch {
+        return d.toISOString().slice(0, 10);
+      }
+    };
+
+    const agendaGroups = (() => {
+      const start = new Date(cursorDate);
+      start.setHours(0, 0, 0, 0);
+      const day0 = new Date(start);
+      const day1 = new Date(start);
+      day1.setDate(day1.getDate() + 1);
+
+      const startWeek = new Date(start);
+      const day = startWeek.getDay();
+      const diff = (day + 6) % 7; // Monday start
+      startWeek.setDate(startWeek.getDate() - diff);
+      const endWeek = new Date(startWeek);
+      endWeek.setDate(endWeek.getDate() + 6);
+      endWeek.setHours(0, 0, 0, 0);
+
+      const maxDays = 28;
+      const occurrences: Array<{ when: Date; item: ScheduleItem }> = [];
+      for (let i = 0; i < maxDays; i += 1) {
+        const d = new Date(start);
+        d.setDate(start.getDate() + i);
+        d.setHours(0, 0, 0, 0);
+        sorted.forEach((it) => {
+          if (!isOnDate(it, d)) return;
+          if (!matchesFilters(it, d)) return;
+          occurrences.push({ when: d, item: it });
+        });
+      }
+
+      const onDate = (target: Date) =>
+        occurrences
+          .filter((o) => o.when.getTime() === target.getTime())
+          .map((o) => o.item)
+          .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+
+      const todayItems = onDate(day0);
+      const tomorrowItems = onDate(day1);
+
+      const thisWeekItems: Array<{ when: Date; item: ScheduleItem }> = occurrences.filter((o) => {
+        if (o.when.getTime() === day0.getTime()) return false;
+        if (o.when.getTime() === day1.getTime()) return false;
+        return o.when.getTime() >= day0.getTime() && o.when.getTime() <= endWeek.getTime();
+      });
+
+      const laterItems: Array<{ when: Date; item: ScheduleItem }> = occurrences.filter((o) => o.when.getTime() > endWeek.getTime());
+
+      return {
+        todayItems,
+        tomorrowItems,
+        thisWeekItems,
+        laterItems,
+      };
+    })();
+
     // 6am–6pm day split into AM (6–11) and PM (12–17), each representing a 1‑hour block (e.g. 6–7, 7–8, …, 17–18)
     const hours = Array.from({ length: 12 }).map((_, idx) => 6 + idx); // 6:00–18:00 end (last block is 17–18)
     const amHours = hours.filter((h) => h < 12);
@@ -6145,7 +6615,7 @@ const App: React.FC = () => {
     const moveCursor = (delta: number) => {
       setScheduleCursor((prevIso) => {
         const d = new Date(prevIso);
-        if (scheduleView === 'daily') {
+        if (scheduleView === 'daily' || scheduleView === 'agenda') {
           d.setDate(d.getDate() + delta);
         } else if (scheduleView === 'weekly') {
           d.setDate(d.getDate() + 7 * delta);
@@ -6157,7 +6627,7 @@ const App: React.FC = () => {
     };
 
     const getPeriodLabel = () => {
-      if (scheduleView === 'daily') {
+      if (scheduleView === 'daily' || scheduleView === 'agenda') {
         try {
           return cursorDate.toLocaleDateString(undefined, {
             weekday: 'short',
@@ -6259,7 +6729,14 @@ const App: React.FC = () => {
     };
 
     const removeItem = (id: string) => {
-      setScheduleItems((prev) => prev.filter((i) => i.id !== id));
+      setScheduleItems((prev) => {
+        const idx = prev.findIndex((i) => i.id === id);
+        if (idx >= 0) {
+          const item = prev[idx];
+          setScheduleUndo({ item, atIndex: idx, expiresAt: Date.now() + 9000 });
+        }
+        return prev.filter((i) => i.id !== id);
+      });
       if (editingScheduleId === id) {
         resetScheduleForm();
         setScheduleFormOpen(false);
@@ -6295,237 +6772,561 @@ const App: React.FC = () => {
         setIsDarkMode={setIsDarkMode}
         syncStatus={syncStatus}
       >
-        <div className="flex-1 min-h-0 flex flex-col gap-2 overflow-hidden">
-          <div className="shrink-0 flex items-center justify-between rounded-xl bg-white/90 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 px-2 py-1.5">
-            <div className="inline-flex text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
-              View
+        {scheduleUndo && scheduleUndo.expiresAt > Date.now() && (
+          <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[121] w-[90%] max-w-md">
+            <div className="px-3 py-2 rounded-2xl bg-slate-900/95 text-white border border-slate-700 shadow-xl flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em]">Item deleted</p>
+                <p className="text-[10px] text-white/80 truncate">{scheduleUndo.item.title}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setScheduleItems((prev) => {
+                    const next = [...prev];
+                    const insertAt = Math.max(0, Math.min(scheduleUndo.atIndex, next.length));
+                    next.splice(insertAt, 0, scheduleUndo.item);
+                    return next;
+                  });
+                  setScheduleUndo(null);
+                }}
+                className="px-3 py-1.5 rounded-full bg-white text-slate-900 text-[10px] font-semibold"
+              >
+                Undo
+              </button>
             </div>
-            <div className="inline-flex rounded-full bg-slate-100 dark:bg-slate-800 p-0.5 text-[10px]">
-              {(['daily', 'weekly', 'monthly'] as ScheduleViewMode[]).map((mode) => (
+          </div>
+        )}
+        <div className="flex-1 min-h-0 flex flex-col gap-2 overflow-hidden">
+          {/* Schedule cockpit (no-scroll) */}
+          <div className="shrink-0 rounded-2xl bg-white/90 dark:bg-slate-900/85 border border-slate-200 dark:border-slate-700 p-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="inline-flex rounded-full bg-slate-100 dark:bg-slate-800 p-0.5 text-[10px]">
+                {(['agenda', 'daily', 'weekly', 'monthly'] as ScheduleViewMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setScheduleView(mode)}
+                    className={`px-3 py-1 rounded-full font-semibold capitalize ${
+                      scheduleView === mode ? 'bg-indigo-600 text-white' : 'text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    {mode === 'daily' ? 'Day' : mode === 'weekly' ? 'Week' : mode === 'monthly' ? 'Month' : 'Agenda'}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-1">
                 <button
-                  key={mode}
                   type="button"
-                  onClick={() => setScheduleView(mode)}
-                  className={`px-3 py-1 rounded-full font-semibold capitalize ${
-                    scheduleView === mode
-                      ? 'bg-indigo-600 text-white'
-                      : 'text-slate-700 dark:text-slate-300'
+                  onClick={() => setScheduleCursor(new Date().toISOString().slice(0, 10))}
+                  className="px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-950/50 text-[10px] font-semibold"
+                >
+                  Today
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScheduleFilterOpen(true)}
+                  className={`px-2 py-1 rounded-full border text-[10px] font-semibold ${
+                    scheduleSearch.trim() ||
+                    scheduleFilterCourseId ||
+                    scheduleFilterKinds.size > 0 ||
+                    scheduleFilterOverdueOnly ||
+                    scheduleFilterRecurringOnly
+                      ? 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-200'
+                      : 'border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-950/50 text-slate-700 dark:text-slate-200'
                   }`}
                 >
-                  {mode}
+                  Filters
                 </button>
-              ))}
+                <button
+                  type="button"
+                  onClick={() => openEditorFor(null, undefined, cursorIso)}
+                  className="px-2 py-1 rounded-full bg-emerald-600 text-white text-[10px] font-semibold"
+                >
+                  + Add
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-2 flex items-center justify-between gap-2 px-1 text-[10px] text-slate-600 dark:text-slate-300">
+              <button
+                type="button"
+                onClick={() => moveCursor(-1)}
+                className="px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-950/50"
+              >
+                ‹
+              </button>
+              <div className="flex items-center gap-2">
+                <input
+                  type="date"
+                  value={scheduleCursor}
+                  onChange={(e) => setScheduleCursor(e.target.value)}
+                  className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-950/40 text-[10px]"
+                />
+                <span className="font-semibold uppercase tracking-[0.16em] text-center">
+                  {getPeriodLabel()}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => moveCursor(1)}
+                className="px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-950/50"
+              >
+                ›
+              </button>
             </div>
           </div>
 
-          <div className="shrink-0 flex items-center justify-between px-2 text-[10px] text-slate-600 dark:text-slate-300">
-            <button
-              type="button"
-              onClick={() => moveCursor(-1)}
-              className="px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-900/70"
-            >
-              ‹
-            </button>
-            <span className="font-semibold uppercase tracking-[0.16em] text-center">
-              {getPeriodLabel()}
-            </span>
-            <button
-              type="button"
-              onClick={() => moveCursor(1)}
-              className="px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-900/70"
-            >
-              ›
-            </button>
-          </div>
+          {/* Filters drawer */}
+          {scheduleFilterOpen && (
+            <div className="fixed inset-0 z-[120]">
+              <button
+                type="button"
+                className="absolute inset-0 bg-slate-950/40"
+                onClick={() => setScheduleFilterOpen(false)}
+              />
+              <div className="absolute left-1/2 -translate-x-1/2 top-16 w-[min(92vw,420px)] rounded-2xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden">
+                <div className="px-3 py-2 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300">
+                      Find anything
+                    </p>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                      Search, filter, and keep the view clean.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setScheduleFilterOpen(false)}
+                    className="px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 text-[10px] font-semibold"
+                  >
+                    Close
+                  </button>
+                </div>
+                <div className="p-3 space-y-3 max-h-[70vh] overflow-y-auto custom-scrollbar">
+                  <input
+                    value={scheduleSearch}
+                    onChange={(e) => setScheduleSearch(e.target.value)}
+                    placeholder="Search title or notes…"
+                    className="w-full px-2 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/70 text-[11px]"
+                  />
 
-          {/* Top: compact calendar-style overview per view (hidden when editing/adding) */}
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                      Type
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {(['teacherBlock', 'meeting', 'appointment', 'event', 'reminder'] as Array<NonNullable<ScheduleItem['kind']>>).map(
+                        (k) => {
+                          const active = scheduleFilterKinds.has(k);
+                          return (
+                            <button
+                              key={k}
+                              type="button"
+                              onClick={() =>
+                                setScheduleFilterKinds((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(k)) next.delete(k);
+                                  else next.add(k);
+                                  return next;
+                                })
+                              }
+                              className={`px-2 py-1 rounded-full text-[10px] font-semibold border ${
+                                active
+                                  ? 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-200'
+                                  : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
+                              }`}
+                            >
+                              {k === 'teacherBlock'
+                                ? 'Teacher blocks'
+                                : k === 'appointment'
+                                  ? 'Appointments'
+                                  : k === 'meeting'
+                                    ? 'Meetings'
+                                    : k === 'event'
+                                      ? 'Events'
+                                      : 'Reminders'}
+                            </button>
+                          );
+                        },
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                      Course
+                    </p>
+                    <select
+                      value={scheduleFilterCourseId}
+                      onChange={(e) => setScheduleFilterCourseId(e.target.value)}
+                      className="w-full px-2 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/70 text-[11px]"
+                    >
+                      <option value="">All courses</option>
+                      {courses.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setScheduleFilterRecurringOnly((v) => !v)}
+                      className={`flex-1 px-2 py-2 rounded-xl border text-[11px] font-semibold ${
+                        scheduleFilterRecurringOnly
+                          ? 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-200'
+                          : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
+                      }`}
+                    >
+                      Recurring only
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setScheduleFilterOverdueOnly((v) => !v)}
+                      className={`flex-1 px-2 py-2 rounded-xl border text-[11px] font-semibold ${
+                        scheduleFilterOverdueOnly
+                          ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200'
+                          : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
+                      }`}
+                    >
+                      Overdue only
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setScheduleSearch('');
+                        setScheduleFilterKinds(new Set());
+                        setScheduleFilterCourseId('');
+                        setScheduleFilterOverdueOnly(false);
+                        setScheduleFilterRecurringOnly(false);
+                      }}
+                      className="flex-1 px-2 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] font-semibold"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setScheduleFilterOpen(false)}
+                      className="flex-1 px-2 py-2 rounded-xl bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 text-[11px] font-semibold"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Main content (scroll) */}
           {!scheduleFormOpen && (
-            <div
-              className={`flex-1 min-h-0 overflow-y-auto custom-scrollbar rounded-2xl bg-white/95 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-700 p-3 ${
-                scheduleView === 'daily' ? 'space-y-2' : 'space-y-2'
-              }`}
-            >
+            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar rounded-2xl bg-white/95 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-700 p-3 space-y-2">
+              {scheduleView === 'agenda' && (
+                <>
+                  <div className="rounded-xl bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 p-3">
+                    <p className="text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
+                      Scan-first agenda: today + tomorrow up top, then the rest of the week, then what’s next.
+                    </p>
+                  </div>
+
+                  {(
+                    [
+                      { title: 'Today', items: agendaGroups.todayItems, date: cursorDate },
+                      { title: 'Tomorrow', items: agendaGroups.tomorrowItems, date: (() => { const d = new Date(cursorDate); d.setDate(d.getDate() + 1); return d; })() },
+                    ] as const
+                  ).map((g) => (
+                    <section key={g.title} className="bg-white/90 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-2xl p-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                            {g.title}
+                          </p>
+                          <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                            {formatDateLabel(g.date)}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => openEditorFor(null, undefined, g.date.toISOString().slice(0, 10))}
+                          className="px-2 py-1 rounded-full bg-emerald-600 text-white text-[10px] font-semibold"
+                        >
+                          + Add
+                        </button>
+                      </div>
+                      <div className="mt-2 space-y-1.5">
+                        {g.items.length === 0 ? (
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                            Nothing scheduled.
+                          </div>
+                        ) : (
+                          g.items.map((e) => {
+                            const kind = normalizeKind(e.kind);
+                            const badge =
+                              kind === 'teacherBlock'
+                                ? 'Teacher'
+                                : kind === 'meeting'
+                                  ? 'Meeting'
+                                  : kind === 'appointment'
+                                    ? 'Appt'
+                                    : kind === 'event'
+                                      ? 'Event'
+                                      : 'Reminder';
+                            const badgeClass =
+                              kind === 'teacherBlock'
+                                ? 'bg-indigo-600 text-white'
+                                : kind === 'meeting'
+                                  ? 'bg-emerald-600 text-white'
+                                  : kind === 'appointment'
+                                    ? 'bg-emerald-600 text-white'
+                                    : kind === 'event'
+                                      ? 'bg-emerald-600 text-white'
+                                      : 'bg-amber-600 text-white';
+                            return (
+                              <button
+                                key={`${e.id}-${g.title}`}
+                                type="button"
+                                onClick={() => openEditorFor(null, e, g.date.toISOString().slice(0, 10))}
+                                className="w-full text-left rounded-xl border border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-950/50 px-3 py-2 flex items-start justify-between gap-3"
+                              >
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100 truncate">
+                                      {e.title}
+                                    </p>
+                                    <span className={`shrink-0 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-[0.16em] ${badgeClass}`}>
+                                      {badge}
+                                    </span>
+                                  </div>
+                                  <p className="text-[10px] text-slate-600 dark:text-slate-300">
+                                    {e.time || 'Any time'}
+                                    {e.endTime ? ` – ${e.endTime}` : ''}
+                                    {e.recurrence !== 'once' ? ` · ${e.recurrence}` : ''}
+                                    {e.courseId ? ` · ${courses.find((c) => c.id === e.courseId)?.name || 'Course'}` : ''}
+                                  </p>
+                                  {e.notes && (
+                                    <p className="mt-1 text-[10px] text-slate-600 dark:text-slate-200 line-clamp-2">
+                                      {e.notes}
+                                    </p>
+                                  )}
+                                </div>
+                                <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                                  Edit
+                                </div>
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+                    </section>
+                  ))}
+
+                  <section className="bg-white/90 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-2xl p-3">
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                      This week
+                    </p>
+                    <div className="mt-2 space-y-2">
+                      {agendaGroups.thisWeekItems.length === 0 ? (
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400">Nothing else this week.</div>
+                      ) : (
+                        agendaGroups.thisWeekItems
+                          .sort((a, b) => a.when.getTime() - b.when.getTime() || (a.item.time || '').localeCompare(b.item.time || ''))
+                          .slice(0, 24)
+                          .map((o) => (
+                            <button
+                              key={`${o.item.id}-${o.when.toISOString()}`}
+                              type="button"
+                              onClick={() => openEditorFor(null, o.item, o.when.toISOString().slice(0, 10))}
+                              className="w-full text-left rounded-xl border border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-950/50 px-3 py-2 flex items-center justify-between gap-3"
+                            >
+                              <div className="min-w-0">
+                                <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100 truncate">
+                                  {o.item.title}
+                                </p>
+                                <p className="text-[10px] text-slate-600 dark:text-slate-300">
+                                  {formatDateLabel(o.when)} · {o.item.time || 'Any time'}
+                                  {o.item.recurrence !== 'once' ? ` · ${o.item.recurrence}` : ''}
+                                </p>
+                              </div>
+                              <span className="text-[10px] text-slate-500 dark:text-slate-400">Edit</span>
+                            </button>
+                          ))
+                      )}
+                      {agendaGroups.thisWeekItems.length > 24 && (
+                        <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                          Showing 24 items. Use Filters to narrow.
+                        </div>
+                      )}
+                    </div>
+                  </section>
+
+                  <section className="bg-white/90 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-2xl p-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                        Later
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setScheduleView('monthly')}
+                        className="px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 text-[10px] font-semibold"
+                      >
+                        Open month
+                      </button>
+                    </div>
+                    <div className="mt-2 space-y-2">
+                      {agendaGroups.laterItems.length === 0 ? (
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400">Nothing upcoming in the next 4 weeks.</div>
+                      ) : (
+                        agendaGroups.laterItems
+                          .sort((a, b) => a.when.getTime() - b.when.getTime() || (a.item.time || '').localeCompare(b.item.time || ''))
+                          .slice(0, 16)
+                          .map((o) => (
+                            <button
+                              key={`${o.item.id}-${o.when.toISOString()}`}
+                              type="button"
+                              onClick={() => openEditorFor(null, o.item, o.when.toISOString().slice(0, 10))}
+                              className="w-full text-left rounded-xl border border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-950/50 px-3 py-2 flex items-center justify-between gap-3"
+                            >
+                              <div className="min-w-0">
+                                <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100 truncate">
+                                  {o.item.title}
+                                </p>
+                                <p className="text-[10px] text-slate-600 dark:text-slate-300">
+                                  {formatDateLabel(o.when)} · {o.item.time || 'Any time'}
+                                </p>
+                              </div>
+                              <span className="text-[10px] text-slate-500 dark:text-slate-400">Edit</span>
+                            </button>
+                          ))
+                      )}
+                    </div>
+                  </section>
+                </>
+              )}
+
               {scheduleView === 'daily' && (
                 <>
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
-                        Today&apos;s schedule
+                        Day timeline
                       </p>
                       <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                        Hour‑by‑hour blocks for classes, prep, lunch, meetings, and reminders.
+                        Tap an hour to add or edit. Use Agenda for quick scanning.
                       </p>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setScheduleView('agenda')}
+                      className="px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 text-[10px] font-semibold"
+                    >
+                      Agenda
+                    </button>
                   </div>
-                  <div className="mt-3 grid grid-cols-2 gap-3 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
-                  <div className="space-y-1">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300 text-center">
-                      Morning
-                    </p>
-                    {amHours.map((hour) => {
-                      const label = formatHourRange(hour);
-                      const eventsAtHour = dailyItems.filter((item) => {
-                        const time = item.time || '06:00';
-                        const [h] = time.split(':');
-                        return Number(h) === hour;
-                      });
-                      const hasTeacherBlock = eventsAtHour.some((e) => (e.kind ?? 'reminder') === 'teacherBlock');
-                      const isActive = activeScheduleHour === hour;
-                      return (
-                        <div
-                          key={hour}
-                          onClick={() => openEditorFor(hour, eventsAtHour[0])}
-                          className={`cursor-pointer flex flex-col items-center justify-center text-center text-[11px] min-h-14 ${
-                            hasTeacherBlock
-                              ? 'bg-emerald-50/80 dark:bg-emerald-900/30'
-                              : 'bg-emerald-50/40 dark:bg-slate-900/40'
-                          } rounded-2xl px-3 py-2 border ${
-                            isActive ? 'border-emerald-500 dark:border-emerald-400' : 'border-emerald-100/70 dark:border-slate-700'
-                          } shadow-sm`}
-                        >
-                          <div className="whitespace-nowrap text-emerald-700 dark:text-emerald-200 font-semibold">
-                            {label}
-                          </div>
-                          <div className="w-full space-y-1">
-                            {eventsAtHour.length === 0 ? (
-                              <p className="text-[10px] text-emerald-900/40 dark:text-emerald-100/40">&nbsp;</p>
-                            ) : (
-                              eventsAtHour.map((e) => {
-                                const kind = e.kind ?? 'reminder';
-                                const isEventLike = kind === 'event' || kind === 'appointment' || kind === 'meeting';
-                                const chipColor =
-                                  kind === 'teacherBlock'
-                                    ? 'bg-indigo-500 text-white'
-                                    : isEventLike
-                                      ? 'bg-emerald-500 text-white'
-                                      : 'bg-amber-500 text-white';
-                                return (
-                                  <div
-                                    key={e.id}
-                                    onClick={(ev) => {
-                                      ev.stopPropagation();
-                                      openEditorFor(hour, e);
-                                    }}
-                                    className="px-2 py-1 rounded-lg bg-white/80 dark:bg-slate-900/80 border border-slate-200/70 dark:border-slate-700/70 flex flex-col items-center text-center gap-1"
-                                  >
-                                    <div className="flex items-center justify-center gap-2">
-                                      <span className="font-semibold truncate max-w-[120px]">{e.title}</span>
-                                      <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-[0.16em] ${chipColor}`}>
-                                        {kind === 'teacherBlock'
-                                          ? 'Teacher'
-                                          : isEventLike
-                                            ? 'Event'
-                                            : 'Reminder'}
-                                      </span>
-                                    </div>
-                                    <p className="text-[10px] text-slate-600 dark:text-slate-300">
-                                      {e.time || 'Any time'}
-                                      {e.endTime ? ` – ${e.endTime}` : ''}
-                                      {e.recurrence !== 'once' && ` · ${e.recurrence}`}
-                                    </p>
-                                    {e.notes && (
-                                      <p className="text-[10px] text-slate-600 dark:text-slate-200 line-clamp-2">
-                                        {e.notes}
+                  <div className="mt-3 grid grid-cols-2 gap-3">
+                    {[{ label: 'Morning', hrs: amHours }, { label: 'Afternoon', hrs: pmHours }].map((col) => (
+                      <div key={col.label} className="space-y-1">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300 text-center">
+                          {col.label}
+                        </p>
+                        {col.hrs.map((hour) => {
+                          const label = formatHourRange(hour);
+                          const eventsAtHour = dailyItems
+                            .filter((item) => {
+                              const time = item.time || '06:00';
+                              const [h] = time.split(':');
+                              return Number(h) === hour;
+                            })
+                            .filter((it) => matchesFilters(it, cursorDate));
+                          const hasTeacherBlock = eventsAtHour.some((e) => normalizeKind(e.kind) === 'teacherBlock');
+                          const isActive = activeScheduleHour === hour;
+                          const isNow = (() => {
+                            const now = new Date();
+                            return (
+                              now.toISOString().slice(0, 10) === cursorIso &&
+                              now.getHours() === hour
+                            );
+                          })();
+                          return (
+                            <div
+                              key={hour}
+                              onClick={() => openEditorFor(hour, eventsAtHour[0], cursorIso)}
+                              className={`cursor-pointer flex flex-col items-center justify-center text-center text-[11px] min-h-14 rounded-2xl px-3 py-2 border shadow-sm ${
+                                isActive
+                                  ? 'border-emerald-500 dark:border-emerald-400'
+                                  : isNow
+                                    ? 'border-indigo-400 dark:border-indigo-300'
+                                    : 'border-emerald-100/70 dark:border-slate-700'
+                              } ${
+                                hasTeacherBlock
+                                  ? 'bg-emerald-50/80 dark:bg-emerald-900/30'
+                                  : 'bg-emerald-50/40 dark:bg-slate-900/40'
+                              }`}
+                            >
+                              <div className="whitespace-nowrap text-emerald-700 dark:text-emerald-200 font-semibold">
+                                {label}
+                              </div>
+                              {isNow && (
+                                <div className="mt-0.5 text-[9px] font-black uppercase tracking-[0.18em] text-indigo-600 dark:text-indigo-300">
+                                  Now
+                                </div>
+                              )}
+                              <div className="w-full space-y-1 mt-1">
+                                {eventsAtHour.length === 0 ? (
+                                  <p className="text-[10px] text-emerald-900/40 dark:text-emerald-100/40">&nbsp;</p>
+                                ) : (
+                                  eventsAtHour.map((e) => (
+                                    <div
+                                      key={e.id}
+                                      onClick={(ev) => {
+                                        ev.stopPropagation();
+                                        openEditorFor(hour, e, cursorIso);
+                                      }}
+                                      className="px-2 py-1 rounded-lg bg-white/80 dark:bg-slate-900/80 border border-slate-200/70 dark:border-slate-700/70"
+                                    >
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="font-semibold truncate">{e.title}</span>
+                                        <span className="text-[9px] font-black uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
+                                          {normalizeKind(e.kind) === 'teacherBlock'
+                                            ? 'Teacher'
+                                            : normalizeKind(e.kind) === 'meeting'
+                                              ? 'Meeting'
+                                              : normalizeKind(e.kind) === 'appointment'
+                                                ? 'Appt'
+                                                : normalizeKind(e.kind) === 'event'
+                                                  ? 'Event'
+                                                  : 'Reminder'}
+                                        </span>
+                                      </div>
+                                      <p className="text-[10px] text-slate-600 dark:text-slate-300">
+                                        {e.time || 'Any time'}
+                                        {e.endTime ? ` – ${e.endTime}` : ''}
+                                        {e.recurrence !== 'once' ? ` · ${e.recurrence}` : ''}
                                       </p>
-                                    )}
-                                  </div>
-                                );
-                              })
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300 text-center">
-                      Afternoon
-                    </p>
-                    {pmHours.map((hour) => {
-                      const label = formatHourRange(hour);
-                      const eventsAtHour = dailyItems.filter((item) => {
-                        const time = item.time || '06:00';
-                        const [h] = time.split(':');
-                        return Number(h) === hour;
-                      });
-                      const hasTeacherBlock = eventsAtHour.some((e) => (e.kind ?? 'reminder') === 'teacherBlock');
-                      const isActive = activeScheduleHour === hour;
-                      return (
-                        <div
-                          key={hour}
-                          onClick={() => openEditorFor(hour, eventsAtHour[0])}
-                          className={`cursor-pointer flex flex-col items-center justify-center text-center text-[11px] min-h-14 ${
-                            hasTeacherBlock
-                              ? 'bg-emerald-50/80 dark:bg-emerald-900/30'
-                              : 'bg-emerald-50/40 dark:bg-slate-900/40'
-                          } rounded-2xl px-3 py-2 border ${
-                            isActive ? 'border-emerald-500 dark:border-emerald-400' : 'border-emerald-100/70 dark:border-slate-700'
-                          } shadow-sm`}
-                        >
-                          <div className="whitespace-nowrap text-emerald-700 dark:text-emerald-200 font-semibold">
-                            {label}
-                          </div>
-                          <div className="w-full space-y-1">
-                            {eventsAtHour.length === 0 ? (
-                              <p className="text-[10px] text-emerald-900/40 dark:text-emerald-100/40">&nbsp;</p>
-                            ) : (
-                              eventsAtHour.map((e) => {
-                                const kind = e.kind ?? 'reminder';
-                                const isEventLike = kind === 'event' || kind === 'appointment' || kind === 'meeting';
-                                const chipColor =
-                                  kind === 'teacherBlock'
-                                    ? 'bg-indigo-500 text-white'
-                                    : isEventLike
-                                      ? 'bg-emerald-500 text-white'
-                                      : 'bg-amber-500 text-white';
-                                return (
-                                  <div
-                                    key={e.id}
-                                    onClick={(ev) => {
-                                      ev.stopPropagation();
-                                      openEditorFor(hour, e);
-                                    }}
-                                    className="px-2 py-1 rounded-lg bg-white/80 dark:bg-slate-900/80 border border-slate-200/70 dark:border-slate-700/70 flex flex-col items-center text-center gap-1"
-                                  >
-                                    <div className="flex items-center justify-center gap-2">
-                                      <span className="font-semibold truncate max-w-[120px]">{e.title}</span>
-                                      <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-[0.16em] ${chipColor}`}>
-                                        {kind === 'teacherBlock'
-                                          ? 'Teacher'
-                                          : isEventLike
-                                            ? 'Event'
-                                            : 'Reminder'}
-                                      </span>
                                     </div>
-                                    <p className="text-[10px] text-slate-600 dark:text-slate-300">
-                                      {e.time || 'Any time'}
-                                      {e.endTime ? ` – ${e.endTime}` : ''}
-                                      {e.recurrence !== 'once' && ` · ${e.recurrence}`}
-                                    </p>
-                                    {e.notes && (
-                                      <p className="text-[10px] text-slate-600 dark:text-slate-200 line-clamp-2">
-                                        {e.notes}
-                                      </p>
-                                    )}
-                                  </div>
-                                );
-                              })
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
+                                  ))
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
                   </div>
-                </div>
-              </>
+                </>
               )}
 
               {scheduleView === 'weekly' && (
                 <>
                   <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400 mb-1">
-                    This week
+                    Week grid
                   </p>
-                  <div className="space-y-1 max-h-40 overflow-y-auto custom-scrollbar text-[9px]">
+                  <div className="space-y-1 text-[9px]">
                     {[
                       { label: 'Mon', idx: 1 },
                       { label: 'Tue', idx: 2 },
@@ -6538,7 +7339,7 @@ const App: React.FC = () => {
                       const weekStart = (() => {
                         const d = new Date(cursorDate);
                         const day = d.getDay();
-                        const diff = (day + 6) % 7; // Monday
+                        const diff = (day + 6) % 7;
                         d.setDate(d.getDate() - diff);
                         d.setHours(0, 0, 0, 0);
                         return d;
@@ -6547,51 +7348,58 @@ const App: React.FC = () => {
                       dayDate.setDate(weekStart.getDate() + (idx === 0 ? 6 : idx - 1));
                       const dayEvents = sorted
                         .filter((item) => isOnDate(item, dayDate))
+                        .filter((it) => matchesFilters(it, dayDate))
                         .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
                       const isWeekend = idx === 0 || idx === 6;
+                      const iso = dayDate.toISOString().slice(0, 10);
                       return (
                         <div
                           key={label}
-                          className={`flex items-start gap-2 rounded-lg border px-1.5 py-1 ${
+                          className={`flex items-start gap-2 rounded-xl border px-2 py-2 ${
                             isWeekend
                               ? 'border-amber-300/70 bg-amber-50/70 dark:bg-amber-900/20'
                               : 'border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/70'
                           }`}
                         >
-                          <div className="w-10 text-[9px] font-bold text-slate-600 dark:text-slate-300">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setScheduleCursor(iso);
+                              setScheduleView('agenda');
+                            }}
+                            className="w-12 text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300"
+                          >
                             {label}
-                          </div>
+                          </button>
                           <div className="flex-1 flex flex-wrap gap-1">
                             {dayEvents.length === 0 ? (
-                              <span className="text-[8px] text-slate-400 dark:text-slate-500">No items</span>
+                              <span className="text-[9px] text-slate-400 dark:text-slate-500">No items</span>
                             ) : (
-                              dayEvents.map((e) => {
-                                const kind = e.kind ?? 'reminder';
-                                const isEventLike = kind === 'event' || kind === 'appointment' || kind === 'meeting';
-                                const chipColor =
-                                  isEventLike
-                                    ? 'bg-emerald-500/90 text-white'
-                                    : kind === 'teacherBlock'
-                                      ? 'bg-indigo-500/90 text-white'
-                                      : 'bg-amber-500/90 text-white';
-                                return (
-                                  <button
-                                    key={e.id}
-                                    type="button"
-                                    onClick={() => openEditorFor(null, e)}
-                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full ${chipColor} whitespace-nowrap max-w-full`}
-                                  >
-                                    <span className="text-[8px] font-mono">
-                                      {e.time || '—'}
-                                    </span>
-                                    <span className="text-[8px] font-semibold truncate max-w-[96px]">
-                                      {e.title}
-                                    </span>
-                                  </button>
-                                );
-                              })
+                              dayEvents.slice(0, 18).map((e) => (
+                                <button
+                                  key={e.id}
+                                  type="button"
+                                  onClick={() => openEditorFor(null, e, iso)}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 whitespace-nowrap max-w-full"
+                                >
+                                  <span className="text-[8px] font-mono">{e.time || '—'}</span>
+                                  <span className="text-[9px] font-semibold truncate max-w-[120px]">{e.title}</span>
+                                </button>
+                              ))
+                            )}
+                            {dayEvents.length > 18 && (
+                              <span className="text-[9px] text-slate-500 dark:text-slate-400">
+                                +{dayEvents.length - 18} more
+                              </span>
                             )}
                           </div>
+                          <button
+                            type="button"
+                            onClick={() => openEditorFor(null, undefined, iso)}
+                            className="px-2 py-1 rounded-full bg-emerald-600 text-white text-[10px] font-semibold"
+                          >
+                            + Add
+                          </button>
                         </div>
                       );
                     })}
@@ -6602,12 +7410,15 @@ const App: React.FC = () => {
               {scheduleView === 'monthly' && (
                 <>
                   <p className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-600 dark:text-emerald-300">
-                    This month at a glance
+                    Month grid
                   </p>
                   <div className="mt-1 text-[9px] text-slate-700 dark:text-slate-200 bg-gradient-to-b from-emerald-50/90 via-white/95 to-white/90 dark:from-emerald-900/40 dark:via-slate-900/80 dark:to-slate-950/90 rounded-2xl border border-emerald-200/80 dark:border-emerald-700/60 px-2 py-2 shadow-inner">
                     <div className="grid grid-cols-7 gap-1 mb-1">
                       {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((label) => (
-                        <div key={label} className="text-center font-semibold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-300">
+                        <div
+                          key={label}
+                          className="text-center font-semibold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-300"
+                        >
                           {label}
                         </div>
                       ))}
@@ -6617,15 +7428,9 @@ const App: React.FC = () => {
                         const year = cursorDate.getFullYear();
                         const month = cursorDate.getMonth();
                         const firstOfMonth = new Date(year, month, 1);
-                        const startOffset = (firstOfMonth.getDay() + 6) % 7; // Monday as first column
+                        const startOffset = (firstOfMonth.getDay() + 6) % 7;
                         const daysInMonth = new Date(year, month + 1, 0).getDate();
-                        const cells = 42; // 6 weeks
-
-                        const itemsForMonth = sorted.filter((item) => {
-                          if (item.kind === 'teacherBlock') return false;
-                          const d = new Date(item.date);
-                          return d.getFullYear() === year && d.getMonth() === month;
-                        });
+                        const cells = 42;
 
                         const cellsArray = [];
                         for (let i = 0; i < cells; i += 1) {
@@ -6635,7 +7440,10 @@ const App: React.FC = () => {
                           const iso = cellDate.toISOString().slice(0, 10);
 
                           const dayItems = inMonth
-                            ? itemsForMonth.filter((item) => isOnDate(item, cellDate))
+                            ? sorted
+                                .filter((item) => isOnDate(item, cellDate))
+                                .filter((it) => matchesFilters(it, cellDate))
+                                .filter((it) => normalizeKind(it.kind) !== 'teacherBlock')
                             : [];
 
                           const isToday =
@@ -6650,54 +7458,43 @@ const App: React.FC = () => {
                             })();
 
                           cellsArray.push(
-                            <div
+                            <button
+                              type="button"
                               key={i}
                               onClick={() => {
                                 if (!inMonth) return;
-                                openEditorFor(null, undefined, iso);
+                                setScheduleCursor(iso);
+                                setScheduleView('agenda');
                               }}
-                              className={`min-h-[48px] rounded-lg border px-1 py-1 flex flex-col gap-0.5 ${
+                              className={`min-h-[54px] rounded-xl border px-1 py-1 flex flex-col gap-0.5 text-left ${
                                 !inMonth
                                   ? 'border-transparent'
-                                  : 'border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/80'
+                                  : 'border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/80 hover:border-indigo-300 dark:hover:border-indigo-600'
                               }`}
                             >
                               <div
                                 className={`text-[9px] font-semibold ${
-                                  isToday
-                                    ? 'text-emerald-700 dark:text-emerald-300'
-                                    : 'text-slate-600 dark:text-slate-300'
+                                  isToday ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-600 dark:text-slate-300'
                                 }`}
                               >
                                 {inMonth ? dayNumber : ''}
                               </div>
                               <div className="flex-1 space-y-0.5 overflow-hidden">
-                                {dayItems.slice(0, 3).map((item) => {
-                                  const kind = item.kind ?? 'reminder';
-                                  const isEventLike = kind === 'event' || kind === 'appointment' || kind === 'meeting';
-                                  const chipColor = isEventLike
-                                    ? 'bg-emerald-500/90 text-white'
-                                    : 'bg-lime-400/90 text-emerald-950';
-                                  return (
-                                    <div
-                                      key={item.id}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        openEditorFor(null, item, iso);
-                                      }}
-                                      className={`rounded-full px-1.5 py-0.5 text-[8px] font-semibold truncate ${chipColor}`}
-                                    >
-                                      {item.title}
-                                    </div>
-                                  );
-                                })}
-                                {dayItems.length > 3 && (
+                                {dayItems.slice(0, 2).map((item) => (
+                                  <div
+                                    key={item.id}
+                                    className="rounded-full px-1.5 py-0.5 text-[8px] font-semibold truncate bg-emerald-600/90 text-white"
+                                  >
+                                    {item.title}
+                                  </div>
+                                ))}
+                                {dayItems.length > 2 && (
                                   <div className="text-[8px] text-slate-400 dark:text-slate-500">
-                                    +{dayItems.length - 3} more
+                                    +{dayItems.length - 2}
                                   </div>
                                 )}
                               </div>
-                            </div>,
+                            </button>,
                           );
                         }
                         return cellsArray;
@@ -6720,7 +7517,9 @@ const App: React.FC = () => {
                 onClick={() => setScheduleFormOpen((open) => !open)}
                 className="w-full flex items-center justify-between px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300"
               >
-                <span>{editingScheduleId ? 'Edit item' : `Add ${scheduleView} item`}</span>
+                <span>
+                  {editingScheduleId ? 'Edit item' : 'Add item'}
+                </span>
                 <span className="text-[11px] font-semibold">{scheduleFormOpen ? '−' : '+'}</span>
               </button>
               {scheduleFormOpen && (
@@ -6735,7 +7534,11 @@ const App: React.FC = () => {
                   <div className="flex gap-2">
                     <select
                       value={scheduleKind}
-                      onChange={(e) => setScheduleKind(e.target.value as 'event' | 'reminder' | 'teacherBlock')}
+                      onChange={(e) =>
+                        setScheduleKind(
+                          e.target.value as 'event' | 'reminder' | 'teacherBlock' | 'appointment' | 'meeting',
+                        )
+                      }
                       className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[11px] text-slate-800 dark:text-slate-100 outline-none focus:border-indigo-400"
                     >
                       <option value="reminder">Reminder</option>
@@ -6809,6 +7612,30 @@ const App: React.FC = () => {
                     >
                       {editingScheduleId ? 'Update schedule' : 'Add to schedule'}
                     </button>
+                    {editingScheduleId && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const id = `s_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+                          const base: ScheduleItem = {
+                            id,
+                            title: scheduleTitle.trim() || 'Copy',
+                            date: scheduleDate || todayIso,
+                            view: scheduleView,
+                            kind: scheduleKind,
+                            courseId: scheduleCourseId || undefined,
+                            assignmentId: scheduleAssignmentId || undefined,
+                            notes: scheduleNotes || undefined,
+                            time: scheduleTime || undefined,
+                            recurrence: scheduleRecurrence,
+                          };
+                          setScheduleItems((prev) => [base, ...prev]);
+                        }}
+                        className="mt-1 px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-[11px] font-semibold text-slate-700 dark:text-slate-200"
+                      >
+                        Duplicate
+                      </button>
+                    )}
                     {editingScheduleId && (
                       <button
                         type="button"

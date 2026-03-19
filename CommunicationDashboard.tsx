@@ -163,6 +163,7 @@ const COMM_VOICE_DRAFT_KEY = "dg_comm_voice_draft_v1";
 const THREADS_NOTIFY_KEY = "dg_threads_notify_v1";
 const THREADS_QUIET_KEY = "dg_threads_quiet_hours_v1";
 const THREADS_LAST_SEEN_KEY = "dg_threads_last_seen_v1";
+const COMM_TAB_KEY = "dg_communicate_tab_v1";
 
 type PersistedCommunicateState = {
   schoolName?: string;
@@ -190,6 +191,22 @@ export const CommunicationDashboard: React.FC<{
 }> = ({ educatorName, courses = [], classroom, students: initialStudents = [], accessToken, isDemoMode }) => {
   const persisted = loadPersistedState();
 
+  const [commTab, setCommTab] = useState<'cockpit' | 'compose' | 'threads' | 'log'>(() => {
+    try {
+      const raw = localStorage.getItem(COMM_TAB_KEY);
+      return raw === 'compose' || raw === 'threads' || raw === 'log' || raw === 'cockpit' ? raw : 'cockpit';
+    } catch {
+      return 'cockpit';
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(COMM_TAB_KEY, commTab);
+    } catch {
+      // ignore
+    }
+  }, [commTab]);
+
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
   const [communicateStudents, setCommunicateStudents] = useState<StudentOption[]>(initialStudents);
   const [isLoadingStudents, setIsLoadingStudents] = useState(false);
@@ -215,7 +232,7 @@ export const CommunicationDashboard: React.FC<{
   const [subject, setSubject] = useState(() => persisted?.subject ?? "ENL / ESL");
   const [period, setPeriod] = useState(() => persisted?.period ?? "none");
   const [note, setNote] = useState(() => persisted?.note ?? "");
-  const [search, _setSearch] = useState("");
+  const [search, setSearch] = useState("");
   const [activeMsg, setActiveMsg] = useState<MessageTemplate | null>(null);
   const [selectedBehaviors, setSelectedBehaviors] = useState<Set<number>>(new Set());
   const [englishText, setEnglishText] = useState("");
@@ -240,6 +257,7 @@ export const CommunicationDashboard: React.FC<{
   const [threadMessages, setThreadMessages] = useState<MessageDoc[]>([]);
   const [isMessagesLoading, setIsMessagesLoading] = useState(false);
   const [isSendingThread, setIsSendingThread] = useState(false);
+  const [threadsQuery, setThreadsQuery] = useState('');
   const [notifyEnabled, setNotifyEnabled] = useState<boolean>(() => {
     try { return localStorage.getItem(THREADS_NOTIFY_KEY) === "1"; } catch { return false; }
   });
@@ -504,6 +522,16 @@ export const CommunicationDashboard: React.FC<{
     [search, audience]
   );
 
+  const filteredThreads = useMemo(() => {
+    const q = threadsQuery.trim().toLowerCase();
+    const list = [...threads].sort((a, b) => (b.lastMessageAt || '').localeCompare(a.lastMessageAt || ''));
+    if (!q) return list;
+    return list.filter((t) => {
+      const hay = `${t.studentName || ''} ${t.lastMessageText || ''}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [threads, threadsQuery]);
+
   const toggleBehavior = (idx: number) => {
     setSelectedBehaviors((prev) => {
       const next = new Set(prev);
@@ -687,379 +715,478 @@ export const CommunicationDashboard: React.FC<{
 
   return (
     <div className="flex-1 min-h-0 flex flex-col gap-2 pb-2 overflow-hidden">
-      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar flex flex-col gap-2">
-      {/* Step 1: Who to contact – master selection */}
-      <div className={card}>
-        <p className={`${sectionTitle} mb-2`}>1. Who are you contacting?</p>
-        <div className="flex flex-wrap gap-1.5">
-          {(['parent','student','staff','admin'] as Audience[]).map((a) => (
-            <button
-              key={a}
-              type="button"
-              onClick={() => { setAudience(a); setActiveMsg(null); setEnglishText(""); setSpanishText(""); }}
-              className={`${chip} ${audience === a ? 'bg-indigo-600 text-white border-indigo-600' : chipInactive}`}
-            >
-              {a === 'parent' ? 'Parent/Guardian' : a === 'student' ? 'Student' : a === 'staff' ? 'Staff' : 'Admin'}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Step 2: Course → Student → Gender → Subject */}
-      <div className={card}>
-        <p className={`${sectionTitle} mb-1.5`}>2. Context</p>
-        <div className="space-y-1.5">
-          <div>
-            <label className={label}>Course</label>
-            <select
-              value={selectedCourseId ?? ''}
-              onChange={(e) => handleSelectCourse(e.target.value || '')}
-              className={input}
-            >
-              <option value="">Select a course…</option>
-              {courses.map((c) => (
-                <option key={c.id} value={c.id}>{c.name} {c.period ? `(${c.period})` : ''}</option>
-              ))}
-            </select>
-            {courses.length === 0 && (
-              <p className={`mt-0.5 ${helperText}`}>Pick a course in Grade to load your roster.</p>
-            )}
-          </div>
-
-          <div className="relative">
-            <label className={label}>Student</label>
-            {students.length > 0 ? (
-            <>
-              <div
-                className="flex items-center gap-1 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 px-2 py-1.5"
-                onClick={() => setShowStudentDropdown((v) => !v)}
+      {/* Communicate cockpit (no-scroll) */}
+      <div className="shrink-0 rounded-2xl bg-white/90 dark:bg-slate-900/85 border border-slate-200 dark:border-slate-700 p-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="inline-flex rounded-full bg-slate-100 dark:bg-slate-800 p-0.5 text-[10px]">
+            {(['cockpit', 'compose', 'threads', 'log'] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setCommTab(t)}
+                className={`px-3 py-1 rounded-full font-semibold capitalize ${
+                  commTab === t ? 'bg-indigo-600 text-white' : 'text-slate-700 dark:text-slate-300'
+                }`}
               >
-                <input
-                  value={studentName}
-                  onChange={(e) => {
-                    setStudentName(e.target.value);
-                    setShowStudentDropdown(true);
-                    if (activeMsg) recomputeTexts(activeMsg);
-                  }}
-                  onFocus={() => setShowStudentDropdown(true)}
-                  placeholder="Search or select..."
-                  className="flex-1 min-w-0 bg-transparent text-[11px] outline-none"
-                />
-                <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${showStudentDropdown ? 'rotate-180' : ''}`} />
-              </div>
-              {showStudentDropdown && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setShowStudentDropdown(false)} aria-hidden="true" />
-                  <ul className="absolute left-0 right-0 top-full mt-0.5 max-h-36 overflow-y-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg z-50 py-1">
-                    {filteredStudents.length === 0 ? (
-                      <li className="px-2 py-2 text-[10px] text-slate-500">No matches. Type to add manually.</li>
-                    ) : (
-                      filteredStudents.map((s) => (
-                        <li key={s.id}>
-                          <button
-                            type="button"
-                            className="w-full text-left px-2 py-1.5 text-[11px] hover:bg-indigo-50 dark:hover:bg-indigo-900/30"
-                            onClick={() => {
-                              setStudentName(s.name);
-                              setShowStudentDropdown(false);
-                              if (activeMsg) recomputeTexts(activeMsg);
-                            }}
-                          >
-                            {s.name}
-                          </button>
-                        </li>
-                      ))
-                    )}
-                  </ul>
-                </>
-              )}
-              <span className={helperText}>{students.length} in roster</span>
-            </>
-          ) : (
-            <input
-              value={studentName}
-              onChange={(e) => handleFieldChange(() => setStudentName(e.target.value))}
-              className={input}
-              placeholder={isLoadingStudents ? "Loading…" : "Select course first or type name"}
-            />
-          )}
+                {t === 'cockpit' ? 'Today' : t}
+              </button>
+            ))}
           </div>
-
-          <div className="grid grid-cols-2 gap-1.5 mt-1.5">
-            <div>
-              <label className={label}>Gender / Pronouns</label>
-              <select value={gender} onChange={(e) => handleFieldChange(() => setGender(e.target.value as GenderKey))} className={input}>
-                <option value="neutral">They/Them</option>
-                <option value="female">She/Her</option>
-                <option value="male">He/Him</option>
-              </select>
-            </div>
-            <div>
-              <label className={label}>Subject</label>
-              <select value={subject} onChange={(e) => handleFieldChange(() => setSubject(e.target.value))} className={input}>
-                <option value="ENL / ESL">ENL / ESL</option>
-                <option value="Language Arts">Language Arts</option>
-                <option value="Math">Math</option>
-                <option value="Science">Science</option>
-                <option value="Social Studies">Social Studies</option>
-                <option value="Homeroom / Advisory">Homeroom</option>
-              </select>
-            </div>
-          </div>
-
-          <button
-          type="button"
-          onClick={() => setShowMoreDetails((v) => !v)}
-          className="mb-2 w-full flex items-center justify-between px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800/60 text-[10px] font-semibold text-slate-600 dark:text-slate-300"
-        >
-          <span>{showMoreDetails ? 'Hide' : 'Parent name, period, school…'}</span>
-          <ChevronRight className={`w-4 h-4 transition-transform ${showMoreDetails ? 'rotate-90' : ''}`} />
-        </button>
-        {showMoreDetails && (
-          <div className="grid grid-cols-2 gap-1.5 text-[10px] mt-1.5">
-            <div><label className={label}>Parent / Guardian</label><input value={parentName} onChange={(e) => handleFieldChange(() => setParentName(e.target.value))} className={input} placeholder="Name" /></div>
-            <div><label className={label}>Period</label><select value={period} onChange={(e) => handleFieldChange(() => setPeriod(e.target.value))} className={input}><option value="none">N/A</option>{[1,2,3,4,5,6,7,8].map((n) => <option key={n} value={String(n)}>Period {n}</option>)}</select></div>
-            <div className="col-span-2"><label className={label}>School</label><input value={schoolName} onChange={(e) => handleFieldChange(() => setSchoolName(e.target.value))} className={input} placeholder="Your school" /></div>
-            <div className="col-span-2"><label className={label}>From (your name)</label><input value={teacherName} onChange={(e) => handleFieldChange(() => setTeacherName(e.target.value))} className={input} placeholder="Your name" /></div>
-          </div>
-        )}
-        <p className={`mt-1 ${helperText}`}>
-          We remember these details on this device so you don’t have to re‑type them.
-        </p>
-      </div>
-
-      {/* Step 3: Template dropdown */}
-      <div className={card}>
-        <p className={`${sectionTitle} mb-1.5`}>3. Template</p>
-        <select
-          value={activeMsg ? String(filteredMessages.findIndex((m) => m.title === activeMsg.title && m.cat === activeMsg.cat)) : "-1"}
-          onChange={(e) => {
-            const idx = parseInt(e.target.value, 10);
-            const msg = idx >= 0 ? filteredMessages[idx] : null;
-            if (msg) handleSelectMessage(msg);
-          }}
-          className={input}
-        >
-          <option value="-1">Select a template…</option>
-          {filteredMessages.map((msg, idx) => (
-            <option key={`${msg.cat}-${msg.title}`} value={idx}>{msg.title} ({msg.cat})</option>
-          ))}
-        </select>
-        {filteredMessages.length === 0 && (
-          <p className={`mt-1 ${helperText}`}>No templates for {audience}. Change who you're contacting above.</p>
-        )}
-        <button type="button" onClick={() => setShowBehaviors((v) => !v)} className="mt-1.5 w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[10px] font-semibold text-slate-700 dark:text-slate-200 flex items-center justify-between">
-          <span>{showBehaviors ? 'Hide behavior options' : 'Add behavior/context (optional)'}</span>
-          <span>{showBehaviors ? '−' : '+'}</span>
-        </button>
-        {showBehaviors && (
-          <div className="mt-1 space-y-1.5">
-            <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto custom-scrollbar">
-              {behaviors.map((b, idx) => (
-                <button key={idx} type="button" onClick={() => { toggleBehavior(idx); if (activeMsg) recomputeTexts(activeMsg); }} className={`${chip} ${selectedBehaviors.has(idx) ? "bg-emerald-500/20 border-emerald-500 text-emerald-700 dark:text-emerald-200" : chipInactive}`}>{b.e}</button>
-              ))}
-            </div>
-            <textarea value={note} onChange={(e) => handleFieldChange(() => setNote(e.target.value))} className={`${textarea} min-h-[45px] max-h-[80px] text-[10px]`} placeholder="Details to add to the message…" />
-          </div>
-        )}
-      </div>
-
-      {/* Step 4: Preview & send */}
-      <div className={`${card} flex-1 flex flex-col min-h-0`}>
-        <p className={`${sectionTitle} mb-2`}>4. Preview & send</p>
-          <div className="flex flex-wrap gap-2 mb-1.5">
-            <button type="button" disabled={!englishText} onClick={openEmail} className={`${chip} ${englishText ? "bg-sky-500 text-white border-sky-500 hover:bg-sky-600" : "border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500"}`}><Mail className="w-3.5 h-3.5 mr-1 inline" /> Email</button>
-            <button type="button" disabled={!englishText} onClick={openSms} className={`${chip} ${englishText ? "bg-emerald-500 text-white border-emerald-500 hover:bg-emerald-600" : "border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500"}`}><MessageCircle className="w-3.5 h-3.5 mr-1 inline" /> SMS</button>
-            <button type="button" disabled={!englishText} onClick={() => copyToClipboard(englishText)} className={`${chip} ${englishText ? "border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 bg-white/80 dark:bg-slate-900/80" : "border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500"}`}><Copy className="w-3.5 h-3.5 mr-1 inline" /> Copy</button>
-            <button type="button" disabled={!spanishText || spanishText === "N/A"} onClick={() => copyToClipboard(spanishText)} className={`${chip} ${spanishText && spanishText !== "N/A" ? "border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 bg-white/80 dark:bg-slate-900/80" : "border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500"}`}>Copy Spanish</button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                setCommTab('compose');
+                setActiveMsg(null);
+                setEnglishText('');
+                setSpanishText('');
+                setSelectedBehaviors(new Set());
+              }}
+              className="px-2 py-1 rounded-full bg-emerald-600 text-white text-[10px] font-semibold"
+            >
+              + New
+            </button>
             {firebaseEnabled && (
               <button
                 type="button"
-                disabled={!englishText || !studentName.trim() || isSendingThread}
-                onClick={handleSendToThread}
-                className={`${chip} ${
-                  englishText && studentName.trim() && !isSendingThread
-                    ? "bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700"
-                    : "border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500"
-                }`}
-                title="Send this message into a thread (beta)"
+                onClick={() => {
+                  setCommTab('threads');
+                  void refreshThreads();
+                }}
+                className="px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-950/40 text-[10px] font-semibold"
               >
-                {isSendingThread ? "Sending…" : "Send to thread"}
+                Refresh
               </button>
             )}
           </div>
+        </div>
 
-          <div className="flex-1 grid grid-cols-1 gap-1.5 min-h-0">
-            <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-900/80 p-2 overflow-y-auto custom-scrollbar">
-              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400 mb-1">
-                English
-              </p>
-              <pre className="whitespace-pre-wrap text-[10px] text-slate-800 dark:text-slate-100 m-0 font-sans">
-                {englishText || "Select a template and fill in the details to generate a message."}
-              </pre>
-            </div>
-            <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-900/80 p-2 overflow-y-auto custom-scrollbar">
-              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400 mb-1">
-                Spanish (optional)
-              </p>
-              <pre className="whitespace-pre-wrap text-[10px] text-slate-800 dark:text-slate-100 m-0 font-sans">
-                {spanishText || "Spanish version will appear here for most family messages."}
-              </pre>
-            </div>
-          </div>
+        <div className="mt-2 grid grid-cols-3 gap-2">
+          <button
+            type="button"
+            onClick={() => setCommTab('compose')}
+            className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-950/40 px-3 py-2 text-left"
+          >
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Compose</p>
+            <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">Templates</p>
+            <p className="text-[10px] text-slate-500 dark:text-slate-400">{messages.length} ready-to-send</p>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setCommTab('threads');
+              void refreshThreads();
+            }}
+            className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-950/40 px-3 py-2 text-left"
+          >
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Threads</p>
+            <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">{threads.length}</p>
+            <p className="text-[10px] text-slate-500 dark:text-slate-400">{firebaseEnabled ? 'Beta inbox' : 'Enable Firebase'}</p>
+          </button>
+          <button
+            type="button"
+            onClick={() => setCommTab('log')}
+            className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-950/40 px-3 py-2 text-left"
+          >
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Log</p>
+            <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">{contactLogSheetId ? 'Sheet connected' : 'Connect Sheet'}</p>
+            <p className="text-[10px] text-slate-500 dark:text-slate-400">One-tap record keeping</p>
+          </button>
+        </div>
+      </div>
 
-          {/* Contact log sheet settings */}
-          <div className="mt-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50 p-2">
-            <p className="text-[10px] font-semibold text-slate-600 dark:text-slate-400 mb-1.5">Contact log → Google Sheet</p>
-            {!accessToken ? (
-              <p className="text-[10px] text-slate-500 dark:text-slate-500">
-                {isDemoMode
-                  ? "Demo mode can't save to Sheets. Go to Home → Sign in with Google to log contacts to your own sheet."
-                  : "Go to Home and sign in with Google to save contacts to your own sheet."}
+      {/* Main content (scroll) */}
+      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar flex flex-col gap-2">
+        {commTab === 'cockpit' && (
+          <>
+            <div className="rounded-2xl bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 p-3">
+              <p className="text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
+                Fast path: pick who you’re contacting, select a template, send, then log it—no scrolling required.
               </p>
-            ) : contactLogSheetId ? (
+            </div>
+
+            <div className="grid grid-cols-1 gap-2">
+              <div className={card}>
+                <p className={`${sectionTitle} mb-2`}>Quick compose</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {(['parent', 'student', 'staff', 'admin'] as Audience[]).map((a) => (
+                    <button
+                      key={a}
+                      type="button"
+                      onClick={() => {
+                        setAudience(a);
+                        setCommTab('compose');
+                        setActiveMsg(null);
+                        setEnglishText('');
+                        setSpanishText('');
+                      }}
+                      className={`${chip} ${audience === a ? 'bg-indigo-600 text-white border-indigo-600' : chipInactive}`}
+                    >
+                      {a === 'parent' ? 'Parent/Guardian' : a === 'student' ? 'Student' : a === 'staff' ? 'Staff' : 'Admin'}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCommTab('compose')}
+                    className="flex-1 py-2 rounded-xl bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 text-[11px] font-semibold"
+                  >
+                    Open composer
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCommTab('threads');
+                      void refreshThreads();
+                    }}
+                    className="flex-1 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] font-semibold"
+                  >
+                    Open inbox
+                  </button>
+                </div>
+              </div>
+
+              <div className={card}>
+                <p className={`${sectionTitle} mb-1.5`}>Most-used templates</p>
+                <div className="space-y-1">
+                  {messages.slice(0, 4).map((m) => (
+                    <button
+                      key={`${m.cat}-${m.title}`}
+                      type="button"
+                      onClick={() => {
+                        setCommTab('compose');
+                        handleSelectMessage(m);
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/70 hover:bg-slate-100 dark:hover:bg-slate-800/50"
+                    >
+                      <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">{m.title}</p>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400">{m.cat}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+
+        {commTab === 'compose' && (
+          <>
+            <div className={card}>
+              <p className={`${sectionTitle} mb-2`}>Who are you contacting?</p>
+              <div className="flex flex-wrap gap-1.5">
+                {(['parent', 'student', 'staff', 'admin'] as Audience[]).map((a) => (
+                  <button
+                    key={a}
+                    type="button"
+                    onClick={() => {
+                      setAudience(a);
+                      setActiveMsg(null);
+                      setEnglishText('');
+                      setSpanishText('');
+                    }}
+                    className={`${chip} ${audience === a ? 'bg-indigo-600 text-white border-indigo-600' : chipInactive}`}
+                  >
+                    {a === 'parent' ? 'Parent/Guardian' : a === 'student' ? 'Student' : a === 'staff' ? 'Staff' : 'Admin'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className={card}>
+              <p className={`${sectionTitle} mb-1.5`}>Context</p>
+              <div className="space-y-1.5">
+                <div>
+                  <label className={label}>Course</label>
+                  <select
+                    value={selectedCourseId ?? ''}
+                    onChange={(e) => handleSelectCourse(e.target.value || '')}
+                    className={input}
+                  >
+                    <option value="">Select a course…</option>
+                    {courses.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} {c.period ? `(${c.period})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {courses.length === 0 && (
+                    <p className={`mt-0.5 ${helperText}`}>Pick a course in Grade to load your roster.</p>
+                  )}
+                </div>
+
+                <div className="relative">
+                  <label className={label}>Student</label>
+                  {students.length > 0 ? (
+                    <>
+                      <div
+                        className="flex items-center gap-1 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 px-2 py-1.5"
+                        onClick={() => setShowStudentDropdown((v) => !v)}
+                      >
+                        <input
+                          value={studentName}
+                          onChange={(e) => {
+                            setStudentName(e.target.value);
+                            setShowStudentDropdown(true);
+                            if (activeMsg) recomputeTexts(activeMsg);
+                          }}
+                          onFocus={() => setShowStudentDropdown(true)}
+                          placeholder="Search or select..."
+                          className="flex-1 min-w-0 bg-transparent text-[11px] outline-none"
+                        />
+                        <ChevronDown
+                          className={`w-4 h-4 text-slate-400 transition-transform ${showStudentDropdown ? 'rotate-180' : ''}`}
+                        />
+                      </div>
+                      {showStudentDropdown && (
+                        <>
+                          <div className="fixed inset-0 z-40" onClick={() => setShowStudentDropdown(false)} aria-hidden="true" />
+                          <ul className="absolute left-0 right-0 top-full mt-0.5 max-h-36 overflow-y-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg z-50 py-1">
+                            {filteredStudents.length === 0 ? (
+                              <li className="px-2 py-2 text-[10px] text-slate-500">No matches. Type to add manually.</li>
+                            ) : (
+                              filteredStudents.map((s) => (
+                                <li key={s.id}>
+                                  <button
+                                    type="button"
+                                    className="w-full text-left px-2 py-1.5 text-[11px] hover:bg-indigo-50 dark:hover:bg-indigo-900/30"
+                                    onClick={() => {
+                                      setStudentName(s.name);
+                                      setShowStudentDropdown(false);
+                                      if (activeMsg) recomputeTexts(activeMsg);
+                                    }}
+                                  >
+                                    {s.name}
+                                  </button>
+                                </li>
+                              ))
+                            )}
+                          </ul>
+                        </>
+                      )}
+                      <span className={helperText}>{students.length} in roster</span>
+                    </>
+                  ) : (
+                    <input
+                      value={studentName}
+                      onChange={(e) => handleFieldChange(() => setStudentName(e.target.value))}
+                      className={input}
+                      placeholder={isLoadingStudents ? 'Loading…' : 'Select course first or type name'}
+                    />
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-1.5 mt-1.5">
+                  <div>
+                    <label className={label}>Gender / Pronouns</label>
+                    <select
+                      value={gender}
+                      onChange={(e) => handleFieldChange(() => setGender(e.target.value as GenderKey))}
+                      className={input}
+                    >
+                      <option value="neutral">They/Them</option>
+                      <option value="female">She/Her</option>
+                      <option value="male">He/Him</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className={label}>Subject</label>
+                    <select value={subject} onChange={(e) => handleFieldChange(() => setSubject(e.target.value))} className={input}>
+                      <option value="ENL / ESL">ENL / ESL</option>
+                      <option value="Language Arts">Language Arts</option>
+                      <option value="Math">Math</option>
+                      <option value="Science">Science</option>
+                      <option value="Social Studies">Social Studies</option>
+                      <option value="Homeroom / Advisory">Homeroom</option>
+                    </select>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowMoreDetails((v) => !v)}
+                  className="mb-2 w-full flex items-center justify-between px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800/60 text-[10px] font-semibold text-slate-600 dark:text-slate-300"
+                >
+                  <span>{showMoreDetails ? 'Hide' : 'Parent name, period, school…'}</span>
+                  <ChevronRight className={`w-4 h-4 transition-transform ${showMoreDetails ? 'rotate-90' : ''}`} />
+                </button>
+                {showMoreDetails && (
+                  <div className="grid grid-cols-2 gap-1.5 text-[10px] mt-1.5">
+                    <div>
+                      <label className={label}>Parent / Guardian</label>
+                      <input value={parentName} onChange={(e) => handleFieldChange(() => setParentName(e.target.value))} className={input} placeholder="Name" />
+                    </div>
+                    <div>
+                      <label className={label}>Period</label>
+                      <select value={period} onChange={(e) => handleFieldChange(() => setPeriod(e.target.value))} className={input}>
+                        <option value="none">N/A</option>
+                        {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+                          <option key={n} value={String(n)}>
+                            Period {n}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="col-span-2">
+                      <label className={label}>School</label>
+                      <input value={schoolName} onChange={(e) => handleFieldChange(() => setSchoolName(e.target.value))} className={input} placeholder="Your school" />
+                    </div>
+                    <div className="col-span-2">
+                      <label className={label}>From (your name)</label>
+                      <input value={teacherName} onChange={(e) => handleFieldChange(() => setTeacherName(e.target.value))} className={input} placeholder="Your name" />
+                    </div>
+                  </div>
+                )}
+                <p className={`mt-1 ${helperText}`}>We remember these details on this device so you don’t have to re‑type them.</p>
+              </div>
+            </div>
+
+            <div className={card}>
               <div className="flex items-center justify-between gap-2">
-                <a
-                  href={`https://docs.google.com/spreadsheets/d/${contactLogSheetId}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[10px] text-indigo-600 dark:text-indigo-400 truncate flex-1"
-                >
-                  View sheet ↗
-                </a>
-                <button
-                  type="button"
-                  onClick={() => setShowSheetPicker(true)}
-                  className="text-[9px] font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
-                >
-                  Change
-                </button>
+                <p className={`${sectionTitle}`}>Template</p>
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search templates…"
+                  className="w-[160px] px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/70 text-[10px]"
+                />
               </div>
-            ) : (
-              <div className="space-y-2">
-                <button
-                  type="button"
-                  disabled={isCreatingSheet}
-                  onClick={handleCreateNewSheet}
-                  className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-indigo-600 text-white text-[11px] font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <FilePlus className="w-4 h-4 shrink-0" />
-                  {isCreatingSheet ? "Creating…" : "Create new sheet (default)"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowSheetPicker(true)}
-                  className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 text-[10px] font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/50"
-                >
-                  <Link2 className="w-3.5 h-3.5" /> Or paste existing sheet URL
-                </button>
-              </div>
-            )}
-          </div>
-
-          {createSheetError && !contactLogSheetId && (
-            <p className="mt-1 text-[10px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-2 py-1.5 rounded-lg">
-              {createSheetError}
-            </p>
-          )}
-
-          {showSheetPicker && accessToken && (
-            <div className="mt-2 p-2 rounded-lg border border-indigo-200 dark:border-indigo-700 bg-indigo-50/30 dark:bg-indigo-900/20 space-y-2">
-              {createSheetError && (
-                <p className="text-[10px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-2 py-1.5 rounded-lg">
-                  {createSheetError}
-                </p>
+              <select
+                value={activeMsg ? String(filteredMessages.findIndex((m) => m.title === activeMsg.title && m.cat === activeMsg.cat)) : '-1'}
+                onChange={(e) => {
+                  const idx = parseInt(e.target.value, 10);
+                  const msg = idx >= 0 ? filteredMessages[idx] : null;
+                  if (msg) handleSelectMessage(msg);
+                }}
+                className={`${input} mt-1.5`}
+              >
+                <option value="-1">Select a template…</option>
+                {filteredMessages.map((msg, idx) => (
+                  <option key={`${msg.cat}-${msg.title}`} value={idx}>
+                    {msg.title} ({msg.cat})
+                  </option>
+                ))}
+              </select>
+              {filteredMessages.length === 0 && (
+                <p className={`mt-1 ${helperText}`}>No templates for {audience}. Change who you're contacting above.</p>
               )}
               <button
                 type="button"
-                disabled={isCreatingSheet}
-                onClick={handleCreateNewSheet}
-                className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-indigo-600 text-white text-[11px] font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => setShowBehaviors((v) => !v)}
+                className="mt-1.5 w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[10px] font-semibold text-slate-700 dark:text-slate-200 flex items-center justify-between"
               >
-                <FilePlus className="w-4 h-4 shrink-0" />
-                {isCreatingSheet ? "Creating…" : "Create new sheet (default)"}
+                <span>{showBehaviors ? 'Hide behavior options' : 'Add behavior/context (optional)'}</span>
+                <span>{showBehaviors ? '−' : '+'}</span>
               </button>
-              <div className="flex gap-1.5">
-                <input
-                  value={sheetInputValue}
-                  onChange={(e) => setSheetInputValue(e.target.value)}
-                  placeholder="Paste sheet URL or ID"
-                  className={`${input} flex-1 text-[10px]`}
-                />
-                <button
-                  type="button"
-                  onClick={handleUseSheetFromInput}
-                  disabled={!parseSheetId(sheetInputValue)}
-                  className="px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-[10px] font-semibold disabled:opacity-40"
-                >
-                  Use this
-                </button>
-              </div>
-              <button type="button" onClick={() => { setShowSheetPicker(false); setSheetInputValue(""); setCreateSheetError(null); }} className="w-full text-[10px] text-slate-500 hover:text-slate-700">
-                Cancel
-              </button>
-            </div>
-          )}
-
-          {logState === "error" && logError && (
-            <div className="mt-2 space-y-1">
-              <p className="text-[10px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-2 py-1.5 rounded-lg">
-                {logError}
-              </p>
-              {(logError.includes("permission") || logError.includes("insufficient") || logError.includes("inaccessible")) && (
-                <p className="text-[9px] text-slate-500 dark:text-slate-400">
-                  Tip: The sheet may be view-only or owned by someone else. Try "Create new sheet" or use a sheet you own.
-                </p>
+              {showBehaviors && (
+                <div className="mt-1 space-y-1.5">
+                  <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto custom-scrollbar">
+                    {behaviors.map((b, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          toggleBehavior(idx);
+                          if (activeMsg) recomputeTexts(activeMsg);
+                        }}
+                        className={`${chip} ${selectedBehaviors.has(idx) ? 'bg-emerald-500/20 border-emerald-500 text-emerald-700 dark:text-emerald-200' : chipInactive}`}
+                      >
+                        {b.e}
+                      </button>
+                    ))}
+                  </div>
+                  <textarea
+                    value={note}
+                    onChange={(e) => handleFieldChange(() => setNote(e.target.value))}
+                    className={`${textarea} min-h-[45px] max-h-[80px] text-[10px]`}
+                    placeholder="Details to add to the message…"
+                  />
+                </div>
               )}
             </div>
-          )}
-          <button
-            type="button"
-            disabled={!canLog || logState === "logging" || !accessToken}
-            onClick={handleLog}
-            className={`mt-2 flex items-center justify-center gap-2 ${btnPrimary} ${!canLog || logState === "logging" || !accessToken ? "bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500" : "bg-violet-500 text-white hover:bg-violet-600"}`}
-          >
-            <ClipboardList className="w-4 h-4" />
-            {logState === "idle" && (contactLogSheetId ? "Log to contact record" : "Create sheet & log")}
-            {logState === "logging" && "Logging…"}
-            {logState === "done" && "Logged!"}
-            {logState === "error" && "Error – Try again"}
-          </button>
 
-          {/* Messaging threads (beta) */}
-          <div className="mt-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50 p-2">
+            <div className={`${card} flex flex-col min-h-0`}>
+              <p className={`${sectionTitle} mb-2`}>Preview & send</p>
+              <div className="flex flex-wrap gap-2 mb-1.5">
+                <button type="button" disabled={!englishText} onClick={openEmail} className={`${chip} ${englishText ? 'bg-sky-500 text-white border-sky-500 hover:bg-sky-600' : 'border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500'}`}>
+                  <Mail className="w-3.5 h-3.5 mr-1 inline" /> Email
+                </button>
+                <button type="button" disabled={!englishText} onClick={openSms} className={`${chip} ${englishText ? 'bg-emerald-500 text-white border-emerald-500 hover:bg-emerald-600' : 'border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500'}`}>
+                  <MessageCircle className="w-3.5 h-3.5 mr-1 inline" /> SMS
+                </button>
+                <button type="button" disabled={!englishText} onClick={() => copyToClipboard(englishText)} className={`${chip} ${englishText ? 'border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 bg-white/80 dark:bg-slate-900/80' : 'border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500'}`}>
+                  <Copy className="w-3.5 h-3.5 mr-1 inline" /> Copy
+                </button>
+                <button type="button" disabled={!spanishText || spanishText === 'N/A'} onClick={() => copyToClipboard(spanishText)} className={`${chip} ${spanishText && spanishText !== 'N/A' ? 'border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 bg-white/80 dark:bg-slate-900/80' : 'border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500'}`}>
+                  Copy Spanish
+                </button>
+                {firebaseEnabled && (
+                  <button
+                    type="button"
+                    disabled={!englishText || !studentName.trim() || isSendingThread}
+                    onClick={handleSendToThread}
+                    className={`${chip} ${
+                      englishText && studentName.trim() && !isSendingThread
+                        ? 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'
+                        : 'border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500'
+                    }`}
+                    title="Send this message into a thread (beta)"
+                  >
+                    {isSendingThread ? 'Sending…' : 'Send to thread'}
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 gap-1.5 min-h-0">
+                <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-900/80 p-2 overflow-y-auto custom-scrollbar">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400 mb-1">English</p>
+                  <pre className="whitespace-pre-wrap text-[10px] text-slate-800 dark:text-slate-100 m-0 font-sans">
+                    {englishText || 'Select a template and fill in the details to generate a message.'}
+                  </pre>
+                </div>
+                <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-900/80 p-2 overflow-y-auto custom-scrollbar">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400 mb-1">Spanish (optional)</p>
+                  <pre className="whitespace-pre-wrap text-[10px] text-slate-800 dark:text-slate-100 m-0 font-sans">
+                    {spanishText || 'Spanish version will appear here for most family messages.'}
+                  </pre>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+
+        {commTab === 'threads' && (
+          <div className={card}>
             <div className="flex items-center justify-between gap-2">
-              <p className="text-[10px] font-semibold text-slate-600 dark:text-slate-400">
-                Messaging threads (beta)
-              </p>
-              {firebaseEnabled && accessToken && (
-                <div className="flex items-center gap-2">
+              <p className={`${sectionTitle}`}>Inbox (threads)</p>
+              <div className="flex items-center gap-2">
+                {firebaseEnabled && accessToken && (
                   <button
                     type="button"
                     onClick={refreshThreads}
                     disabled={isThreadsLoading}
-                    className="text-[9px] font-semibold text-slate-600 dark:text-slate-300 hover:text-slate-800 disabled:opacity-50"
+                    className="text-[10px] font-semibold text-slate-600 dark:text-slate-300 hover:text-slate-800 disabled:opacity-50"
                   >
-                    {isThreadsLoading ? "Refreshing…" : "Refresh"}
+                    {isThreadsLoading ? 'Refreshing…' : 'Refresh'}
                   </button>
-                  {fbSession && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setFbSession(null);
-                        saveFirebaseSession(null);
-                        setThreads([]);
-                        setSelectedThreadId(null);
-                        setThreadMessages([]);
-                      }}
-                      className="text-[9px] font-semibold text-slate-500 hover:text-slate-700"
-                      title="Sign out of threads"
-                    >
-                      Sign out
-                    </button>
-                  )}
-                </div>
-              )}
+                )}
+                {fbSession && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFbSession(null);
+                      saveFirebaseSession(null);
+                      setThreads([]);
+                      setSelectedThreadId(null);
+                      setThreadMessages([]);
+                    }}
+                    className="text-[10px] font-semibold text-slate-500 hover:text-slate-700"
+                    title="Sign out of threads"
+                  >
+                    Sign out
+                  </button>
+                )}
+              </div>
             </div>
 
             {!firebaseEnabled ? (
@@ -1073,9 +1200,64 @@ export const CommunicationDashboard: React.FC<{
             ) : (
               <>
                 {threadsError && (
-                  <p className="mt-1 text-[10px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-2 py-1.5 rounded-lg">
+                  <p className="mt-2 text-[10px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-2 py-1.5 rounded-lg">
                     {threadsError}
                   </p>
+                )}
+
+                <div className="mt-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/70 p-2">
+                  <input
+                    value={threadsQuery}
+                    onChange={(e) => setThreadsQuery(e.target.value)}
+                    placeholder="Search threads…"
+                    className="w-full px-2 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-950/40 text-[11px]"
+                  />
+                  <div className="mt-2 max-h-56 overflow-y-auto custom-scrollbar space-y-1">
+                    {filteredThreads.length === 0 ? (
+                      <p className="text-[10px] text-slate-500 dark:text-slate-500 px-1">
+                        No threads yet. Use “Send to thread” from the composer to create one.
+                      </p>
+                    ) : (
+                      filteredThreads.map((t) => (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => void openThread(t.id)}
+                          className={`w-full text-left px-3 py-2 rounded-xl border text-[10px] transition-colors ${
+                            selectedThreadId === t.id
+                              ? 'border-indigo-400 bg-indigo-50/80 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-200'
+                              : 'border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/80 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/50'
+                          }`}
+                        >
+                          <div className="font-semibold">{t.studentName || 'Student'}</div>
+                          <div className="text-[9px] text-slate-500 dark:text-slate-400 truncate">{t.lastMessageText || '—'}</div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                {selectedThreadId && (
+                  <div className="mt-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/80 p-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Thread</p>
+                      {isMessagesLoading && <span className="text-[9px] text-slate-500">Loading…</span>}
+                    </div>
+                    <div className="mt-1 max-h-56 overflow-y-auto custom-scrollbar space-y-2">
+                      {threadMessages.length === 0 ? (
+                        <p className="text-[10px] text-slate-500 dark:text-slate-500">No messages yet.</p>
+                      ) : (
+                        threadMessages.map((m) => (
+                          <div key={m.id} className="px-2 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                            <p className="text-[10px] text-slate-800 dark:text-slate-100 whitespace-pre-wrap">{m.text}</p>
+                            {m.translatedText && (
+                              <p className="mt-1 text-[10px] text-slate-600 dark:text-slate-300 whitespace-pre-wrap">{m.translatedText}</p>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
                 )}
 
                 <div className="mt-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-900/70 p-2">
@@ -1084,21 +1266,21 @@ export const CommunicationDashboard: React.FC<{
                     <button
                       type="button"
                       onClick={async () => {
-                        if (typeof Notification === "undefined") {
+                        if (typeof Notification === 'undefined') {
                           setThreadsError("Notifications aren't supported on this device/browser.");
                           return;
                         }
                         const perm = await Notification.requestPermission();
-                        setNotifyEnabled(perm === "granted");
-                        if (perm !== "granted") setThreadsError("Notification permission denied.");
+                        setNotifyEnabled(perm === 'granted');
+                        if (perm !== 'granted') setThreadsError('Notification permission denied.');
                       }}
                       className={`px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest border transition-colors ${
                         notifyEnabled
-                          ? "bg-emerald-500/20 border-emerald-400/40 text-emerald-700 dark:text-emerald-200"
-                          : "bg-white/80 dark:bg-slate-900/80 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200"
+                          ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-700 dark:text-emerald-200'
+                          : 'bg-white/80 dark:bg-slate-900/80 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
                       }`}
                     >
-                      {notifyEnabled ? "Enabled" : "Enable"}
+                      {notifyEnabled ? 'Enabled' : 'Enable'}
                     </button>
                   </div>
 
@@ -1114,72 +1296,125 @@ export const CommunicationDashboard: React.FC<{
                   </div>
                   <p className={`mt-1 ${helperText}`}>If enabled, we poll threads and show a notification when something changes (no background push yet).</p>
                 </div>
+              </>
+            )}
+          </div>
+        )}
 
-                <div className="mt-2 grid grid-cols-1 gap-1.5">
-                  {threads.length === 0 ? (
-                    <p className="text-[10px] text-slate-500 dark:text-slate-500">
-                      No threads yet. Use “Send to thread” above to create one.
-                    </p>
+        {commTab === 'log' && (
+          <div className={card}>
+            <p className={`${sectionTitle} mb-2`}>Contact log</p>
+            {!accessToken ? (
+              <p className="text-[10px] text-slate-500 dark:text-slate-500">
+                {isDemoMode
+                  ? "Demo mode can't save to Sheets. Go to Home → Sign in with Google to log contacts to your own sheet."
+                  : 'Go to Home and sign in with Google to save contacts to your own sheet.'}
+              </p>
+            ) : (
+              <>
+                <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50 p-2">
+                  <p className="text-[10px] font-semibold text-slate-600 dark:text-slate-400 mb-1.5">Google Sheet</p>
+                  {contactLogSheetId ? (
+                    <div className="flex items-center justify-between gap-2">
+                      <a
+                        href={`https://docs.google.com/spreadsheets/d/${contactLogSheetId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[10px] text-indigo-600 dark:text-indigo-400 truncate flex-1"
+                      >
+                        View sheet ↗
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => setShowSheetPicker(true)}
+                        className="text-[9px] font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                      >
+                        Change
+                      </button>
+                    </div>
                   ) : (
-                    <div className="max-h-36 overflow-y-auto custom-scrollbar space-y-1">
-                      {threads.map((t) => (
-                        <button
-                          key={t.id}
-                          type="button"
-                          onClick={() => void openThread(t.id)}
-                          className={`w-full text-left px-3 py-2 rounded-xl border text-[10px] transition-colors ${
-                            selectedThreadId === t.id
-                              ? "border-indigo-400 bg-indigo-50/80 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-200"
-                              : "border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/80 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/50"
-                          }`}
-                        >
-                          <div className="font-semibold">{t.studentName || "Student"}</div>
-                          <div className="text-[9px] text-slate-500 dark:text-slate-400 truncate">
-                            {t.lastMessageText || "—"}
-                          </div>
-                        </button>
-                      ))}
+                    <div className="space-y-2">
+                      <button
+                        type="button"
+                        disabled={isCreatingSheet}
+                        onClick={handleCreateNewSheet}
+                        className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-indigo-600 text-white text-[11px] font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <FilePlus className="w-4 h-4 shrink-0" />
+                        {isCreatingSheet ? 'Creating…' : 'Create new sheet (default)'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowSheetPicker(true)}
+                        className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 text-[10px] font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/50"
+                      >
+                        <Link2 className="w-3.5 h-3.5" /> Or paste existing sheet URL
+                      </button>
                     </div>
                   )}
                 </div>
 
-                {selectedThreadId && (
-                  <div className="mt-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/80 p-2">
-                    <div className="flex items-center justify-between">
-                      <p className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
-                        Thread messages
+                {createSheetError && !contactLogSheetId && (
+                  <p className="mt-2 text-[10px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-2 py-1.5 rounded-lg">
+                    {createSheetError}
+                  </p>
+                )}
+
+                {showSheetPicker && accessToken && (
+                  <div className="mt-2 p-2 rounded-lg border border-indigo-200 dark:border-indigo-700 bg-indigo-50/30 dark:bg-indigo-900/20 space-y-2">
+                    {createSheetError && (
+                      <p className="text-[10px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-2 py-1.5 rounded-lg">
+                        {createSheetError}
                       </p>
-                      {isMessagesLoading && (
-                        <span className="text-[9px] text-slate-500">Loading…</span>
-                      )}
+                    )}
+                    <button
+                      type="button"
+                      disabled={isCreatingSheet}
+                      onClick={handleCreateNewSheet}
+                      className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-indigo-600 text-white text-[11px] font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <FilePlus className="w-4 h-4 shrink-0" />
+                      {isCreatingSheet ? 'Creating…' : 'Create new sheet (default)'}
+                    </button>
+                    <div className="flex gap-1.5">
+                      <input value={sheetInputValue} onChange={(e) => setSheetInputValue(e.target.value)} placeholder="Paste sheet URL or ID" className={`${input} flex-1 text-[10px]`} />
+                      <button type="button" onClick={handleUseSheetFromInput} disabled={!parseSheetId(sheetInputValue)} className="px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-[10px] font-semibold disabled:opacity-40">
+                        Use this
+                      </button>
                     </div>
-                    <div className="mt-1 max-h-40 overflow-y-auto custom-scrollbar space-y-2">
-                      {threadMessages.length === 0 ? (
-                        <p className="text-[10px] text-slate-500 dark:text-slate-500">
-                          No messages yet.
-                        </p>
-                      ) : (
-                        threadMessages.map((m) => (
-                          <div key={m.id} className="px-2 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                            <p className="text-[10px] text-slate-800 dark:text-slate-100 whitespace-pre-wrap">
-                              {m.text}
-                            </p>
-                            {m.translatedText && (
-                              <p className="mt-1 text-[10px] text-slate-600 dark:text-slate-300 whitespace-pre-wrap">
-                                {m.translatedText}
-                              </p>
-                            )}
-                          </div>
-                        ))
-                      )}
-                    </div>
+                    <button type="button" onClick={() => { setShowSheetPicker(false); setSheetInputValue(''); setCreateSheetError(null); }} className="w-full text-[10px] text-slate-500 hover:text-slate-700">
+                      Cancel
+                    </button>
                   </div>
                 )}
+
+                {logState === 'error' && logError && (
+                  <div className="mt-2 space-y-1">
+                    <p className="text-[10px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-2 py-1.5 rounded-lg">{logError}</p>
+                    {(logError.includes('permission') || logError.includes('insufficient') || logError.includes('inaccessible')) && (
+                      <p className="text-[9px] text-slate-500 dark:text-slate-400">
+                        Tip: The sheet may be view-only or owned by someone else. Try “Create new sheet” or use a sheet you own.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  disabled={!canLog || logState === 'logging' || !accessToken}
+                  onClick={handleLog}
+                  className={`mt-2 flex items-center justify-center gap-2 ${btnPrimary} ${!canLog || logState === 'logging' || !accessToken ? 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500' : 'bg-violet-500 text-white hover:bg-violet-600'}`}
+                >
+                  <ClipboardList className="w-4 h-4" />
+                  {logState === 'idle' && (contactLogSheetId ? 'Log to contact record' : 'Create sheet & log')}
+                  {logState === 'logging' && 'Logging…'}
+                  {logState === 'done' && 'Logged!'}
+                  {logState === 'error' && 'Error – Try again'}
+                </button>
               </>
             )}
           </div>
-        </div>
-      </div>
+        )}
       </div>
     </div>
   );
