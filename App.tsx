@@ -467,6 +467,16 @@ const App: React.FC = () => {
   const [rubricScanError, setRubricScanError] = useState<string | null>(null);
   const [rubricAutoAttempts, setRubricAutoAttempts] = useState<number>(0);
 
+  // If the teacher switches assignments, reset rubric UI so scanning starts clean.
+  useEffect(() => {
+    setCustomRubric('');
+    setRubricSuccess(false);
+    setIsScanningRubric(false);
+    setRubricScanProgress(0);
+    setRubricScanError(null);
+    setRubricAutoAttempts(0);
+  }, [selectedAssignment?.id]);
+
   // Phase 2: Voice-to-task (local)
   const GRADE_FOLLOWUPS_KEY = 'dg_grade_followups_v1';
   const QUICK_TODOS_KEY = 'dg_quick_todos_v1';
@@ -665,6 +675,23 @@ const App: React.FC = () => {
   });
   const [courseSearch, setCourseSearch] = useState('');
   const [showLast7Details, setShowLast7Details] = useState(false);
+
+  const [voiceInboxExpanded, setVoiceInboxExpanded] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem('dg_voice_inbox_expanded_v1');
+      return raw === null ? false : raw === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('dg_voice_inbox_expanded_v1', voiceInboxExpanded ? 'true' : 'false');
+    } catch {
+      // Ignore storage errors; UI should continue to work.
+    }
+  }, [voiceInboxExpanded]);
 
   useEffect(() => {
     try {
@@ -1291,6 +1318,35 @@ const App: React.FC = () => {
       // Local-only courses: start with a clean slate
       setAssignments([]);
       setStudents([]);
+    }
+  };
+
+  // Grade hub course selection:
+  // keep the user on the Grade screen and load assignments/students for the chosen course.
+  const selectCourseForGradeHub = async (course: Course) => {
+    setCourses(courses.map(c => (c.id === course.id ? { ...c, lastUsed: Date.now() } : c)));
+    setSelectedCourse(course);
+    setSelectedAssignment(null);
+    setAssignmentSearchQuery('');
+    if (classroom && isOnline && course.source !== 'local') {
+      try {
+        const [assignmentData, studentData] = await Promise.all([
+          classroom.getAssignments(course.id),
+          classroom.getStudents(course.id),
+        ]);
+        setAssignments(assignmentData);
+        setStudents(studentData);
+        setSyncStatus('ok');
+      } catch (err) {
+        console.error("Failed to load assignments/students for course", course.id, err);
+        setAssignments([]);
+        setStudents([]);
+        setSyncStatus('error');
+      }
+    } else {
+      setAssignments([]);
+      setStudents([]);
+      setSyncStatus('ok');
     }
   };
 
@@ -2193,6 +2249,276 @@ const App: React.FC = () => {
       pendingByCourseId[w.courseId] = (pendingByCourseId[w.courseId] || 0) + 1;
     });
 
+    // Dashboard course grouping:
+    // - Recent: first 3 after sorting + local search filter
+    // - Other: remaining courses (toggleable)
+    const coursesFilteredForUI = dashboardResults.courses.filter((course) =>
+      courseSearch.trim()
+        ? course.name.toLowerCase().includes(courseSearch.toLowerCase())
+        : true
+    );
+    const otherCourses = coursesFilteredForUI.slice(3);
+
+    // Total redesign: render the Grade tab as a step-by-step workflow.
+    const coursesForHub = showCourses ? coursesFilteredForUI : coursesFilteredForUI.slice(0, 3);
+    const canScan = !!selectedCourse && !!selectedAssignment;
+
+    return (
+      <PageWrapper
+        headerTitle={educatorName || 'Grade'}
+        headerSubtitle={todayLabel || undefined}
+        isOnline={isOnline}
+        isDarkMode={isDarkMode}
+        setIsDarkMode={setIsDarkMode}
+        syncStatus={syncStatus}
+        onSyncClick={() => {
+          if (!classroom || !isOnline) return;
+          void (async () => {
+            try {
+              await loadCourses();
+              if (selectedCourse && selectedCourse.source !== 'local') {
+                const [assignmentData, studentData] = await Promise.all([
+                  classroom.getAssignments(selectedCourse.id),
+                  classroom.getStudents(selectedCourse.id),
+                ]);
+                setAssignments(assignmentData);
+                setStudents(studentData);
+              }
+              setSyncStatus('ok');
+            } catch (err) {
+              console.error('Manual sync failed', err);
+              setSyncStatus('error');
+            }
+          })();
+        }}
+      >
+        <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-y-auto pb-24 pt-1 custom-scrollbar">
+          <div className="bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl p-4 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="text-lg font-black text-slate-900 dark:text-white truncate">Teacher grading workflow</h2>
+                <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">
+                  <span className="font-bold text-slate-700 dark:text-slate-200">Step 1</span>
+                  {selectedCourse ? `: ${selectedCourse.name}` : ': select a course'} ·{' '}
+                  <span className="font-bold text-slate-700 dark:text-slate-200">Step 2</span>
+                  {selectedAssignment ? `: ${selectedAssignment.title}` : ': select an assignment'}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleStartGrading}
+                className={`px-4 py-3 rounded-xl font-black text-[13px] tracking-widest uppercase shadow-sm transition-all ${
+                  canScan ? 'bg-emerald-500 text-white hover:bg-emerald-600' : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                }`}
+              >
+                Continue <Camera className="inline w-4 h-4 ml-2" />
+              </button>
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setPhase(AppPhase.AUDIT)}
+                disabled={pendingGrades <= 0}
+                className="px-4 py-3 rounded-xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 font-black text-[12px] uppercase tracking-widest text-slate-800 dark:text-slate-100 hover:opacity-90 disabled:opacity-50 transition-colors"
+              >
+                Review ({pendingGrades}) <ArrowRight className="inline w-4 h-4 ml-2" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setPhase(AppPhase.RECORDS)}
+                disabled={atRiskStudents.length === 0}
+                className="px-4 py-3 rounded-xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 font-black text-[12px] uppercase tracking-widest text-slate-800 dark:text-slate-100 hover:opacity-90 disabled:opacity-50 transition-colors"
+              >
+                Check in ({atRiskStudents.length}) <Target className="inline w-4 h-4 ml-2" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setPhase(AppPhase.ROSTER_VIEW)}
+                className="px-4 py-3 rounded-xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 font-black text-[12px] uppercase tracking-widest text-slate-800 dark:text-slate-100 hover:opacity-90 transition-colors"
+              >
+                Rosters ({totalStudents}) <Users className="inline w-4 h-4 ml-2" />
+              </button>
+            </div>
+
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2">
+              Emails: {syncProgress.emailSuccesses} sent · {syncProgress.emailFailures} failed
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Step 1 */}
+            <div className="bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl p-4 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <div className="text-xs font-black uppercase tracking-widest text-slate-500">Step 1</div>
+                  <h3 className="font-black text-slate-900 dark:text-white">Choose a course</h3>
+                </div>
+                <button
+                  type="button"
+                  className="text-[11px] font-semibold uppercase tracking-widest text-slate-600 dark:text-slate-300 hover:opacity-90"
+                  onClick={() => setShowCourses(prev => !prev)}
+                >
+                  {showCourses ? 'Show less' : `Show all (${otherCourses.length + 3})`}
+                </button>
+              </div>
+
+              <input
+                type="search"
+                value={courseSearch}
+                onChange={(e) => setCourseSearch(e.target.value)}
+                placeholder="Search courses…"
+                className="w-full px-3 py-2 rounded-xl bg-slate-900/60 border border-slate-700 text-xs text-slate-100 placeholder:text-slate-500 outline-none"
+              />
+
+              <div className="mt-3 flex flex-col gap-2 max-h-72 overflow-y-auto custom-scrollbar">
+                {coursesForHub.length === 0 && (
+                  <div className="py-8 text-center text-slate-500 text-xs font-bold">No courses match.</div>
+                )}
+
+                {coursesForHub.map((course) => {
+                  const active = selectedCourse?.id === course.id;
+                  return (
+                    <div
+                      key={course.id}
+                      className={`p-3 rounded-xl border flex items-center justify-between gap-3 ${
+                        active
+                          ? 'bg-indigo-50 dark:bg-indigo-900/30 border-indigo-400/60'
+                          : 'bg-white dark:bg-slate-800 border-slate-200/70 dark:border-slate-700/60'
+                      }`}
+                    >
+                      <div className="min-w-0 flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center text-white shrink-0">
+                          <BookOpen className="w-5 h-5" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-bold text-sm truncate text-slate-900 dark:text-white">{course.name}</div>
+                          <div className="text-xs text-slate-500 dark:text-slate-300">
+                            {course.period}{course.source === 'local' ? ' · Local' : ''}
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => void selectCourseForGradeHub(course)}
+                        className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-[11px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-colors shrink-0"
+                      >
+                        {active ? 'Selected' : 'Select'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Step 2 */}
+            <div className="bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl p-4 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <div className="text-xs font-black uppercase tracking-widest text-slate-500">Step 2</div>
+                  <h3 className="font-black text-slate-900 dark:text-white">Choose an assignment</h3>
+                </div>
+
+                {selectedCourse && selectedCourse.source !== 'local' && isOnline && (
+                  <button
+                    type="button"
+                    onClick={(e) => handleOpenAsnCreation(selectedCourse, e)}
+                    className="px-3 py-2 rounded-lg bg-emerald-500 text-white text-[11px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-colors"
+                  >
+                    New in Google
+                  </button>
+                )}
+              </div>
+
+              {!selectedCourse ? (
+                <div className="py-10 text-center text-slate-500 text-xs font-bold">Select a course to see assignments.</div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {assignments.length === 0 && (
+                    <div className="py-8 text-center text-slate-500 text-xs font-bold">
+                      No assignments loaded. Tap Sync (top) or create one.
+                    </div>
+                  )}
+
+                  <div className="max-h-72 overflow-y-auto custom-scrollbar flex flex-col gap-2">
+                    {assignments.map((asn) => {
+                      const active = selectedAssignment?.id === asn.id;
+                      return (
+                        <div
+                          key={asn.id}
+                          className={`p-3 rounded-xl border flex items-center justify-between gap-3 ${
+                            active
+                              ? 'bg-emerald-50 dark:bg-emerald-900/25 border-emerald-400/60'
+                              : 'bg-white dark:bg-slate-800 border-slate-200/70 dark:border-slate-700/60'
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <div className="font-bold text-sm truncate text-slate-900 dark:text-white">{asn.title}</div>
+                            <div className="text-xs text-slate-500 dark:text-slate-300">{asn.maxScore} pts</div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedAssignment(asn)}
+                            className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-[11px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-colors shrink-0"
+                          >
+                            {active ? 'Selected' : 'Select'}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Step 3 */}
+          <div className="bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl p-4 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-black uppercase tracking-widest text-slate-500">Step 3</div>
+                <h3 className="font-black text-slate-900 dark:text-white">Scan student work</h3>
+                <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">
+                  Choose single scan or batch scan multiple students. Then verify feedbacks + modify scores/feedback as needed.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleStartGrading}
+                disabled={!canScan}
+                className="px-4 py-3 rounded-xl bg-emerald-500 text-white font-black text-[13px] tracking-widest uppercase hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+              >
+                Start scan <Camera className="inline w-4 h-4 ml-2" />
+              </button>
+            </div>
+          </div>
+
+          {/* Step 4 */}
+          <div className="bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl p-4 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-black uppercase tracking-widest text-slate-500">Step 4</div>
+                <h3 className="font-black text-slate-900 dark:text-white">Review & sync</h3>
+                <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">
+                  Review selected scans, then sync to Google Classroom. Emails + Drive saving happen during sync.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPhase(AppPhase.AUDIT)}
+                disabled={pendingGrades <= 0}
+                className="px-4 py-3 rounded-xl bg-indigo-600 text-white font-black text-[13px] tracking-widest uppercase hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+              >
+                Review grades ({pendingGrades}) <CloudUpload className="inline w-4 h-4 ml-2" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </PageWrapper>
+    );
+
     return (
       <PageWrapper
         headerTitle={educatorName || 'Grade'}
@@ -2224,7 +2550,8 @@ const App: React.FC = () => {
       >
         <div className="flex-1 min-h-0 flex flex-col gap-5 overflow-y-auto pb-24 pt-1 custom-scrollbar">
           {/* Sticky attention + metrics */}
-          <div className="sticky top-0 z-10 -mx-4 px-4 pt-1 pb-2 bg-gradient-to-b from-slate-950/90 via-slate-950/70 to-transparent backdrop-blur-sm">
+          <div className="sticky top-0 z-10 -mx-4 px-4 pt-2 pb-3 bg-slate-950/0 backdrop-blur-sm">
+            <div className="bg-white/65 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl p-3 shadow-sm">
             {/* What needs your attention */}
             <div className="py-2">
               <div className="flex items-center justify-between mb-1.5">
@@ -2284,55 +2611,78 @@ const App: React.FC = () => {
                 </p>
               )}
             </div>
+            </div>
           </div>
 
           {(gradeFollowUps.length > 0 || quickTodos.length > 0) && (
             <div className="py-2">
-              <div className="flex items-center gap-2 mb-3">
-                <Mic className="w-5 h-5 text-indigo-500 shrink-0" />
-                <p className="text-sm font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
-                  Voice inbox
-                </p>
-              </div>
-              <div className="space-y-3">
-                {gradeFollowUps.length > 0 && (
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">Grade follow‑ups</p>
-                    <div className="space-y-2">
-                      {gradeFollowUps.slice(0, 4).map((f) => (
-                        <div key={f.id} className="flex items-start gap-3 py-1">
-                          <button
-                            type="button"
-                            onClick={() => setGradeFollowUps((prev) => prev.map(p => p.id === f.id ? { ...p, done: !p.done } : p))}
-                            className={`mt-0.5 w-4 h-4 rounded border shrink-0 ${f.done ? 'bg-emerald-500 border-emerald-500' : 'bg-transparent border-slate-300 dark:border-slate-600'}`}
-                            title={f.done ? 'Mark not done' : 'Mark done'}
-                          />
-                          <div className="flex-1 text-sm text-slate-700 dark:text-slate-200 min-w-0">
-                            <span className={f.done ? 'line-through opacity-70' : ''}>{f.text}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+              <div className="bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl p-3 shadow-sm">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Mic className="w-5 h-5 text-indigo-500 shrink-0" />
+                    <p className="text-sm font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300 truncate">
+                      Voice inbox
+                    </p>
+                    <span className="text-[11px] font-bold text-slate-500 dark:text-slate-300 shrink-0">
+                      {gradeFollowUps.filter(f => !f.done).length + quickTodos.filter(t => !t.done).length}
+                    </span>
                   </div>
-                )}
-                {quickTodos.length > 0 && (
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">To‑dos</p>
-                    <div className="space-y-2">
-                      {quickTodos.slice(0, 4).map((t) => (
-                        <div key={t.id} className="flex items-start gap-3 py-1">
-                          <button
-                            type="button"
-                            onClick={() => setQuickTodos((prev) => prev.map(p => p.id === t.id ? { ...p, done: !p.done } : p))}
-                            className={`mt-0.5 w-4 h-4 rounded border shrink-0 ${t.done ? 'bg-emerald-500 border-emerald-500' : 'bg-transparent border-slate-300 dark:border-slate-600'}`}
-                            title={t.done ? 'Mark not done' : 'Mark done'}
-                          />
-                          <div className="flex-1 text-sm text-slate-700 dark:text-slate-200 min-w-0">
-                            <span className={t.done ? 'line-through opacity-70' : ''}>{t.text}</span>
-                          </div>
+                  <button
+                    type="button"
+                    onClick={() => setVoiceInboxExpanded(prev => !prev)}
+                    className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-300 hover:text-slate-800 dark:hover:text-slate-100"
+                  >
+                    {voiceInboxExpanded ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+
+                {voiceInboxExpanded && (
+                  <div className="space-y-3">
+                    {gradeFollowUps.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">
+                          Grade follow‑ups
+                        </p>
+                        <div className="space-y-2">
+                          {gradeFollowUps.slice(0, 4).map((f) => (
+                            <div key={f.id} className="flex items-start gap-3 py-1">
+                              <button
+                                type="button"
+                                onClick={() => setGradeFollowUps((prev) => prev.map(p => p.id === f.id ? { ...p, done: !p.done } : p))}
+                                className={`mt-0.5 w-4 h-4 rounded border shrink-0 ${f.done ? 'bg-emerald-500 border-emerald-500' : 'bg-transparent border-slate-300 dark:border-slate-600'}`}
+                                title={f.done ? 'Mark not done' : 'Mark done'}
+                              />
+                              <div className="flex-1 text-sm text-slate-700 dark:text-slate-200 min-w-0">
+                                <span className={f.done ? 'line-through opacity-70' : ''}>{f.text}</span>
+                              </div>
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
+                      </div>
+                    )}
+
+                    {quickTodos.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">
+                          To‑dos
+                        </p>
+                        <div className="space-y-2">
+                          {quickTodos.slice(0, 4).map((t) => (
+                            <div key={t.id} className="flex items-start gap-3 py-1">
+                              <button
+                                type="button"
+                                onClick={() => setQuickTodos((prev) => prev.map(p => p.id === t.id ? { ...p, done: !p.done } : p))}
+                                className={`mt-0.5 w-4 h-4 rounded border shrink-0 ${t.done ? 'bg-emerald-500 border-emerald-500' : 'bg-transparent border-slate-300 dark:border-slate-600'}`}
+                                title={t.done ? 'Mark not done' : 'Mark done'}
+                              />
+                              <div className="flex-1 text-sm text-slate-700 dark:text-slate-200 min-w-0">
+                                <span className={t.done ? 'line-through opacity-70' : ''}>{t.text}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -2348,7 +2698,7 @@ const App: React.FC = () => {
                 setPhase(AppPhase.AUDIT);
               }}
               disabled={pendingGrades <= 0}
-              className={`py-3 text-left rounded-xl transition-opacity ${
+              className={`p-4 text-left rounded-2xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 transition-opacity ${
                 pendingGrades > 0 ? 'hover:opacity-90' : 'opacity-60 cursor-default'
               }`}
               title={pendingGrades > 0 ? 'Open pending grades' : 'No pending grades'}
@@ -2362,7 +2712,7 @@ const App: React.FC = () => {
               </p>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Ready to post</p>
             </button>
-            <div className="py-3">
+            <div className="p-4 rounded-2xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Classes</span>
                 <Layers className="w-5 h-5 text-indigo-500 shrink-0" />
@@ -2370,7 +2720,7 @@ const App: React.FC = () => {
               <p className="text-base font-semibold text-slate-900 dark:text-slate-50 leading-tight">{totalCourses} courses · {totalAssignments} assignments</p>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{connectedCourses} synced</p>
             </div>
-            <div className="py-3">
+            <div className="p-4 rounded-2xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Students</span>
                 <Users className="w-5 h-5 text-sky-500 shrink-0" />
@@ -2390,7 +2740,7 @@ const App: React.FC = () => {
             <button
               type="button"
               onClick={() => setShowLast7Details(prev => !prev)}
-              className="py-3 text-left rounded-xl hover:opacity-90 transition-opacity"
+              className="p-4 text-left rounded-2xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 hover:opacity-90 transition-opacity"
               title="Show details"
             >
               <div className="flex items-center justify-between mb-1">
@@ -2419,10 +2769,9 @@ const App: React.FC = () => {
             >
               <span>Courses</span>
               <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500">
-                {showCourses ? 'Hide' : 'Show'} · {dashboardResults.courses.length}
+                {showCourses ? 'Hide' : 'Show'} · {otherCourses.length} more
               </span>
             </button>
-            {showCourses && (
             <div className="space-y-2 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
               <div className="sticky top-0 z-5 -mx-1 mb-1 px-1 pb-1 bg-gradient-to-b from-slate-950/90 via-slate-950/40 to-transparent">
                 <input
@@ -2439,6 +2788,7 @@ const App: React.FC = () => {
                     ? course.name.toLowerCase().includes(courseSearch.toLowerCase())
                     : true
                 )
+                .filter((_, idx) => (showCourses ? true : idx < 3))
                 .map((course) => (
                 <div
                   key={course.id}
@@ -2460,7 +2810,7 @@ const App: React.FC = () => {
                     });
                     setDragCourseId(null);
                   }}
-                  className={`py-3 flex items-center justify-between transition-opacity ${dragCourseId === course.id ? 'opacity-80' : ''}`}
+                  className={`p-4 rounded-2xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 flex items-center justify-between transition-opacity ${dragCourseId === course.id ? 'opacity-80 ring-2 ring-indigo-300/70 dark:ring-indigo-500/30' : ''}`}
                 >
                   <button
                     type="button"
@@ -2549,7 +2899,6 @@ const App: React.FC = () => {
                 <span className="text-sm font-semibold uppercase tracking-wide">Create Course</span>
               </button>
             </div>
-            )}
           </div>
         </div>
       </PageWrapper>
