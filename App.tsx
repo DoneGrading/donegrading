@@ -1321,35 +1321,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Grade hub course selection:
-  // keep the user on the Grade screen and load assignments/students for the chosen course.
-  const selectCourseForGradeHub = async (course: Course) => {
-    setCourses(courses.map(c => (c.id === course.id ? { ...c, lastUsed: Date.now() } : c)));
-    setSelectedCourse(course);
-    setSelectedAssignment(null);
-    setAssignmentSearchQuery('');
-    if (classroom && isOnline && course.source !== 'local') {
-      try {
-        const [assignmentData, studentData] = await Promise.all([
-          classroom.getAssignments(course.id),
-          classroom.getStudents(course.id),
-        ]);
-        setAssignments(assignmentData);
-        setStudents(studentData);
-        setSyncStatus('ok');
-      } catch (err) {
-        console.error("Failed to load assignments/students for course", course.id, err);
-        setAssignments([]);
-        setStudents([]);
-        setSyncStatus('error');
-      }
-    } else {
-      setAssignments([]);
-      setStudents([]);
-      setSyncStatus('ok');
-    }
-  };
-
   const handleStartGrading = () => {
     // Scan attribution requires an already selected course + assignment.
     // Route through the existing selection flow instead of jumping directly to the camera.
@@ -2402,7 +2373,10 @@ const App: React.FC = () => {
 
                       <button
                         type="button"
-                        onClick={() => void selectCourseForGradeHub(course)}
+                        onClick={() => {
+                          // Step-based navigation: selecting a course jumps to Step 2.
+                          void selectCourse(course);
+                        }}
                         className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-[11px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-colors shrink-0"
                       >
                         {active ? 'Selected' : 'Select'}
@@ -2420,55 +2394,29 @@ const App: React.FC = () => {
                   <div className="text-xs font-black uppercase tracking-widest text-slate-500">Step 2</div>
                   <h3 className="font-black text-slate-900 dark:text-white">Choose an assignment</h3>
                 </div>
-
-                {selectedCourse && selectedCourse.source !== 'local' && isOnline && (
-                  <button
-                    type="button"
-                    onClick={(e) => handleOpenAsnCreation(selectedCourse, e)}
-                    className="px-3 py-2 rounded-lg bg-emerald-500 text-white text-[11px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-colors"
-                  >
-                    New in Google
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => setPhase(AppPhase.ASSIGNMENT_SELECT)}
+                  disabled={!selectedCourse}
+                  className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-[11px] font-black uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Open assignments
+                </button>
               </div>
 
               {!selectedCourse ? (
-                <div className="py-10 text-center text-slate-500 text-xs font-bold">Select a course to see assignments.</div>
+                <div className="py-6 text-center text-slate-500 text-xs font-bold">Select a course to continue.</div>
               ) : (
-                <div className="flex flex-col gap-2">
-                  {assignments.length === 0 && (
-                    <div className="py-8 text-center text-slate-500 text-xs font-bold">
-                      No assignments loaded. Tap Sync (top) or create one.
-                    </div>
-                  )}
-
-                  <div className="max-h-72 overflow-y-auto custom-scrollbar flex flex-col gap-2">
-                    {assignments.map((asn) => {
-                      const active = selectedAssignment?.id === asn.id;
-                      return (
-                        <div
-                          key={asn.id}
-                          className={`p-3 rounded-xl border flex items-center justify-between gap-3 ${
-                            active
-                              ? 'bg-emerald-50 dark:bg-emerald-900/25 border-emerald-400/60'
-                              : 'bg-white dark:bg-slate-800 border-slate-200/70 dark:border-slate-700/60'
-                          }`}
-                        >
-                          <div className="min-w-0">
-                            <div className="font-bold text-sm truncate text-slate-900 dark:text-white">{asn.title}</div>
-                            <div className="text-xs text-slate-500 dark:text-slate-300">{asn.maxScore} pts</div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setSelectedAssignment(asn)}
-                            className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-[11px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-colors shrink-0"
-                          >
-                            {active ? 'Selected' : 'Select'}
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
+                <div className="text-sm text-slate-600 dark:text-slate-300">
+                  {selectedAssignment
+                    ? (
+                      <>
+                        Selected: <span className="font-bold text-slate-800 dark:text-slate-100">{selectedAssignment.title}</span>
+                      </>
+                    )
+                    : (
+                      <>Next: pick an assignment on the next screen.</>
+                    )}
                 </div>
               )}
             </div>
