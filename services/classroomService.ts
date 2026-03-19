@@ -3,6 +3,24 @@ import { Course, Assignment, Student } from "../types";
 const CLASSROOM_BASE_URL = "https://classroom.googleapis.com/v1";
 const GMAIL_BASE_URL = "https://gmail.googleapis.com/gmail/v1";
 
+/** Minimal shapes from Classroom REST JSON (we only map fields we use). */
+type GApiCourse = { id?: string; name?: string; section?: string };
+type GApiCoursesList = { courses?: GApiCourse[] };
+type GApiCourseWork = {
+  id?: string;
+  title?: string;
+  maxPoints?: number;
+  description?: string;
+};
+type GApiCourseWorkList = { courseWork?: GApiCourseWork[] };
+type GApiStudent = {
+  userId?: string;
+  profile?: { name?: { fullName?: string }; emailAddress?: string };
+};
+type GApiStudentsList = { students?: GApiStudent[] };
+type GApiStudentSubmission = { id?: string; userId?: string };
+type GApiSubmissionsList = { studentSubmissions?: GApiStudentSubmission[] };
+
 export class ClassroomService {
   private accessToken: string;
 
@@ -26,7 +44,7 @@ export class ClassroomService {
         try {
           const error = await response.json();
           errorMessage = error.error?.message || errorMessage;
-        } catch (e) {
+        } catch {
           errorMessage = await response.text();
         }
         throw new Error(`Classroom: ${errorMessage}`);
@@ -53,10 +71,10 @@ export class ClassroomService {
   }
 
   async getCourses(): Promise<Course[]> {
-    const data = await this.fetchWithAuth("/courses?courseStates=ACTIVE");
-    return (data.courses || []).map((c: any) => ({
-      id: c.id,
-      name: c.name,
+    const data = (await this.fetchWithAuth("/courses?courseStates=ACTIVE")) as GApiCoursesList;
+    return (data.courses || []).map((c) => ({
+      id: c.id ?? "",
+      name: c.name ?? "Course",
       period: c.section || "General",
       source: 'google' as const,
     }));
@@ -82,19 +100,19 @@ export class ClassroomService {
   }
 
   async getAssignments(courseId: string): Promise<Assignment[]> {
-    const data = await this.fetchWithAuth(`/courses/${courseId}/courseWork`);
-    return (data.courseWork || []).map((cw: any) => ({
-      id: cw.id,
-      title: cw.title,
+    const data = (await this.fetchWithAuth(`/courses/${courseId}/courseWork`)) as GApiCourseWorkList;
+    return (data.courseWork || []).map((cw) => ({
+      id: cw.id ?? "",
+      title: cw.title ?? "Assignment",
       maxScore: cw.maxPoints || 100,
       rubric: cw.description || "Grade based on assignment title.",
     }));
   }
 
   async getStudents(courseId: string): Promise<Student[]> {
-    const data = await this.fetchWithAuth(`/courses/${courseId}/students`);
-    return (data.students || []).map((s: any) => ({
-      id: s.userId,
+    const data = (await this.fetchWithAuth(`/courses/${courseId}/students`)) as GApiStudentsList;
+    return (data.students || []).map((s) => ({
+      id: s.userId ?? "",
       name: s.profile?.name?.fullName || "Unknown Student",
       email: s.profile?.emailAddress || undefined, // Extracted email address for Gmail API
     }));
@@ -168,16 +186,14 @@ export class ClassroomService {
     console.log(`DEBUG: Target Course: ${courseId}, Assignment: ${courseWorkId}, Student: ${studentId}`);
 
     // 1. Fetch ONLY this specific student's submission
-    const submissionsData = await this.fetchWithAuth(
+    const submissionsData = (await this.fetchWithAuth(
       `/courses/${courseId}/courseWork/${courseWorkId}/studentSubmissions?userId=${studentId}`
-    );
-    
+    )) as GApiSubmissionsList;
+
     const submissions = submissionsData.studentSubmissions || [];
 
     // 2. Find the submission object
-    const submission = submissions.find((s: any) => 
-      String(s.userId) === String(studentId)
-    );
+    const submission = submissions.find((s) => String(s.userId) === String(studentId));
     
     if (!submission) {
       throw new Error(`Grade sync failed: No submission found. The student must at least open the assignment once in Google Classroom.`);

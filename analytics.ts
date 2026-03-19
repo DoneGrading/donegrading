@@ -44,7 +44,7 @@ export function setAnalyticsConsent(allowed: boolean): void {
  */
 export function logEvent(event: AnalyticsEvent, data: Record<string, unknown> = {}): void {
   if (!getAnalyticsConsent()) {
-    if ((import.meta as any).env?.DEV) console.info('[Analytics] (consent off)', event, data);
+    if (import.meta.env?.DEV) console.info('[Analytics] (consent off)', event, data);
     return;
   }
   // Replace with real provider:

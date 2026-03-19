@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 /**
  * Debounce a value. After `delayMs` of no changes, the returned value updates.
@@ -21,8 +21,8 @@ export function useDebouncedCallback<T extends (...args: unknown[]) => void>(
   fn: T,
   delayMs: number
 ): T {
-  const timeoutRef = { current: null as ReturnType<typeof setTimeout> | null };
-  const lastArgsRef = { current: null as Parameters<T> | null };
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastArgsRef = useRef<Parameters<T> | null>(null);
 
   const debounced = useCallback(
     ((...args: Parameters<T>) => {
@@ -30,7 +30,8 @@ export function useDebouncedCallback<T extends (...args: unknown[]) => void>(
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       timeoutRef.current = setTimeout(() => {
         timeoutRef.current = null;
-        if (lastArgsRef.current) fn(...lastArgsRef.current);
+        const last = lastArgsRef.current;
+        if (last) fn(...last);
       }, delayMs);
     }) as T,
     [fn, delayMs]

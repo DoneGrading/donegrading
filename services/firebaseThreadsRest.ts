@@ -9,8 +9,11 @@ export type FirebaseSession = {
 
 const FIREBASE_SESSION_KEY = "dg_firebase_session_v1";
 
-const getEnv = (key: string): string =>
-  (typeof import.meta !== "undefined" && (import.meta as any).env?.[key]) || "";
+const readViteEnv = (key: string): string => {
+  if (typeof import.meta === "undefined") return "";
+  const env = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
+  return env?.[key] ?? "";
+};
 
 function safeParseJson<T>(raw: string | null | undefined, fallback: T): T {
   if (raw == null || raw === "") return fallback;
@@ -22,8 +25,8 @@ function safeParseJson<T>(raw: string | null | undefined, fallback: T): T {
 }
 
 export const getFirebaseConfig = () => {
-  const apiKey = getEnv("VITE_FIREBASE_API_KEY");
-  const projectId = getEnv("VITE_FIREBASE_PROJECT_ID");
+  const apiKey = readViteEnv("VITE_FIREBASE_API_KEY");
+  const projectId = readViteEnv("VITE_FIREBASE_PROJECT_ID");
   return { apiKey, projectId };
 };
 
@@ -90,7 +93,7 @@ type FirestoreValue =
   | { mapValue: { fields: Record<string, FirestoreValue> } }
   | { arrayValue: { values: FirestoreValue[] } };
 
-const toValue = (v: any): FirestoreValue => {
+const toValue = (v: unknown): FirestoreValue => {
   if (v === null || v === undefined) return { stringValue: "" };
   if (typeof v === "string") return { stringValue: v };
   if (typeof v === "boolean") return { booleanValue: v };
@@ -98,47 +101,37 @@ const toValue = (v: any): FirestoreValue => {
   if (v instanceof Date) return { timestampValue: v.toISOString() };
   if (Array.isArray(v)) return { arrayValue: { values: v.map(toValue) } };
   if (typeof v === "object") {
+    const o = v as Record<string, unknown>;
     const fields: Record<string, FirestoreValue> = {};
-    Object.keys(v).forEach((k) => {
-      fields[k] = toValue(v[k]);
+    Object.keys(o).forEach((k) => {
+      fields[k] = toValue(o[k]);
     });
     return { mapValue: { fields } };
   }
   return { stringValue: String(v) };
 };
 
-const fromValue = (v: any): any => {
+/** Decode Firestore REST `fields` wire format into plain JSON-like values. */
+const fromValue = (v: unknown): unknown => {
   if (!v || typeof v !== "object") return undefined;
-  if (v.stringValue !== undefined) return v.stringValue;
-  if (v.integerValue !== undefined) return Number(v.integerValue);
-  if (v.doubleValue !== undefined) return v.doubleValue;
-  if (v.booleanValue !== undefined) return v.booleanValue;
-  if (v.timestampValue !== undefined) return v.timestampValue;
-  if (v.arrayValue?.values) return v.arrayValue.values.map(fromValue);
-  if (v.mapValue?.fields) {
-    const out: any = {};
-    Object.keys(v.mapValue.fields).forEach((k) => (out[k] = fromValue(v.mapValue.fields[k])));
+  const o = v as Record<string, unknown>;
+  if (o.stringValue !== undefined) return o.stringValue;
+  if (o.integerValue !== undefined) return Number(o.integerValue);
+  if (o.doubleValue !== undefined) return o.doubleValue;
+  if (o.booleanValue !== undefined) return o.booleanValue;
+  if (o.timestampValue !== undefined) return o.timestampValue;
+  const arr = o.arrayValue as { values?: unknown[] } | undefined;
+  if (arr?.values) return arr.values.map(fromValue);
+  const map = o.mapValue as { fields?: Record<string, unknown> } | undefined;
+  if (map?.fields) {
+    const out: Record<string, unknown> = {};
+    Object.keys(map.fields).forEach((k) => {
+      out[k] = fromValue(map.fields![k]);
+    });
     return out;
   }
   return undefined;
 };
-
-const docIdFromName = (name: string) => {
-  const n = (name || "").trim().toLowerCase();
-  const cleaned = n.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "unknown";
-  return cleaned;
-};
-
-const firestoreBase = () => {
-  const { projectId } = getFirebaseConfig();
-  if (!projectId) throw new Error("Missing Firebase config (VITE_FIREBASE_PROJECT_ID).");
-  return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents`;
-};
-
-const authHeaders = (s: FirebaseSession) => ({
-  Authorization: `Bearer ${s.idToken}`,
-  "Content-Type": "application/json",
-});
 
 export type ThreadDoc = {
   id: string;
@@ -157,6 +150,60 @@ export type MessageDoc = {
   createdAt?: string;
   senderName?: string;
 };
+
+type FirestoreRestDoc = {
+  name?: string;
+  fields?: Record<string, unknown>;
+};
+
+function threadRowFromDoc(d: FirestoreRestDoc): ThreadDoc {
+  const name = d.name || "";
+  const id = name.split("/").pop() || "";
+  const fields = d.fields || {};
+  const data = fromValue({ mapValue: { fields } }) as Record<string, unknown> | undefined;
+  const row = data && typeof data === "object" && !Array.isArray(data) ? data : {};
+  return {
+    id,
+    studentName: String(row.studentName ?? ""),
+    courseId: String(row.courseId ?? ""),
+    updatedAt: row.updatedAt !== undefined ? String(row.updatedAt) : undefined,
+    lastMessageText: row.lastMessageText !== undefined ? String(row.lastMessageText) : undefined,
+    lastMessageAt: row.lastMessageAt !== undefined ? String(row.lastMessageAt) : undefined,
+  };
+}
+
+function messageRowFromDoc(d: FirestoreRestDoc): MessageDoc {
+  const name = d.name || "";
+  const id = name.split("/").pop() || "";
+  const fields = d.fields || {};
+  const data = fromValue({ mapValue: { fields } }) as Record<string, unknown> | undefined;
+  const row = data && typeof data === "object" && !Array.isArray(data) ? data : {};
+  return {
+    id,
+    text: String(row.text ?? ""),
+    language: String(row.language ?? "en"),
+    translatedText: row.translatedText !== undefined ? String(row.translatedText) : undefined,
+    createdAt: row.createdAt !== undefined ? String(row.createdAt) : undefined,
+    senderName: row.senderName !== undefined ? String(row.senderName) : "",
+  };
+}
+
+const docIdFromName = (name: string) => {
+  const n = (name || "").trim().toLowerCase();
+  const cleaned = n.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "unknown";
+  return cleaned;
+};
+
+const firestoreBase = () => {
+  const { projectId } = getFirebaseConfig();
+  if (!projectId) throw new Error("Missing Firebase config (VITE_FIREBASE_PROJECT_ID).");
+  return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents`;
+};
+
+const authHeaders = (s: FirebaseSession) => ({
+  Authorization: `Bearer ${s.idToken}`,
+  "Content-Type": "application/json",
+});
 
 export async function upsertThread(session: FirebaseSession, thread: Omit<ThreadDoc, "id"> & { id?: string }) {
   const id = thread.id || docIdFromName(thread.studentName);
@@ -182,13 +229,7 @@ export async function listThreads(session: FirebaseSession, pageSize: number = 3
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json?.error?.message || "List threads failed.");
   const docs = Array.isArray(json.documents) ? json.documents : [];
-  return docs.map((d: any) => {
-    const name: string = d.name || "";
-    const id = name.split("/").pop() || "";
-    const fields = d.fields || {};
-    const data = fromValue({ mapValue: { fields } }) || {};
-    return { id, studentName: data.studentName || "", courseId: data.courseId || "", updatedAt: data.updatedAt, lastMessageText: data.lastMessageText, lastMessageAt: data.lastMessageAt };
-  });
+  return (docs as FirestoreRestDoc[]).map(threadRowFromDoc);
 }
 
 export async function listMessages(session: FirebaseSession, threadId: string, pageSize: number = 50): Promise<MessageDoc[]> {
@@ -197,13 +238,7 @@ export async function listMessages(session: FirebaseSession, threadId: string, p
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json?.error?.message || "List messages failed.");
   const docs = Array.isArray(json.documents) ? json.documents : [];
-  return docs.map((d: any) => {
-    const name: string = d.name || "";
-    const id = name.split("/").pop() || "";
-    const fields = d.fields || {};
-    const data = fromValue({ mapValue: { fields } }) || {};
-    return { id, text: data.text || "", language: data.language || "en", translatedText: data.translatedText || "", createdAt: data.createdAt, senderName: data.senderName || "" };
-  });
+  return (docs as FirestoreRestDoc[]).map(messageRowFromDoc);
 }
 
 export async function sendMessage(

@@ -1,10 +1,21 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { GradingResponse, type GeometricData } from "../types";
 
+type EnvRecord = Record<string, string | undefined>;
+
+const readViteEnv = (key: string): string | undefined => {
+  if (typeof import.meta === "undefined") return undefined;
+  const env = (import.meta as ImportMeta & { env?: EnvRecord }).env;
+  return env?.[key];
+};
+
+const readProcessEnv = (key: string): string | undefined => {
+  if (typeof process === "undefined") return undefined;
+  return process.env?.[key];
+};
+
 const getApiKey = () =>
-  (typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_GEMINI_API_KEY) ||
-  (typeof process !== "undefined" && (process as any).env?.API_KEY) ||
-  "";
+  readViteEnv("VITE_GEMINI_API_KEY") || readProcessEnv("API_KEY") || "";
 
 export type FrameAssessmentResult = {
   scanHealth: number;
@@ -538,6 +549,137 @@ ${partGuidance[part]}`,
     }
   } catch (e) {
     console.error("Lesson part choices generation error", e);
+    return null;
+  }
+};
+
+export const generateLearningTargetAndSuccessCriteria = async (params: {
+  lessonTitle: string;
+  grade: string;
+  subject: string;
+  objectiveHint?: string;
+}): Promise<{ objective: string; studentSuccessCriteria: string } | null> => {
+  try {
+    const apiKey = getApiKey();
+    if (!apiKey) return null;
+
+    const { lessonTitle, grade, subject, objectiveHint } = params;
+
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `You are an expert K-12 curriculum designer.
+
+Create:
+1) A teacher-written learning target (objective) that starts with exactly: "I can ..."
+2) A student-facing success criteria statement that starts with exactly: "You know you are successful when ..."
+
+Inputs:
+- Lesson title: ${lessonTitle}
+- Grade: ${grade}
+- Subject: ${subject}
+- Objective hint (optional): ${objectiveHint || "N/A"}
+
+Rules:
+- Objective must be 1 sentence and directly measurable/aligned to the lesson title.
+- Student success criteria must be 1–2 sentences that students can use to self-check.
+- Return ONLY valid JSON with exactly these keys (no markdown):
+  - objective: string
+  - studentSuccessCriteria: string
+`,
+      config: {
+        thinkingConfig: { thinkingBudget: 0 },
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            objective: { type: Type.STRING },
+            studentSuccessCriteria: { type: Type.STRING },
+          },
+          required: ["objective", "studentSuccessCriteria"],
+        },
+      },
+    });
+
+    const text = response.text || "{}";
+    try {
+      return JSON.parse(text) as { objective: string; studentSuccessCriteria: string };
+    } catch {
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return null;
+      return JSON.parse(jsonMatch[0]) as { objective: string; studentSuccessCriteria: string };
+    }
+  } catch (e) {
+    console.error("Learning target generation error", e);
+    return null;
+  }
+};
+
+export const generatePlanningContext = async (params: {
+  lessonTitle: string;
+  gradeHint?: string;
+  subjectHint?: string;
+  learningTargetHint?: string;
+}): Promise<{ grade: string; subject: string; duration: number } | null> => {
+  try {
+    const apiKey = getApiKey();
+    if (!apiKey) return null;
+
+    const { lessonTitle, gradeHint, subjectHint, learningTargetHint } = params;
+
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `You are an expert K-12 curriculum designer.
+
+Given:
+- Lesson title: ${lessonTitle}
+- Learning target hint (optional): ${learningTargetHint || "N/A"}
+- Grade hint (optional): ${gradeHint || "N/A"}
+- Subject hint (optional): ${subjectHint || "N/A"}
+
+Task:
+Return a best-fit planning context for this lesson:
+- grade: either one of K, 1, 2, ... 12 OR any grade-like string (e.g., "3.5") if no exact match fits.
+- subject: a concise subject name (e.g., "Science", "Math", "Language Arts", etc.) OR a custom subject string.
+- duration: a number of minutes suitable for this lesson (between 10 and 120).
+
+Rules:
+- Return ONLY valid JSON with exactly these keys: grade, subject, duration.
+- No markdown, no extra keys.`,
+      config: {
+        thinkingConfig: { thinkingBudget: 0 },
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            grade: { type: Type.STRING },
+            subject: { type: Type.STRING },
+            duration: { type: Type.NUMBER },
+          },
+          required: ["grade", "subject", "duration"],
+        },
+      },
+    });
+
+    const text = response.text || "{}";
+    try {
+      const parsed = JSON.parse(text) as { grade: string; subject: string; duration: number };
+      if (!parsed) return null;
+      if (!parsed.grade || !parsed.subject) return null;
+      const d = Number(parsed.duration);
+      if (!Number.isFinite(d)) return null;
+      return { grade: parsed.grade, subject: parsed.subject, duration: Math.max(10, Math.min(120, Math.round(d))) };
+    } catch {
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return null;
+      const parsed = JSON.parse(jsonMatch[0]) as { grade: string; subject: string; duration: number };
+      const d = Number(parsed.duration);
+      if (!Number.isFinite(d)) return null;
+      return { grade: parsed.grade, subject: parsed.subject, duration: Math.max(10, Math.min(120, Math.round(d))) };
+    }
+  } catch (e) {
+    console.error("Planning context generation error", e);
     return null;
   }
 };

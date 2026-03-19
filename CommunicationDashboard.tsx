@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Mail, MessageCircle, Copy, ClipboardList, FilePlus, Link2 } from 'lucide-react';
 import { createContactLogSheet, appendContactLog, parseSheetId } from './services/contactLogSheets';
 import { translateText } from './services/geminiService';
@@ -281,7 +281,7 @@ export const CommunicationDashboard: React.FC<{
     }
   }, []);
 
-  const ensureFirebase = async (): Promise<FirebaseSession> => {
+  const ensureFirebase = useCallback(async (): Promise<FirebaseSession> => {
     if (!firebaseEnabled) throw new Error("Threads require Firebase env vars.");
     if (!accessToken) throw new Error("Sign in with Google to enable threads.");
     const now = Date.now();
@@ -290,7 +290,7 @@ export const CommunicationDashboard: React.FC<{
     setFbSession(next);
     saveFirebaseSession(next);
     return next;
-  };
+  }, [firebaseEnabled, accessToken, fbSession]);
 
   useEffect(() => {
     try { localStorage.setItem(THREADS_NOTIFY_KEY, notifyEnabled ? "1" : "0"); } catch { /* ignore */ }
@@ -299,7 +299,7 @@ export const CommunicationDashboard: React.FC<{
     try { localStorage.setItem(THREADS_QUIET_KEY, `${quietStart}|${quietEnd}`); } catch { /* ignore */ }
   }, [quietStart, quietEnd]);
 
-  const isQuietNow = () => {
+  const isQuietNow = useCallback(() => {
     const parse = (t: string) => {
       const [hh, mm] = t.split(":").map((x) => parseInt(x, 10));
       return (hh || 0) * 60 + (mm || 0);
@@ -312,7 +312,7 @@ export const CommunicationDashboard: React.FC<{
     // quiet window can wrap over midnight
     if (start < end) return cur >= start && cur < end;
     return cur >= start || cur < end;
-  };
+  }, [quietStart, quietEnd]);
 
   const refreshThreads = async () => {
     try {
@@ -375,7 +375,7 @@ export const CommunicationDashboard: React.FC<{
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [notifyEnabled, firebaseEnabled, accessToken, quietStart, quietEnd, fbSession]);
+  }, [notifyEnabled, firebaseEnabled, accessToken, quietStart, quietEnd, fbSession, ensureFirebase, isQuietNow]);
 
   const openThread = async (threadId: string) => {
     try {

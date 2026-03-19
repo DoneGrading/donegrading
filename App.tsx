@@ -35,6 +35,8 @@ import {
   generateLessonScript,
   generateLessonPartChoices,
   generateDifferentiatedLesson,
+  generateLearningTargetAndSuccessCriteria,
+  generatePlanningContext,
   type LessonPartKey,
   type LessonScriptResult,
 } from './services/geminiService';
@@ -64,6 +66,48 @@ type SortMode = 'recent' | 'alphabetical' | 'manual';
 
 type PlanVersion = 'Standard' | 'Sub Plan' | 'Period 2 (Advanced)';
 
+const PLAN_GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'] as const;
+const PLAN_SUBJECT_OPTIONS = [
+  'ENL / ESL',
+  'Language Arts',
+  'Math',
+  'Science',
+  'Social Studies',
+  'World Language',
+  'Spanish',
+  'French',
+  'German',
+  'Arts / Visual Arts',
+  'Music',
+  'PE / Health',
+  'Health',
+  'Computer Science',
+  'Technology / Engineering',
+  'Homeroom / Advisory',
+  'Study Skills',
+  'Career & Technical Education',
+] as const;
+
+/** Preset minute values for Plan duration dropdowns (custom minutes allowed). */
+const COMMON_PLAN_DURATIONS = [30, 35, 45, 55, 60, 75] as const;
+
+const PLAN_GRADE_SET = new Set<string>(PLAN_GRADE_OPTIONS);
+const PLAN_SUBJECT_SET = new Set<string>(PLAN_SUBJECT_OPTIONS);
+const isPlanGradePreset = (g: string) => PLAN_GRADE_SET.has(g);
+const isPlanSubjectPreset = (s: string) => PLAN_SUBJECT_SET.has(s);
+const isCommonPlanDurationMinutes = (m: number) =>
+  (COMMON_PLAN_DURATIONS as readonly number[]).includes(m);
+
+/** Firebase / unknown API errors */
+const getUnknownErr = (err: unknown): { code: string; message: string } => {
+  if (!err || typeof err !== "object") return { code: "", message: "" };
+  const r = err as Record<string, unknown>;
+  return {
+    code: typeof r.code === "string" ? r.code : "",
+    message: typeof r.message === "string" ? r.message : "",
+  };
+};
+
 type StandardItem = { code: string; label: string };
 
 type ResourceCard = {
@@ -91,6 +135,33 @@ type ScheduleItem = {
   recurrence: 'once' | 'daily' | 'weekly' | 'monthly';
 };
 
+type SpeechRecognitionResultLike = {
+  results: ArrayLike<{ 0?: { transcript?: string } }>;
+};
+
+type WebSpeechRecognition = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start(): void;
+  stop(): void;
+  onstart: (() => void) | null;
+  onresult: ((event: SpeechRecognitionResultLike) => void) | null;
+  onerror: (() => void) | null;
+  onend: (() => void) | null;
+};
+
+type WebSpeechRecognitionCtor = new () => WebSpeechRecognition;
+
+function getWebSpeechRecognitionCtor(): WebSpeechRecognitionCtor | undefined {
+  if (typeof window === "undefined") return undefined;
+  const w = window as unknown as {
+    SpeechRecognition?: WebSpeechRecognitionCtor;
+    webkitSpeechRecognition?: WebSpeechRecognitionCtor;
+  };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition;
+}
+
 const useSpeechToText = (
   onResult: (text: string) => void,
   options?: {
@@ -102,13 +173,13 @@ const useSpeechToText = (
 ) => {
   const [isListening, setIsListening] = useState(false);
   const [hasSupport, setHasSupport] = useState(false);
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<WebSpeechRecognition | null>(null);
   const shouldListenRef = useRef(false);
   const optsRef = useRef(options);
   optsRef.current = options;
 
   useEffect(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const SpeechRecognition = getWebSpeechRecognitionCtor();
     if (SpeechRecognition) {
       recognitionRef.current = new SpeechRecognition();
       recognitionRef.current.continuous = !!optsRef.current?.continuous;
@@ -119,7 +190,7 @@ const useSpeechToText = (
       recognitionRef.current.onstart = () => {
         setIsListening(true);
       };
-      recognitionRef.current.onresult = (event: any) => {
+      recognitionRef.current.onresult = (event: SpeechRecognitionResultLike) => {
         try {
           const transcript = event.results?.[0]?.[0]?.transcript ?? '';
           if (transcript) onResult(transcript);
@@ -233,7 +304,7 @@ const cropImageToBoundingBox = (base64: string, corners: GeometricData | null): 
 
         ctx.drawImage(img, minX, minY, cropW, cropH, 0, 0, cropW, cropH);
         resolve(canvas.toDataURL('image/jpeg', 0.9).split(',')[1]);
-      } catch (e) {
+      } catch {
         resolve(base64);
       }
     };
@@ -300,7 +371,7 @@ const App: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
-  const [globalSearchQuery, _setGlobalSearchQuery] = useState('');
+  const [globalSearchQuery] = useState('');
   const [assignmentSearchQuery, setAssignmentSearchQuery] = useState('');
   
   const [educatorName, setEducatorName] = useState<string>(() => localStorage.getItem('dg_educator_name') || "");
@@ -333,7 +404,7 @@ const App: React.FC = () => {
   const PRODUCTION_GOOGLE_CLIENT_ID =
     '705695813275-roaepb7an7bkq4gn9b7fr5c73vp26303.apps.googleusercontent.com';
   const raw =
-    (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID) ||
+    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GOOGLE_CLIENT_ID) ||
     PRODUCTION_GOOGLE_CLIENT_ID;
   const isInvalid =
     raw !== PRODUCTION_GOOGLE_CLIENT_ID &&
@@ -410,7 +481,7 @@ const App: React.FC = () => {
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [isGeneratingRubric, setIsGeneratingRubric] = useState(false);
-  const [_isSyncingClassroom, setIsSyncingClassroom] = useState(false);
+  const [, setIsSyncingClassroom] = useState(false);
   const [syncProgress, setSyncProgress] = useState<{
     current: number;
     total: number;
@@ -439,12 +510,15 @@ const App: React.FC = () => {
   const [isCreatingAssignment, setIsCreatingAssignment] = useState(false);
   
   const [_isAutoMode, _setIsAutoMode] = useState(true);
+  void _isAutoMode;
+  void _setIsAutoMode;
   const [isFlashOn, setIsFlashOn] = useState(false);
   const [showQuickPick, setShowQuickPick] = useState(false);
   const [pendingWork, setPendingWork] = useState<Partial<GradingResponse> & { imageUrls: string[] } | null>(null);
   const [activeGeometry, setActiveGeometry] = useState<GeometricData | null>(null);
   const [scanHealth, setScanHealth] = useState<number>(0);
   const [_oneWordCommand, setOneWordCommand] = useState<string | null>(null);
+  void _oneWordCommand;
   const [cameraError, setCameraError] = useState<string | null>(null);
   
   // Student targeting mode for scan attribution.
@@ -563,7 +637,7 @@ const App: React.FC = () => {
       !!el &&
       (el instanceof HTMLTextAreaElement ||
         el instanceof HTMLInputElement ||
-        (el as any).isContentEditable);
+        el.isContentEditable);
 
     const activeEl = document.activeElement as HTMLElement | null;
     const el = isEditable(activeEl)
@@ -576,7 +650,7 @@ const App: React.FC = () => {
 
     // Inputs: use setRangeText for reliable cursor insert + fire input event for React.
     if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
-      if (el.disabled || (el as any).readOnly) return;
+      if (el.disabled || el.readOnly) return;
       const value = el.value ?? '';
       const start = typeof el.selectionStart === 'number' ? el.selectionStart : value.length;
       const end = typeof el.selectionEnd === 'number' ? el.selectionEnd : value.length;
@@ -586,7 +660,7 @@ const App: React.FC = () => {
         el.setRangeText(insert, start, end, 'end');
       } catch {
         // Fallback: append
-        (el as any).value = value + (value && !value.endsWith(' ') ? ' ' : '') + text;
+        el.value = value + (value && !value.endsWith(' ') ? ' ' : '') + text;
       }
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.focus();
@@ -608,7 +682,7 @@ const App: React.FC = () => {
       const isField =
         target instanceof HTMLTextAreaElement ||
         target instanceof HTMLInputElement ||
-        (target as any).isContentEditable;
+        target.isContentEditable;
       if (!isField) return;
       lastFocusedFieldRef.current = target;
     };
@@ -666,21 +740,20 @@ const App: React.FC = () => {
     }
   })();
 
-  const [lessonTopic, _setLessonTopic] = useState<string>(() => (persistedPlan?.lessonTopic as string) || '');
+  const [lessonTopic] = useState<string>(() => (persistedPlan?.lessonTopic as string) || '');
   const [lessonResult, setLessonResult] = useState<LessonScriptResult | null>(null);
   const [lessonLoading, setLessonLoading] = useState(false);
   const [planAiError, setPlanAiError] = useState<string | null>(null);
-  const [planActionLoading, _setPlanActionLoading] = useState<null | 'share'>(null);
-  void planActionLoading;
+  const [, setPlanActionLoading] = useState<null | 'share'>(null);
   const [planActionMessage, setPlanActionMessage] = useState<string | null>(null);
-  const [_diffLevel, setDiffLevel] = useState<'simplified' | 'advanced' | null>(null);
+  const [, setDiffLevel] = useState<'simplified' | 'advanced' | null>(null);
   const [differentiationText, setDifferentiationText] = useState('');
   const [diffLoading, setDiffLoading] = useState(false);
   const [fileVaultLinks, setFileVaultLinks] = useState<{ label: string; url: string }[]>(() => safeParseJson(localStorage.getItem(FILE_VAULT_KEY), [] as { label: string; url: string }[]));
 
   const [planLessonTitle, setPlanLessonTitle] = useState(() => (persistedPlan?.lessonTitle as string) || '');
   const [planUnit, setPlanUnit] = useState(() => (persistedPlan?.unit as string) || 'Unit 4: Ecosystems');
-  const [planVersion, _setPlanVersion] = useState<PlanVersion>(() => {
+  const [planVersion] = useState<PlanVersion>(() => {
     const v = persistedPlan?.version as PlanVersion | undefined;
     return v === 'Standard' || v === 'Sub Plan' || v === 'Period 2 (Advanced)' ? v : 'Standard';
   });
@@ -694,7 +767,8 @@ const App: React.FC = () => {
     D: false,
   });
   const [planLastSaved, setPlanLastSaved] = useState<Date | null>(null);
-  const [_isPlanSaving, _setIsPlanSaving] = useState(false);
+  const [, setIsPlanSaving] = useState(false);
+  void setIsPlanSaving;
 
   const [planStateRegion, setPlanStateRegion] = useState<string>(() => {
     const persisted = persistedPlan?.state;
@@ -720,6 +794,10 @@ const App: React.FC = () => {
   const [classProfile, setClassProfile] = useState<string>(() => (persistedPlan?.classProfile as string) || '');
   const [objectiveGenLoadingPart, setObjectiveGenLoadingPart] = useState<LessonPartKey | null>(null);
   const [objectiveGenError, setObjectiveGenError] = useState<string | null>(null);
+  const [learningTargetAiLoading, setLearningTargetAiLoading] = useState(false);
+  const [learningTargetAiError, setLearningTargetAiError] = useState<string | null>(null);
+  const [planningContextAiLoading, setPlanningContextAiLoading] = useState(false);
+  const [planningContextAiError, setPlanningContextAiError] = useState<string | null>(null);
   const [doNowObjectiveChoices, setDoNowObjectiveChoices] = useState<string[]>([]);
   const [iDoObjectiveChoices, setIDoObjectiveChoices] = useState<string[]>([]);
   const [weDoObjectiveChoices, setWeDoObjectiveChoices] = useState<string[]>([]);
@@ -926,7 +1004,7 @@ const App: React.FC = () => {
       // ignore
     }
   }, [scheduleView]);
-  useEffect(() => { try { localStorage.setItem(FILE_VAULT_KEY, JSON.stringify(fileVaultLinks)); } catch (_) { /* ignore */ } }, [fileVaultLinks, FILE_VAULT_KEY]);
+  useEffect(() => { try { localStorage.setItem(FILE_VAULT_KEY, JSON.stringify(fileVaultLinks)); } catch { /* ignore */ } }, [fileVaultLinks, FILE_VAULT_KEY]);
   useEffect(() => {
     // Lightweight autosave for the Plan tab so educators don't lose work.
     try {
@@ -1037,7 +1115,7 @@ const App: React.FC = () => {
       void loadCourses();
     }, 20000);
     return () => window.clearInterval(id);
-  }, [classroom, isOnline, phase]);
+  }, [classroom, isOnline, phase]); // eslint-disable-line react-hooks/exhaustive-deps -- loadCourses not stable; omitting avoids resetting interval every render
 
   // Attention items for dashboard (used for notification and UI)
   const dashboardAttention = useMemo(() => {
@@ -1268,8 +1346,8 @@ const App: React.FC = () => {
         logEvent('auth_email_sign_in');
         setPhase(AppPhase.AUTHENTICATION);
       }
-    } catch (err: any) {
-      const code = err?.code || '';
+    } catch (err: unknown) {
+      const code = getUnknownErr(err).code;
       if (authMode === 'signin' && code === 'auth/user-not-found') {
         setAuthError('No account found. Switch to "Sign up" to create one.');
       } else if (authMode === 'signup' && code === 'auth/email-already-in-use') {
@@ -1281,7 +1359,7 @@ const App: React.FC = () => {
       } else if (code === 'auth/weak-password') {
         setAuthError('Password should be at least 6 characters.');
       } else {
-        setAuthError(err?.message?.replace('Firebase: ', '') || 'Sign in failed. Please try again.');
+        setAuthError(getUnknownErr(err).message.replace('Firebase: ', '') || 'Sign in failed. Please try again.');
       }
     }
   };
@@ -1300,9 +1378,9 @@ const App: React.FC = () => {
       await sendPasswordResetEmail(auth, email.trim());
       setAuthError(null);
       setAuthSuccessMessage('Check your email/spam for a link to reset your password.');
-    } catch (err: any) {
+    } catch (err: unknown) {
       setAuthSuccessMessage(null);
-      const code = err?.code || '';
+      const code = getUnknownErr(err).code;
       if (code === 'auth/user-not-found') {
         setAuthError('No account found with that email.');
       } else if (code === 'auth/invalid-email') {
@@ -1310,7 +1388,7 @@ const App: React.FC = () => {
       } else if (code === 'auth/too-many-requests') {
         setAuthError('Too many reset attempts. Try again later.');
       } else {
-        setAuthError(err?.message?.replace('Firebase: ', '') || 'Could not send reset email. Please try again.');
+        setAuthError(getUnknownErr(err).message.replace('Firebase: ', '') || 'Could not send reset email. Please try again.');
       }
     }
   };
@@ -1406,7 +1484,23 @@ const App: React.FC = () => {
       return;
     }
     try {
-      const g = (window as any).google;
+      type GoogleTokenClient = { requestAccessToken: () => void };
+      type GoogleTokenOpts = {
+        client_id: string;
+        scope: string;
+        prompt?: string;
+        ux_mode?: string;
+        redirect_uri?: string;
+        error_callback?: (err: { type?: string }) => void;
+        callback?: (response: { access_token?: string }) => void;
+      };
+      const g = (window as Window & {
+        google?: {
+          accounts?: {
+            oauth2?: { initTokenClient: (opts: GoogleTokenOpts) => GoogleTokenClient };
+          };
+        };
+      }).google;
       if (!g?.accounts?.oauth2?.initTokenClient) {
         setAuthError('Google sign-in SDK is still loading. Please wait a moment and try again.');
         return;
@@ -1420,17 +1514,17 @@ const App: React.FC = () => {
         prompt: 'consent',
         ux_mode: 'redirect',
         redirect_uri: redirectUri,
-        error_callback: (err: any) => {
+        error_callback: (err: { type?: string }) => {
           const msg = err?.type ? `Google sign-in error: ${err.type}` : 'Google sign-in failed.';
           setAuthError(msg);
         },
-        callback: (response: any) => {
+        callback: (response: { access_token?: string }) => {
           if (response?.access_token) completeGoogleSignIn(response.access_token);
         },
       });
       client.requestAccessToken();
-    } catch (err: any) { 
-      setAuthError(`OAuth Failure: ${err.message}`); 
+    } catch (err: unknown) {
+      setAuthError(`OAuth Failure: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -1440,7 +1534,8 @@ const App: React.FC = () => {
       return;
     }
     const clientId = import.meta.env.VITE_APPLE_CLIENT_ID;
-    const AppleIDAuth = (window as any).AppleID?.auth;
+    const AppleIDAuth = (window as Window & { AppleID?: { auth?: { init: (opts: unknown) => Promise<void>; signIn: () => Promise<unknown> } } })
+      .AppleID?.auth;
     if (!clientId || !AppleIDAuth?.init) {
       setAuthError('Apple Sign-In is not yet configured. Please use Sign in with Google for now.');
       return;
@@ -1453,8 +1548,13 @@ const App: React.FC = () => {
     })
       .then(() =>
         AppleIDAuth.signIn().then(
-          (res: any) => {
-            if (res?.authorization?.code) {
+          (res: unknown) => {
+            const code =
+              res &&
+              typeof res === 'object' &&
+              'authorization' in res &&
+              (res as { authorization?: { code?: string } }).authorization?.code;
+            if (code) {
               // TODO: exchange code for tokens and complete sign-in
               setAuthError('Apple Sign-In integration is in progress. Please use Sign in with Google.');
             }
@@ -1569,13 +1669,13 @@ const App: React.FC = () => {
     const shareUrl = window.location.origin;
     const shareText = 'Checkout DoneGrading! An app made for educators to plan lessons, teach with timers, grade with AI, schedule classes, and communicate with students—all in one place.';
     try {
-      if ((navigator as any).share) {
-        await (navigator as any).share({
+      if (typeof navigator.share === 'function') {
+        await navigator.share({
           title: 'DoneGrading',
           text: shareText,
           url: shareUrl,
         });
-      } else if (navigator.clipboard && (navigator.clipboard as any).writeText) {
+      } else if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(`${shareText}\n\n${shareUrl}`);
         alert('Message and link copied to clipboard!');
       }
@@ -1631,9 +1731,9 @@ const App: React.FC = () => {
       }
       setCourses([newCourse, ...courses]);
       setPhase(AppPhase.DASHBOARD);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Failed to create course", err);
-      setCreationError(err.message || "Failed to create course.");
+      setCreationError(getUnknownErr(err).message || "Failed to create course.");
       setSyncStatus('error');
     } finally {
       setIsCreatingCourse(false);
@@ -1650,9 +1750,9 @@ const App: React.FC = () => {
       setPhase(AppPhase.DASHBOARD);
       await loadCourses();
       setSyncStatus('ok');
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      setCreationError(err.message || "Failed to create assignment.");
+      setCreationError(getUnknownErr(err).message || "Failed to create assignment.");
       setSyncStatus('error');
     } finally {
       setIsCreatingAssignment(false);
@@ -1693,7 +1793,7 @@ const App: React.FC = () => {
           videoRef.current.srcObject = stream; 
           videoRef.current.onloadedmetadata = () => videoRef.current?.play().catch(e => console.error(e)); 
         }
-      } catch (err: any) { 
+      } catch (err: unknown) { 
         console.error("Camera access denied:", err);
         setCameraError("Camera access denied or unavailable. Please check device settings.");
       }
@@ -1706,10 +1806,12 @@ const App: React.FC = () => {
     if (streamRef.current) {
       const track = streamRef.current.getVideoTracks()[0];
       if (track && typeof track.getCapabilities === 'function') {
-        const capabilities = track.getCapabilities();
-        if (capabilities && (capabilities as any).torch) {
+        const capabilities = track.getCapabilities() as MediaTrackCapabilities & { torch?: boolean };
+        if (capabilities?.torch) {
           try {
-            await track.applyConstraints({ advanced: [{ torch: !isFlashOn } as any] });
+            await track.applyConstraints({
+              advanced: [{ torch: !isFlashOn } as unknown as MediaTrackConstraintSet],
+            });
             setIsFlashOn(!isFlashOn);
             return;
           } catch (e) {
@@ -1794,7 +1896,7 @@ const App: React.FC = () => {
             const canvas = document.createElement('canvas');
             canvas.width = size;
             canvas.height = size;
-            const ctx = canvas.getContext('2d', { willReadFrequently: true } as any) as CanvasRenderingContext2D | null;
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
             if (!ctx) return resolve(null);
             ctx.drawImage(img, 0, 0, size, size);
             const data = ctx.getImageData(0, 0, size, size).data;
@@ -1857,7 +1959,7 @@ const App: React.FC = () => {
       const assess = await assessFrame(apiBase64);
       if (assess) {
         setScanHealth(assess.scanHealth || 0);
-        setActiveGeometry((assess as any).corners || null);
+        setActiveGeometry(assess.corners ?? null);
       }
       
       const captureThreshold = gradingMode === GradingMode.MULTI_PAGE ? 88 : 80;
@@ -1865,7 +1967,7 @@ const App: React.FC = () => {
       if (!assess || assessHealth < captureThreshold) return;
 
       // Capture accepted: crop using assessed corners (if any)
-      const corners = (assess as any).corners || null;
+      const corners = assess.corners ?? null;
       const croppedBase64 = await cropImageToBoundingBox(optimalHighResBase64, corners);
 
       if (gradingMode === GradingMode.MULTI_PAGE) {
@@ -1926,7 +2028,7 @@ const App: React.FC = () => {
     } finally { 
       frameAssessInFlightRef.current = false;
     }
-  }, [isOnline, cameraError, captureFrame, selectedAssignment, students, showQuickPick, customRubric, gradingMode, computeAHash, hammingDistance]);
+  }, [cameraError, captureFrame, selectedAssignment, showQuickPick, gradingMode, computeAHash, hammingDistance]);
 
   useEffect(() => {
     let interval: number | null = null;
@@ -2103,7 +2205,7 @@ const App: React.FC = () => {
     } catch (e) {
       console.error(e);
     }
-  }, [gradingMode, cooldownRef, showQuickPick, cameraError, selectedAssignment, captureFrame, activeGeometry, isOnline]);
+  }, [gradingMode, cooldownRef, showQuickPick, cameraError, selectedAssignment, captureFrame, activeGeometry, isOnline, scanHealth]);
 
   const finalizeMultiPage = async () => {
     if (isProcessing || showQuickPick) return;
@@ -2288,7 +2390,7 @@ const App: React.FC = () => {
                 work.studentEmail,
                 subject,
                 body,
-                base64Images.length > 0 ? (base64Images as any) : undefined
+                base64Images.length > 0 ? base64Images : undefined
               );
               setSyncProgress(prev => ({
                 ...prev,
@@ -4988,6 +5090,73 @@ const App: React.FC = () => {
       });
     };
 
+    const handleGenerateLearningTargetAndSuccess = async () => {
+      const title = (planLessonTitle || lessonTopic || planSubject || '').trim();
+      if (!title) {
+        setLearningTargetAiError('Add a lesson title first.');
+        return;
+      }
+      if (!planGrade || !planSubject) {
+        setLearningTargetAiError('Select Grade and Subject first.');
+        return;
+      }
+
+      setLearningTargetAiError(null);
+      setLearningTargetAiLoading(true);
+      try {
+        const res = await generateLearningTargetAndSuccessCriteria({
+          lessonTitle: title,
+          grade: planGrade,
+          subject: planSubject,
+          objectiveHint: planObjective || undefined,
+        });
+
+        if (!res) {
+          setLearningTargetAiError('Could not generate learning target and success criteria. Try again.');
+          return;
+        }
+
+        setPlanObjective(res.objective);
+        setPlanStudentSuccessCriteria(res.studentSuccessCriteria);
+      } catch {
+        setLearningTargetAiError('Something went wrong while generating. Try again.');
+      } finally {
+        setLearningTargetAiLoading(false);
+      }
+    };
+
+    const handleGeneratePlanningContext = async () => {
+      const title = (planLessonTitle || lessonTopic || '').trim();
+      if (!title) {
+        setPlanningContextAiError('Add a lesson title first.');
+        return;
+      }
+
+      setPlanningContextAiError(null);
+      setPlanningContextAiLoading(true);
+      try {
+        const res = await generatePlanningContext({
+          lessonTitle: title,
+          gradeHint: planGrade,
+          subjectHint: planSubject,
+          learningTargetHint: planObjective || undefined,
+        });
+
+        if (!res) {
+          setPlanningContextAiError('Could not generate planning context. Try again.');
+          return;
+        }
+
+        setPlanGrade(res.grade);
+        setPlanSubject(res.subject);
+        setPlanDuration(res.duration);
+      } catch {
+        setPlanningContextAiError('Something went wrong while generating context. Try again.');
+      } finally {
+        setPlanningContextAiLoading(false);
+      }
+    };
+
     const handleGenerateObjectiveChoices = async (part: LessonPartKey) => {
       const obj = planObjective.trim();
       if (!obj) {
@@ -5165,9 +5334,9 @@ const App: React.FC = () => {
       const title = `Lesson Plan: ${planLessonTitle || 'Lesson'}`;
       const text = buildPlanText();
       try {
-        _setPlanActionLoading('share');
-        if ((navigator as any).share) {
-          await (navigator as any).share({ title, text });
+        setPlanActionLoading('share');
+        if (typeof navigator.share === 'function') {
+          await navigator.share({ title, text });
         } else {
           await navigator.clipboard.writeText(text);
           setPlanActionMessage('Lesson plan copied to clipboard.');
@@ -5175,7 +5344,7 @@ const App: React.FC = () => {
       } catch {
         setPlanActionMessage('Could not share right now.');
       } finally {
-        _setPlanActionLoading(null);
+        setPlanActionLoading(null);
       }
     };
     void handleSharePlan;
@@ -5389,18 +5558,74 @@ const App: React.FC = () => {
                       placeholder="Unit"
                       className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-950/90 text-[10px] text-slate-700 dark:text-slate-100 outline-none"
                     />
-                    <input
-                      value={planGrade}
-                      onChange={(e) => setPlanGrade(e.target.value)}
-                      placeholder="Grade"
-                      className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-950/90 text-[10px] text-slate-700 dark:text-slate-100 outline-none"
-                    />
-                    <input
-                      value={planSubject}
-                      onChange={(e) => setPlanSubject(e.target.value)}
-                      placeholder="Subject"
-                      className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-950/90 text-[10px] text-slate-700 dark:text-slate-100 outline-none"
-                    />
+                    <div>
+                      {(() => {
+                        const isCustom = !isPlanGradePreset(planGrade);
+                        const selectValue = isCustom ? '__custom__' : planGrade;
+                        return (
+                          <>
+                            <select
+                              value={selectValue}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                if (v === '__custom__') setPlanGrade('');
+                                else setPlanGrade(v);
+                              }}
+                              className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-950/90 text-[10px] text-slate-700 dark:text-slate-100 outline-none w-full"
+                            >
+                              {PLAN_GRADE_OPTIONS.map((g) => (
+                                <option key={g} value={g}>
+                                  {g}
+                                </option>
+                              ))}
+                              <option value="__custom__">Custom</option>
+                            </select>
+                            {isCustom && (
+                              <input
+                                value={planGrade}
+                                onChange={(e) => setPlanGrade(e.target.value)}
+                                placeholder="Custom grade"
+                                className="mt-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-950/90 text-[10px] text-slate-700 dark:text-slate-100 outline-none w-full"
+                              />
+                            )}
+                          </>
+                        );
+                      })()}
+                    </div>
+                    <div>
+                      {(() => {
+                        const isCustom = !isPlanSubjectPreset(planSubject);
+                        const selectValue = isCustom ? '__custom__' : planSubject;
+                        return (
+                          <>
+                            <select
+                              value={selectValue}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                if (v === '__custom__') setPlanSubject('');
+                                else setPlanSubject(v);
+                              }}
+                              className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-950/90 text-[10px] text-slate-700 dark:text-slate-100 outline-none w-full"
+                            >
+                              {PLAN_SUBJECT_OPTIONS.map((s) => (
+                                <option key={s} value={s}>
+                                  {s}
+                                </option>
+                              ))}
+                              <option value="__custom__">Custom</option>
+                            </select>
+                            {isCustom && (
+                              <input
+                                value={planSubject}
+                                onChange={(e) => setPlanSubject(e.target.value)}
+                                placeholder="Custom subject"
+                                className="mt-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-950/90 text-[10px] text-slate-700 dark:text-slate-100 outline-none w-full"
+                              />
+                            )}
+                          </>
+                        );
+                      })()}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -5586,10 +5811,21 @@ const App: React.FC = () => {
                         </select>
                       </div>
                       <div>
-                        <label className={label}>Grade</label>
+                        <div className="flex items-center justify-between gap-2">
+                          <label className={label}>Grade</label>
+                          <button
+                            type="button"
+                            onClick={() => void handleGeneratePlanningContext()}
+                            disabled={planningContextAiLoading}
+                            className="px-2 py-1 rounded-lg bg-sky-600 text-white text-[10px] font-semibold disabled:opacity-60 flex items-center gap-1"
+                            title="AI: suggest grade, subject, and duration"
+                          >
+                            <Sparkles className="w-3 h-3" />
+                            {planningContextAiLoading ? 'AI…' : 'AI'}
+                          </button>
+                        </div>
                         {(() => {
-                          const gradeOptions = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'] as const;
-                          const isCustom = !gradeOptions.includes(planGrade as any);
+                          const isCustom = !isPlanGradePreset(planGrade);
                           const selectValue = isCustom ? '__custom__' : planGrade;
                           return (
                             <>
@@ -5602,7 +5838,7 @@ const App: React.FC = () => {
                                 }}
                                 className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none"
                               >
-                                {gradeOptions.map((g) => (
+                                {PLAN_GRADE_OPTIONS.map((g) => (
                                   <option key={g} value={g}>
                                     {g}
                                   </option>
@@ -5623,17 +5859,21 @@ const App: React.FC = () => {
                       </div>
 
                       <div className="col-span-2">
-                        <label className={label}>Subject</label>
+                        <div className="flex items-center justify-between gap-2">
+                          <label className={label}>Subject</label>
+                          <button
+                            type="button"
+                            onClick={() => void handleGeneratePlanningContext()}
+                            disabled={planningContextAiLoading}
+                            className="px-2 py-1 rounded-lg bg-sky-600 text-white text-[10px] font-semibold disabled:opacity-60 flex items-center gap-1"
+                            title="AI: suggest grade, subject, and duration"
+                          >
+                            <Sparkles className="w-3 h-3" />
+                            {planningContextAiLoading ? 'AI…' : 'AI'}
+                          </button>
+                        </div>
                         {(() => {
-                          const subjectOptions = [
-                            'ENL / ESL',
-                            'Language Arts',
-                            'Math',
-                            'Science',
-                            'Social Studies',
-                            'Homeroom / Advisory',
-                          ] as const;
-                          const isCustom = !subjectOptions.includes(planSubject as any);
+                          const isCustom = !isPlanSubjectPreset(planSubject);
                           const selectValue = isCustom ? '__custom__' : planSubject;
                           return (
                             <>
@@ -5646,7 +5886,7 @@ const App: React.FC = () => {
                                 }}
                                 className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none"
                               >
-                                {subjectOptions.map((s) => (
+                                {PLAN_SUBJECT_OPTIONS.map((s) => (
                                   <option key={s} value={s}>
                                     {s}
                                   </option>
@@ -5667,33 +5907,59 @@ const App: React.FC = () => {
                       </div>
 
                       <div className="col-span-3">
-                        <label className={label}>Duration (mins)</label>
-                        <div className="mt-1 flex items-center gap-2">
-                          <input
-                            type="number"
-                            min={10}
-                            max={120}
-                            value={planDuration}
-                            onChange={(e) => setPlanDuration(parseInt(e.target.value || '0', 10))}
-                            className="w-[120px] px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none"
-                          />
-                          <div className="flex flex-wrap gap-1">
-                            {[30, 45, 55, 60].map((d) => (
-                              <button
-                                key={d}
-                                type="button"
-                                onClick={() => setPlanDuration(d)}
-                                className={`px-2 py-1 rounded-full text-[10px] font-semibold border ${
-                                  planDuration === d
-                                    ? 'bg-indigo-600 text-white border-indigo-600'
-                                    : 'bg-white/90 dark:bg-slate-900/80 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
-                                }`}
-                              >
-                                {d}
-                              </button>
-                            ))}
-                          </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <label className={label}>Duration (mins)</label>
+                          <button
+                            type="button"
+                            onClick={() => void handleGeneratePlanningContext()}
+                            disabled={planningContextAiLoading}
+                            className="px-2 py-1 rounded-lg bg-sky-600 text-white text-[10px] font-semibold disabled:opacity-60 flex items-center gap-1"
+                            title="AI: suggest grade, subject, and duration"
+                          >
+                            <Sparkles className="w-3 h-3" />
+                            {planningContextAiLoading ? 'AI…' : 'AI'}
+                          </button>
                         </div>
+                        {(() => {
+                          const isCustom = !isCommonPlanDurationMinutes(planDuration);
+                          const selectValue = isCustom ? '__custom__' : planDuration;
+                          return (
+                            <div className="mt-1 flex flex-col gap-2">
+                              <select
+                                value={selectValue}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (v === '__custom__') return;
+                                  const next = parseInt(v, 10);
+                                  if (Number.isFinite(next)) setPlanDuration(next);
+                                }}
+                                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none"
+                              >
+                                {COMMON_PLAN_DURATIONS.map((d) => (
+                                  <option key={d} value={d}>
+                                    {d} min
+                                  </option>
+                                ))}
+                                <option value="__custom__">Custom</option>
+                              </select>
+                              {isCustom && (
+                                <input
+                                  type="number"
+                                  min={10}
+                                  max={120}
+                                  value={planDuration}
+                                  onChange={(e) => setPlanDuration(parseInt(e.target.value || '0', 10))}
+                                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none"
+                                />
+                              )}
+                            </div>
+                          );
+                        })()}
+                        {planningContextAiError && (
+                          <p className="mt-2 text-[9px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded px-2 py-1">
+                            {planningContextAiError}
+                          </p>
+                        )}
                       </div>
                     </div>
 
@@ -5812,14 +6078,45 @@ const App: React.FC = () => {
               {planTab === 'setup' && (
                 <section className="bg-white/95 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-3">
                   <p className={sectionTitle}>Step 0 · Objective (I can...) · {pacing.setup} min</p>
-                  <textarea
-                    value={planObjective}
-                    onChange={(e) => setPlanObjective(e.target.value)}
-                    placeholder="I can explain how __ works using evidence and key vocabulary."
-                    className="w-full min-h-[96px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
-                  />
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className={label}>Learning target</p>
+                      <button
+                        type="button"
+                        onClick={() => void handleGenerateLearningTargetAndSuccess()}
+                        disabled={learningTargetAiLoading}
+                        className="px-2 py-1 rounded-lg bg-sky-600 text-white text-[10px] font-semibold disabled:opacity-60 flex items-center gap-1"
+                      >
+                        <Sparkles className="w-3 h-3" />
+                        {learningTargetAiLoading ? 'AI…' : 'AI'}
+                      </button>
+                    </div>
+                    <textarea
+                      value={planObjective}
+                      onChange={(e) => setPlanObjective(e.target.value)}
+                      placeholder="I can explain how __ works using evidence and key vocabulary."
+                      className="w-full min-h-[96px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
+                    />
+                    {learningTargetAiError && (
+                      <p className="text-[9px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded px-2 py-1">
+                        {learningTargetAiError}
+                      </p>
+                    )}
+                  </div>
                   <div className="space-y-2">
                     <label className={label}>Success criteria (for students)</label>
+                    <div className="flex items-center justify-between gap-2">
+                      <div />
+                      <button
+                        type="button"
+                        onClick={() => void handleGenerateLearningTargetAndSuccess()}
+                        disabled={learningTargetAiLoading}
+                        className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 text-[10px] font-semibold disabled:opacity-60 flex items-center gap-1"
+                      >
+                        <Sparkles className="w-3 h-3" />
+                        {learningTargetAiLoading ? 'AI…' : 'AI'}
+                      </button>
+                    </div>
                     <textarea
                       value={planStudentSuccessCriteria}
                       onChange={(e) => setPlanStudentSuccessCriteria(e.target.value)}
@@ -6399,7 +6696,7 @@ const App: React.FC = () => {
               )}
             </div>
 
-            {(planTab as any) === 'context' && (
+            {(planTab as string) === 'context' && (
             <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2 space-y-2">
             <aside className="space-y-2">
               <section className="plan-print-plain bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-3 space-y-1">
@@ -6617,7 +6914,7 @@ const App: React.FC = () => {
             </div>
             )}
 
-            {(planTab as any) === 'blocks' && (
+            {(planTab as string) === 'blocks' && (
             <div className="flex-1 min-h-0 overflow-hidden flex flex-col p-2">
               <section className="plan-print-plain mb-2 bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-2">
                 <p className="text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
@@ -7013,7 +7310,7 @@ const App: React.FC = () => {
             </div>
             )}
 
-            {(planTab as any) === 'resources' && (
+            {(planTab as string) === 'resources' && (
             <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2">
             <aside className="w-full space-y-3">
               <section className="plan-print-plain bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-3">
@@ -7287,7 +7584,7 @@ const App: React.FC = () => {
             </div>
             )}
 
-            {(planTab as any) === 'assessment' && (
+            {(planTab as string) === 'assessment' && (
             <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2">
           <section className="plan-print-plain bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-3 mb-2">
             <p className="text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
@@ -8485,7 +8782,12 @@ const App: React.FC = () => {
                     />
                     <select
                       value={scheduleRecurrence}
-                      onChange={(e) => setScheduleRecurrence(e.target.value as any)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === 'once' || v === 'daily' || v === 'weekly' || v === 'monthly') {
+                          setScheduleRecurrence(v);
+                        }
+                      }}
                       className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[11px] text-slate-800 dark:text-slate-100 outline-none focus:border-indigo-400"
                     >
                       <option value="once">Once</option>
@@ -8719,7 +9021,7 @@ const App: React.FC = () => {
                   !!el &&
                   (el instanceof HTMLTextAreaElement ||
                     el instanceof HTMLInputElement ||
-                    (el as any).isContentEditable);
+                    el.isContentEditable);
                 const activeEl = document.activeElement as HTMLElement | null;
                 const target = isEditable(activeEl)
                   ? activeEl
