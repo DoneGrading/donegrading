@@ -4,25 +4,20 @@ import {
   Camera,
   Layers,
   CheckCircle,
-  Users,
   Loader2,
   Trash2,
   ArrowRight,
   Sparkles,
-  CloudUpload,
   Zap,
   AlertCircle,
   Check,
   Wifi,
   WifiOff,
-  History as HistoryIcon,
   X,
-  Target,
-  RefreshCw,
   FileText,
-  PlusCircle,
   Mic,
   MicOff,
+  Pin,
   Home,
   MessageCircle,
   LayoutDashboard,
@@ -316,6 +311,7 @@ const App: React.FC = () => {
 
   const [dashboardSort, setDashboardSort] = useState<SortMode>(() => safeParseJson<SortMode>(localStorage.getItem('dg_dash_sort'), 'recent'));
   const [assignmentSort, setAssignmentSort] = useState<SortMode>(() => safeParseJson<SortMode>(localStorage.getItem('dg_asn_sort'), 'recent'));
+  void setDashboardSort;
 
   const todayLabel = useMemo(() => {
     try {
@@ -421,14 +417,49 @@ const App: React.FC = () => {
   // Student targeting mode for scan attribution.
   // - single: match each scan to one student (manual or OCR match)
   // - batch: teacher selects multiple students once; scans map sequentially
-  const [scanStudentMode, setScanStudentMode] = useState<'single' | 'batch'>('single');
+  const [scanStudentMode, setScanStudentMode] = useState<'single' | 'batch'>(() => {
+    try {
+      const raw = localStorage.getItem('dg_scan_student_mode_v1');
+      return raw === 'single' || raw === 'batch' ? raw : 'batch';
+    } catch {
+      return 'batch';
+    }
+  });
   const [batchSelectedStudentIds, setBatchSelectedStudentIds] = useState<Set<string>>(new Set());
+  const [batchRosterFilter, setBatchRosterFilter] = useState<'all' | 'not_graded' | 'at_risk' | 'missing_email' | 'recently_graded'>('all');
+  const [batchRosterQuery, setBatchRosterQuery] = useState('');
+  const [batchRosterSort, setBatchRosterSort] = useState<'manual' | 'last_name'>(
+    () => {
+      try {
+        const raw = localStorage.getItem('dg_batch_roster_sort_v1');
+        return raw === 'manual' || raw === 'last_name' ? raw : 'last_name';
+      } catch {
+        return 'last_name';
+      }
+    }
+  );
+  const [batchRosterOrderIds, setBatchRosterOrderIds] = useState<string[]>([]);
   const batchStudentOrderRef = useRef<string[]>([]);
   const batchNextIndexRef = useRef<number>(0);
 
   // Audit selection (bulk edit/sync/delete)
   const [auditSelectedIndexes, setAuditSelectedIndexes] = useState<Set<number>>(new Set());
   const [auditEditSelectedOnly, setAuditEditSelectedOnly] = useState(false);
+  void setAuditEditSelectedOnly;
+  void auditEditSelectedOnly;
+  const [auditFilter, setAuditFilter] = useState<'all' | 'errors' | 'drafts' | 'ready'>('all');
+  const [syncPreflightIndexes, setSyncPreflightIndexes] = useState<number[] | null>(null);
+  const [syncReceipts, setSyncReceipts] = useState<
+    Array<{
+      key: string;
+      studentName: string;
+      ok: boolean;
+      error?: string;
+      emailOk?: boolean;
+      drivePagesSaved?: number;
+    }>
+  >([]);
+  const [syncFailedKeys, setSyncFailedKeys] = useState<Set<string>>(new Set());
 
   const [scanQueueCount, setScanQueueCount] = useState(0);
   const [scanReviewQueueCount, setScanReviewQueueCount] = useState(0);
@@ -486,6 +517,8 @@ const App: React.FC = () => {
   const [quickTodos, setQuickTodos] = useState<{ id: string; text: string; createdAt: number; done?: boolean }[]>(() =>
     safeParseJson(localStorage.getItem(QUICK_TODOS_KEY), [] as { id: string; text: string; createdAt: number; done?: boolean }[])
   );
+  void setGradeFollowUps;
+  void setQuickTodos;
   // Voice capture: bottom mic inserts into currently focused field (no modal UI).
   const lastFocusedFieldRef = useRef<HTMLElement | null>(null);
   const voiceTargetRef = useRef<HTMLElement | null>(null);
@@ -573,6 +606,8 @@ const App: React.FC = () => {
   const NAV_USAGE_KEY = 'dg_nav_usage_v1';
   const [navUsage, setNavUsage] = useState<Record<string, number>>(() => safeParseJson(localStorage.getItem(NAV_USAGE_KEY), {} as Record<string, number>));
   const [dragCourseId, setDragCourseId] = useState<string | null>(null);
+  void dragCourseId;
+  void setDragCourseId;
   const [dragAssignmentId, setDragAssignmentId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -673,8 +708,22 @@ const App: React.FC = () => {
       return true;
     }
   });
+  void attentionExpanded;
+  void setAttentionExpanded;
   const [courseSearch, setCourseSearch] = useState('');
   const [showLast7Details, setShowLast7Details] = useState(false);
+  void showLast7Details;
+  void setShowLast7Details;
+  const [pinnedCourseIds, setPinnedCourseIds] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('dg_pinned_courses_v1');
+      if (!raw) return [];
+      const parsed = safeParseJson(raw, []);
+      return Array.isArray(parsed) ? parsed.filter((v) => typeof v === 'string') : [];
+    } catch {
+      return [];
+    }
+  });
 
   const [voiceInboxExpanded, setVoiceInboxExpanded] = useState<boolean>(() => {
     try {
@@ -684,6 +733,8 @@ const App: React.FC = () => {
       return false;
     }
   });
+  void voiceInboxExpanded;
+  void setVoiceInboxExpanded;
 
   useEffect(() => {
     try {
@@ -700,6 +751,36 @@ const App: React.FC = () => {
       // Ignore storage errors; UI should continue to work.
     }
   }, [attentionExpanded]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('dg_pinned_courses_v1', JSON.stringify(pinnedCourseIds));
+    } catch {
+      // Ignore storage errors; UI should continue to work.
+    }
+  }, [pinnedCourseIds]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('dg_scan_student_mode_v1', scanStudentMode);
+    } catch {
+      // Ignore storage errors; UI should continue to work.
+    }
+  }, [scanStudentMode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('dg_batch_roster_sort_v1', batchRosterSort);
+    } catch {
+      // Ignore storage errors; UI should continue to work.
+    }
+  }, [batchRosterSort]);
+
+  useEffect(() => {
+    if (batchRosterSort !== 'manual' && batchRosterOrderIds.length > 0) {
+      setBatchRosterOrderIds([]);
+    }
+  }, [batchRosterSort, batchRosterOrderIds.length]);
 
   const dashboardResults = useMemo(() => {
     const query = globalSearchQuery.toLowerCase().trim();
@@ -1321,28 +1402,15 @@ const App: React.FC = () => {
     }
   };
 
-  const handleStartGrading = () => {
-    // Scan attribution requires an already selected course + assignment.
-    // Route through the existing selection flow instead of jumping directly to the camera.
-    if (!selectedCourse) {
-      setShowCourses(true);
-      setPhase(AppPhase.GRADE_COURSE_PICKER);
-      return;
-    }
-    if (!selectedAssignment) {
-      setPhase(AppPhase.ASSIGNMENT_SELECT);
-      return;
-    }
-    setPhase(AppPhase.RUBRIC_SETUP);
-  };
-
   const startGrading = (mode: GradingMode) => {
     setGradingMode(mode);
     // Prepare batch scan ordering (scan attribution).
     if (scanStudentMode === 'batch') {
-      const ordered = students
-        .filter(s => batchSelectedStudentIds.has(s.id))
-        .map(s => s.id);
+      const selectedSet = batchSelectedStudentIds;
+      const ordered =
+        batchStudentOrderRef.current.length > 0
+          ? batchStudentOrderRef.current.filter((id) => selectedSet.has(id))
+          : students.filter(s => selectedSet.has(s.id)).map(s => s.id);
       batchStudentOrderRef.current = ordered;
       batchNextIndexRef.current = 0;
     } else {
@@ -2017,6 +2085,8 @@ const App: React.FC = () => {
     
     logEvent('sync_start', { count: worksToSync.length });
     setPhase(AppPhase.SYNCING); 
+    setSyncReceipts([]);
+    setSyncFailedKeys(new Set());
     setSyncProgress({
       current: 0,
       total: worksToSync.length,
@@ -2039,6 +2109,18 @@ const App: React.FC = () => {
       console.error("Could not set up Drive folders. We will skip Drive upload for this sync.", e);
     }
 
+    const workKey = (w: GradedWork) => `${w.courseId}::${w.assignmentId}::${w.studentId}::${w.timestamp}`;
+    const receiptList: Array<{
+      key: string;
+      studentName: string;
+      ok: boolean;
+      error?: string;
+      emailOk?: boolean;
+      drivePagesSaved?: number;
+    }> = [];
+    const successKeys = new Set<string>();
+    const failedKeys = new Set<string>();
+
     // Important: worksToSync is derived from either selected indexes or the full pending list.
     let successes = 0, failures = 0;
     
@@ -2060,6 +2142,7 @@ const App: React.FC = () => {
                 .slice(0, 10)
             : [];
 
+        let driveSaved = 0;
         if (targetFolderId && base64Images.length > 0) {
           setSyncProgress(prev => ({ ...prev, message: `Saving scan${base64Images.length > 1 ? 's' : ''} to Drive for ${work.studentName}...` }));
           for (let p = 0; p < base64Images.length; p++) {
@@ -2070,10 +2153,12 @@ const App: React.FC = () => {
               `${work.studentName}_${work.assignmentName}_p${p + 1}.jpg`,
               targetFolderId
             );
+            driveSaved++;
           }
         }
 
         // Send email to student with grade, feedback, and attached scan (independent of Drive upload)
+        let emailOk: boolean | undefined = undefined;
         if (work.studentEmail) {
           // Subject from student perspective
           const subject = `${work.assignmentName} grade & feedback`;
@@ -2113,6 +2198,7 @@ const App: React.FC = () => {
                 ...prev,
                 emailSuccesses: prev.emailSuccesses + 1,
               }));
+              emailOk = true;
               logEvent('sync_email_success', { studentEmail: work.studentEmail, assignmentId: work.assignmentId });
             } catch (e) {
               console.warn(`Grade posted but email to ${work.studentEmail} failed:`, e);
@@ -2120,14 +2206,26 @@ const App: React.FC = () => {
                 ...prev,
                 emailFailures: prev.emailFailures + 1,
               }));
+              emailOk = false;
               logEvent('sync_email_error', { studentEmail: work.studentEmail, assignmentId: work.assignmentId, error: String(e) });
             }
         }
 
         successes++;
+        const key = workKey(work);
+        successKeys.add(key);
+        receiptList.push({ key, studentName: work.studentName, ok: true, emailOk, drivePagesSaved: driveSaved });
       } catch (err) {
         console.error(err);
         failures++;
+        const key = workKey(work);
+        failedKeys.add(key);
+        receiptList.push({
+          key,
+          studentName: work.studentName,
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
     
@@ -2137,8 +2235,20 @@ const App: React.FC = () => {
     } else {
       logEvent('sync_error', { total: worksToSync.length, successes, failures });
     }
-    setHistory(prev => [...worksToSync, ...prev]);
-    setGradedWorks(indexSet ? currentWorks.filter((_, i) => !indexSet.has(i)) : []);
+    const successesToArchive = worksToSync.filter((w) => successKeys.has(workKey(w)));
+    setHistory(prev => [...successesToArchive, ...prev]);
+    setGradedWorks(() => {
+      // Remove only successful items from the local queue; keep failures for retry.
+      if (indexSet) {
+        return currentWorks.filter((w, i) => {
+          if (!indexSet.has(i)) return true;
+          return !successKeys.has(workKey(w));
+        });
+      }
+      return currentWorks.filter((w) => !successKeys.has(workKey(w)));
+    });
+    setSyncReceipts(receiptList);
+    setSyncFailedKeys(failedKeys);
     setTimeout(() => setPhase(AppPhase.FINALE), 1000);
   };
 
@@ -2181,20 +2291,14 @@ const App: React.FC = () => {
   };
 
   const renderDashboard = () => {
-    const totalCourses = courses.length;
-    const connectedCourses = courses.filter(c => c.source !== 'local').length;
-    const totalAssignments = assignments.length;
     const totalStudents = students.length;
     const pendingGrades = gradedWorks.length;
 
     const now = Date.now();
     const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
     const gradedLast7Works = history.filter(w => now - w.timestamp < sevenDaysMs);
-    const gradedLast7 = gradedLast7Works.length;
-    const gradedLast7StudentCount = new Set(gradedLast7Works.map(w => w.studentId || w.studentEmail || w.studentName)).size;
     const gradedLast7Pages = gradedLast7Works.reduce((sum, w) => sum + (w.imageUrls?.length || 1), 0);
-    const minutesSavedApprox = gradedLast7Pages * 3; // assume ~3 minutes saved per scanned page
-    const hoursSavedApprox = minutesSavedApprox / 60;
+    void gradedLast7Pages;
 
     const studentStats: Record<string, { name: string; totalScore: number; totalMax: number }> = {};
     const atRiskCourseIds = new Set<string>();
@@ -2223,14 +2327,27 @@ const App: React.FC = () => {
     // Dashboard course grouping:
     // - Recent: first 3 after sorting + local search filter
     // - Other: remaining courses (toggleable)
-    const coursesFilteredForUI = dashboardResults.courses.filter((course) =>
-      courseSearch.trim()
-        ? course.name.toLowerCase().includes(courseSearch.toLowerCase())
-        : true
-    );
-    const otherCourses = coursesFilteredForUI.slice(3);
-
+    void dashboardResults;
+    void courseSearch;
     const canScan = !!selectedCourse && !!selectedAssignment;
+    const hasSyncError = syncStatus === 'error';
+
+    const getResumePhase = (): AppPhase => {
+      if (!selectedCourse) return AppPhase.GRADE_COURSE_PICKER;
+      if (!selectedAssignment) return AppPhase.ASSIGNMENT_SELECT;
+      if (pendingGrades > 0) return AppPhase.AUDIT;
+      return AppPhase.GRADE_SCAN_SETUP;
+    };
+
+    const resumePhase = getResumePhase();
+    const resumeLabel =
+      resumePhase === AppPhase.GRADE_COURSE_PICKER
+        ? 'Choose course'
+        : resumePhase === AppPhase.ASSIGNMENT_SELECT
+          ? 'Choose assignment'
+          : resumePhase === AppPhase.AUDIT
+            ? 'Review & sync'
+            : 'Scan setup';
 
     return (
       <PageWrapper
@@ -2262,6 +2379,36 @@ const App: React.FC = () => {
         }}
       >
         <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-hidden pb-24 pt-1">
+          <div className="p-4 rounded-2xl bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Current session</div>
+                <div className="mt-1 text-sm font-black text-slate-900 dark:text-white truncate">
+                  {selectedCourse ? selectedCourse.name : 'No course selected'}
+                  {selectedAssignment ? ` · ${selectedAssignment.title}` : ''}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <div className="px-2.5 py-1 rounded-full bg-slate-900/5 dark:bg-white/10 border border-slate-200/60 dark:border-slate-700/60 text-[10px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-200">
+                  Queue · {pendingGrades}
+                </div>
+                {hasSyncError && (
+                  <div className="px-2.5 py-1 rounded-full bg-rose-500/10 border border-rose-500/30 text-[10px] font-black uppercase tracking-widest text-rose-600 dark:text-rose-300">
+                    Error
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setPhase(resumePhase)}
+              className="mt-3 w-full py-3 rounded-xl bg-indigo-600 text-white font-black uppercase tracking-widest text-[12px] shadow-sm hover:bg-indigo-700 transition-colors"
+            >
+              Resume · {resumeLabel}
+            </button>
+          </div>
+
           <div className="grid grid-cols-1 gap-3">
             <button
               type="button"
@@ -2294,14 +2441,14 @@ const App: React.FC = () => {
 
             <button
               type="button"
-              onClick={handleStartGrading}
+              onClick={() => setPhase(AppPhase.GRADE_SCAN_SETUP)}
               disabled={!canScan}
               className="p-4 rounded-2xl bg-emerald-500 text-white text-left shadow-sm hover:bg-emerald-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <div className="text-[10px] font-black uppercase tracking-widest text-emerald-100">Step 3</div>
               <div className="mt-1 text-base font-black">Scan student work</div>
               <div className="text-sm text-emerald-50/90 mt-0.5">
-                Single or batch scan, then verify feedback
+                Batch by default for bulletproof attribution
               </div>
             </button>
 
@@ -2341,394 +2488,15 @@ const App: React.FC = () => {
         </div>
       </PageWrapper>
     );
-
-    return (
-      <PageWrapper
-        headerTitle={educatorName || 'Grade'}
-        headerSubtitle={todayLabel || undefined}
-        isOnline={isOnline}
-        isDarkMode={isDarkMode}
-        setIsDarkMode={setIsDarkMode}
-        syncStatus={syncStatus}
-        onSyncClick={() => {
-          if (!classroom || !isOnline) return;
-          void (async () => {
-            try {
-              await loadCourses();
-              if (selectedCourse && selectedCourse.source !== 'local') {
-                const [assignmentData, studentData] = await Promise.all([
-                  classroom.getAssignments(selectedCourse.id),
-                  classroom.getStudents(selectedCourse.id),
-                ]);
-                setAssignments(assignmentData);
-                setStudents(studentData);
-              }
-              setSyncStatus('ok');
-            } catch (err) {
-              console.error('Manual sync failed', err);
-              setSyncStatus('error');
-            }
-          })();
-        }}
-      >
-        <div className="flex-1 min-h-0 flex flex-col gap-5 overflow-y-auto pb-24 pt-1 custom-scrollbar">
-          {/* Sticky attention + metrics */}
-          <div className="sticky top-0 z-10 -mx-4 px-4 pt-2 pb-3 bg-slate-950/0 backdrop-blur-sm">
-            <div className="bg-white/65 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl p-3 shadow-sm">
-            {/* What needs your attention */}
-            <div className="py-2">
-              <div className="flex items-center justify-between mb-1.5">
-                <div className="flex items-center gap-2">
-                  <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
-                  <p className="text-sm font-semibold uppercase tracking-wide text-slate-100">
-                    What needs your attention
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setAttentionExpanded(prev => !prev)}
-                  className="text-[10px] font-semibold uppercase tracking-wide text-slate-300 hover:text-slate-100"
-                >
-                  {attentionExpanded ? 'Hide' : 'Show'}
-                </button>
-              </div>
-              {attentionExpanded ? (
-                <div className="space-y-2 text-sm text-slate-100">
-                  {pendingGrades > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setPhase(AppPhase.AUDIT)}
-                      className="w-full flex items-center justify-between py-2.5 text-left text-emerald-100 hover:opacity-90 transition-opacity"
-                    >
-                      <span className="font-semibold">{pendingGrades} grade{pendingGrades === 1 ? '' : 's'} ready to review</span>
-                      <ArrowRight className="w-4 h-4 shrink-0" />
-                    </button>
-                  )}
-                  {atRiskStudents.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setPhase(AppPhase.RECORDS)}
-                      className="w-full flex items-center justify-between py-2 text-left text-rose-100 hover:opacity-90 transition-opacity"
-                    >
-                      <span className="font-semibold">
-                        {atRiskStudents.length} student{atRiskStudents.length === 1 ? '' : 's'} to check in on
-                      </span>
-                      <Target className="w-4 h-4 shrink-0" />
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={handleStartGrading}
-                    className="w-full mt-1 py-2.5 rounded-xl bg-emerald-500 text-white font-bold text-xs uppercase tracking-widest hover:bg-emerald-600 transition-colors flex items-center justify-center gap-1.5"
-                  >
-                    Start grading
-                    <Camera className="w-3.5 h-3.5" />
-                  </button>
-                  <p className="text-[10px] text-slate-300 pt-1">
-                    Emails: {syncProgress.emailSuccesses} sent · {syncProgress.emailFailures} failed
-                  </p>
-                </div>
-              ) : (
-                <p className="text-xs text-slate-200">
-                  Queue: {pendingGrades} · At-risk: {atRiskStudents.length} · Emails failed: {syncProgress.emailFailures}
-                </p>
-              )}
-            </div>
-            </div>
-          </div>
-
-          {(gradeFollowUps.length > 0 || quickTodos.length > 0) && (
-            <div className="py-2">
-              <div className="bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl p-3 shadow-sm">
-                <div className="flex items-center justify-between gap-3 mb-3">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <Mic className="w-5 h-5 text-indigo-500 shrink-0" />
-                    <p className="text-sm font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300 truncate">
-                      Voice inbox
-                    </p>
-                    <span className="text-[11px] font-bold text-slate-500 dark:text-slate-300 shrink-0">
-                      {gradeFollowUps.filter(f => !f.done).length + quickTodos.filter(t => !t.done).length}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setVoiceInboxExpanded(prev => !prev)}
-                    className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-300 hover:text-slate-800 dark:hover:text-slate-100"
-                  >
-                    {voiceInboxExpanded ? 'Hide' : 'Show'}
-                  </button>
-                </div>
-
-                {voiceInboxExpanded && (
-                  <div className="space-y-3">
-                    {gradeFollowUps.length > 0 && (
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">
-                          Grade follow‑ups
-                        </p>
-                        <div className="space-y-2">
-                          {gradeFollowUps.slice(0, 4).map((f) => (
-                            <div key={f.id} className="flex items-start gap-3 py-1">
-                              <button
-                                type="button"
-                                onClick={() => setGradeFollowUps((prev) => prev.map(p => p.id === f.id ? { ...p, done: !p.done } : p))}
-                                className={`mt-0.5 w-4 h-4 rounded border shrink-0 ${f.done ? 'bg-emerald-500 border-emerald-500' : 'bg-transparent border-slate-300 dark:border-slate-600'}`}
-                                title={f.done ? 'Mark not done' : 'Mark done'}
-                              />
-                              <div className="flex-1 text-sm text-slate-700 dark:text-slate-200 min-w-0">
-                                <span className={f.done ? 'line-through opacity-70' : ''}>{f.text}</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {quickTodos.length > 0 && (
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">
-                          To‑dos
-                        </p>
-                        <div className="space-y-2">
-                          {quickTodos.slice(0, 4).map((t) => (
-                            <div key={t.id} className="flex items-start gap-3 py-1">
-                              <button
-                                type="button"
-                                onClick={() => setQuickTodos((prev) => prev.map(p => p.id === t.id ? { ...p, done: !p.done } : p))}
-                                className={`mt-0.5 w-4 h-4 rounded border shrink-0 ${t.done ? 'bg-emerald-500 border-emerald-500' : 'bg-transparent border-slate-300 dark:border-slate-600'}`}
-                                title={t.done ? 'Mark not done' : 'Mark done'}
-                              />
-                              <div className="flex-1 text-sm text-slate-700 dark:text-slate-200 min-w-0">
-                                <span className={t.done ? 'line-through opacity-70' : ''}>{t.text}</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Summary tiles */}
-          <div className="grid grid-cols-2 gap-4 py-2">
-            <button
-              type="button"
-              onClick={() => {
-                if (pendingGrades <= 0) return;
-                setPhase(AppPhase.AUDIT);
-              }}
-              disabled={pendingGrades <= 0}
-              className={`p-4 text-left rounded-2xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 transition-opacity ${
-                pendingGrades > 0 ? 'hover:opacity-90' : 'opacity-60 cursor-default'
-              }`}
-              title={pendingGrades > 0 ? 'Open pending grades' : 'No pending grades'}
-            >
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Grading queue</span>
-                <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
-              </div>
-              <p className={`text-2xl font-bold text-slate-900 dark:text-slate-50 leading-tight ${pendingGrades > 0 ? 'underline underline-offset-4 decoration-slate-300/60 dark:decoration-slate-600/60' : ''}`}>
-                {pendingGrades}
-              </p>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Ready to post</p>
-            </button>
-            <div className="p-4 rounded-2xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Classes</span>
-                <Layers className="w-5 h-5 text-indigo-500 shrink-0" />
-              </div>
-              <p className="text-base font-semibold text-slate-900 dark:text-slate-50 leading-tight">{totalCourses} courses · {totalAssignments} assignments</p>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{connectedCourses} synced</p>
-            </div>
-            <div className="p-4 rounded-2xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Students</span>
-                <Users className="w-5 h-5 text-sky-500 shrink-0" />
-              </div>
-              <button
-                type="button"
-                onClick={() => setPhase(AppPhase.ROSTER_VIEW)}
-                className="text-left w-full"
-                title="Open roster"
-              >
-                <p className="text-2xl font-bold text-slate-900 dark:text-slate-50 leading-tight underline underline-offset-4 decoration-slate-300/60 dark:decoration-slate-600/60">
-                  {totalStudents}
-                </p>
-              </button>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">All rosters</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowLast7Details(prev => !prev)}
-              className="p-4 text-left rounded-2xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 hover:opacity-90 transition-opacity"
-              title="Show details"
-            >
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Last 7 days</span>
-                <HistoryIcon className="w-5 h-5 text-purple-500 shrink-0" />
-              </div>
-              <p className="text-2xl font-bold text-slate-900 dark:text-slate-50 leading-tight">{gradedLast7}</p>
-              {showLast7Details ? (
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Papers: {gradedLast7Pages} · Students: {gradedLast7StudentCount || 0} · ~{hoursSavedApprox.toFixed(1)} hrs saved
-                </p>
-              ) : (
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Graded · {gradedLast7StudentCount || 0} students · tap for details
-                </p>
-              )}
-            </button>
-          </div>
-
-          {/* Course list */}
-          <div className="flex-1 min-h-0 flex flex-col gap-2 pt-2">
-            <button
-              type="button"
-              onClick={() => setShowCourses((prev) => !prev)}
-              className="flex items-center justify-between text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400"
-            >
-              <span>Courses</span>
-              <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500">
-                {showCourses ? 'Hide' : 'Show'} · {otherCourses.length} more
-              </span>
-            </button>
-            <div className="space-y-2 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
-              <div className="sticky top-0 z-5 -mx-1 mb-1 px-1 pb-1 bg-gradient-to-b from-slate-950/90 via-slate-950/40 to-transparent">
-                <input
-                  type="search"
-                  value={courseSearch}
-                  onChange={(e) => setCourseSearch(e.target.value)}
-                  placeholder="Search courses…"
-                  className="w-full px-3 py-1.5 rounded-xl bg-slate-900/60 border border-slate-700 text-xs text-slate-100 placeholder:text-slate-500 outline-none"
-                />
-              </div>
-              {dashboardResults.courses
-                .filter((course) =>
-                  courseSearch.trim()
-                    ? course.name.toLowerCase().includes(courseSearch.toLowerCase())
-                    : true
-                )
-                .filter((_, idx) => (showCourses ? true : idx < 3))
-                .map((course) => (
-                <div
-                  key={course.id}
-                  draggable
-                  onDragStart={() => setDragCourseId(course.id)}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    if (!dragCourseId || dragCourseId === course.id) return;
-                    setDashboardSort('manual');
-                    setCourses(prev => {
-                      const next = [...prev];
-                      const from = next.findIndex(c => c.id === dragCourseId);
-                      const to = next.findIndex(c => c.id === course.id);
-                      if (from === -1 || to === -1) return prev;
-                      const [item] = next.splice(from, 1);
-                      next.splice(to, 0, item);
-                      return next;
-                    });
-                    setDragCourseId(null);
-                  }}
-                  className={`p-4 rounded-2xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 flex items-center justify-between transition-opacity ${dragCourseId === course.id ? 'opacity-80 ring-2 ring-indigo-300/70 dark:ring-indigo-500/30' : ''}`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => selectCourse(course)}
-                    onDoubleClick={(e) => {
-                      e.stopPropagation();
-                      const name = window.prompt('Rename course', course.name);
-                      if (!name || !name.trim()) return;
-                      if (classroom && isOnline && course.source !== 'local') {
-                        classroom.updateCourse(course.id, name.trim(), course.period)
-                          .then((updated) => {
-                            setCourses(prev => prev.map(c => c.id === course.id ? { ...c, ...updated } : c));
-                          })
-                          .catch(err => {
-                            console.error('Failed to rename course', err);
-                            setAuthError('Could not rename course in Google Classroom.');
-                          });
-                      } else {
-                        setCourses(prev => prev.map(c => c.id === course.id ? { ...c, name: name.trim() } : c));
-                      }
-                    }}
-                    className="flex items-center gap-4 flex-1 text-left min-w-0"
-                  >
-                    <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-xl flex items-center justify-center text-white shrink-0">
-                      <BookOpen className="w-5 h-5" />
-                    </div>
-                    <div className="min-w-0">
-                      <h4 className="text-base font-semibold text-slate-800 dark:text-slate-100 truncate">{course.name}</h4>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
-                        {course.period}{course.source === 'local' ? ' · Local' : ''}{' '}
-                      </p>
-                    </div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => selectCourse(course)}
-                    className="mr-2 px-2 py-1 rounded-lg text-[10px] font-semibold uppercase tracking-wide bg-indigo-600 text-white hover:bg-indigo-700 transition-colors shrink-0"
-                    title="Start grading for this course"
-                  >
-                    Grade
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (!window.confirm('Delete this course? This will also remove it from Google Classroom if it is synced.')) return;
-                      if (classroom && isOnline && course.source !== 'local') {
-                        classroom.deleteCourse(course.id)
-                          .then(() => {
-                            setCourses(prev => prev.filter(c => c.id !== course.id));
-                            if (selectedCourse?.id === course.id) {
-                              setSelectedCourse(null);
-                              setAssignments([]);
-                              setStudents([]);
-                              setPhase(AppPhase.DASHBOARD);
-                            }
-                          })
-                          .catch(err => {
-                            console.error('Failed to delete course', err);
-                            setAuthError('Could not delete course in Google Classroom.');
-                          });
-                      } else {
-                        setCourses(prev => prev.filter(c => c.id !== course.id));
-                        if (selectedCourse?.id === course.id) {
-                          setSelectedCourse(null);
-                          setAssignments([]);
-                          setStudents([]);
-                          setPhase(AppPhase.DASHBOARD);
-                        }
-                      }
-                    }}
-                    className="p-2 text-rose-500 hover:text-rose-600 hover:opacity-80 transition-colors shrink-0"
-                    title="Delete course"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
-
-              <button
-                type="button"
-                onClick={() => { setNewCourseName(''); setPhase('COURSE_CREATION'); }}
-                className="w-full py-4 flex items-center justify-center gap-2 text-indigo-600 dark:text-indigo-400 hover:opacity-80 transition-opacity"
-              >
-                <PlusCircle className="w-6 h-6 shrink-0" />
-                <span className="text-sm font-semibold uppercase tracking-wide">Create Course</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </PageWrapper>
-    );
   };
-
   const renderGradeCoursePicker = () => {
+    const atRiskCourseIds = new Set<string>();
+    history.forEach((w) => {
+      if (!w.courseId || !w.maxScore) return;
+      const pct = w.maxScore ? (w.score / w.maxScore) * 100 : 0;
+      if (pct < 70) atRiskCourseIds.add(w.courseId);
+    });
+
     const pendingByCourseId: Record<string, number> = {};
     gradedWorks.forEach(w => {
       if (!w.courseId) return;
@@ -2740,7 +2508,79 @@ const App: React.FC = () => {
         ? course.name.toLowerCase().includes(courseSearch.toLowerCase())
         : true
     );
-    const coursesForPicker = showCourses ? coursesFilteredForUI : coursesFilteredForUI.slice(0, 8);
+    const pinnedSet = new Set(pinnedCourseIds);
+    const isSearching = !!courseSearch.trim();
+    const pinned = coursesFilteredForUI.filter((c) => pinnedSet.has(c.id));
+    const recent = coursesFilteredForUI
+      .filter((c) => !pinnedSet.has(c.id))
+      .sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0));
+    const flat = showCourses ? coursesFilteredForUI : coursesFilteredForUI.slice(0, 8);
+
+    const togglePin = (courseId: string) => {
+      setPinnedCourseIds((prev) => (prev.includes(courseId) ? prev.filter((id) => id !== courseId) : [courseId, ...prev]));
+    };
+
+    const renderCourseRow = (course: Course) => {
+      const active = selectedCourse?.id === course.id;
+      const pending = pendingByCourseId[course.id] || 0;
+      const atRisk = atRiskCourseIds.has(course.id);
+      const isPinned = pinnedSet.has(course.id);
+      const sourceLabel = course.source === 'local' ? 'Local' : 'Google';
+      return (
+        <button
+          key={course.id}
+          type="button"
+          onClick={() => void selectCourse(course)}
+          className={`w-full p-3 rounded-xl border flex items-center justify-between gap-3 text-left mb-2 ${
+            active
+              ? 'bg-indigo-50 dark:bg-indigo-900/30 border-indigo-400/60'
+              : 'bg-white dark:bg-slate-800 border-slate-200/70 dark:border-slate-700/60 hover:opacity-90'
+          }`}
+        >
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="font-black text-sm truncate text-slate-900 dark:text-white">{course.name}</div>
+              {isPinned && (
+                <span className="px-2 py-0.5 rounded-full bg-indigo-600/10 border border-indigo-500/20 text-indigo-700 dark:text-indigo-300 text-[9px] font-black uppercase tracking-widest shrink-0">
+                  Pinned
+                </span>
+              )}
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              <span className="px-2 py-0.5 rounded-full bg-slate-900/5 dark:bg-white/10 border border-slate-200/60 dark:border-slate-700/60 text-[9px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-200">
+                {sourceLabel}
+              </span>
+              {pending > 0 && (
+                <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[9px] font-black uppercase tracking-widest text-emerald-700 dark:text-emerald-300">
+                  Queue · {pending}
+                </span>
+              )}
+              {atRisk && (
+                <span className="px-2 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/20 text-[9px] font-black uppercase tracking-widest text-rose-600 dark:text-rose-300">
+                  At‑risk
+                </span>
+              )}
+              <span className="text-[11px] text-slate-500 dark:text-slate-300 truncate">{course.period}</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              togglePin(course.id);
+            }}
+            className={`p-2 rounded-xl border shrink-0 transition-colors ${
+              isPinned
+                ? 'bg-indigo-600 text-white border-indigo-600'
+                : 'bg-white/60 dark:bg-slate-900/40 text-slate-600 dark:text-slate-200 border-slate-200/70 dark:border-slate-700/60 hover:bg-white/80 dark:hover:bg-slate-900/60'
+            }`}
+            title={isPinned ? 'Unpin course' : 'Pin course'}
+          >
+            <Pin className="w-4 h-4" />
+          </button>
+        </button>
+      );
+    };
 
     return (
       <PageWrapper
@@ -2777,34 +2617,27 @@ const App: React.FC = () => {
 
           <div className="flex-1 min-h-0 bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl shadow-sm overflow-hidden">
             <div className="h-full overflow-y-auto custom-scrollbar p-2">
-              {coursesForPicker.length === 0 && (
+              {coursesFilteredForUI.length === 0 && (
                 <div className="py-10 text-center text-slate-500 text-sm font-bold">No courses match.</div>
               )}
-              {coursesForPicker.map((course) => {
-                const active = selectedCourse?.id === course.id;
-                const pending = pendingByCourseId[course.id] || 0;
-                return (
-                  <button
-                    key={course.id}
-                    type="button"
-                    onClick={() => void selectCourse(course)}
-                    className={`w-full p-3 rounded-xl border flex items-center justify-between gap-3 text-left mb-2 ${
-                      active
-                        ? 'bg-indigo-50 dark:bg-indigo-900/30 border-indigo-400/60'
-                        : 'bg-white dark:bg-slate-800 border-slate-200/70 dark:border-slate-700/60 hover:opacity-90'
-                    }`}
-                  >
-                    <div className="min-w-0">
-                      <div className="font-black text-sm truncate text-slate-900 dark:text-white">{course.name}</div>
-                      <div className="text-xs text-slate-500 dark:text-slate-300 mt-0.5">
-                        {course.period}{course.source === 'local' ? ' · Local' : ''}
-                        {pending > 0 ? ` · ${pending} in queue` : ''}
-                      </div>
+              {isSearching ? (
+                flat.map(renderCourseRow)
+              ) : (
+                <>
+                  {pinned.length > 0 && (
+                    <div className="px-2 pt-2 pb-1 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                      Pinned
                     </div>
-                    <ArrowRight className="w-4 h-4 text-slate-400 shrink-0" />
-                  </button>
-                );
-              })}
+                  )}
+                  {pinned.map(renderCourseRow)}
+                  {recent.length > 0 && (
+                    <div className="px-2 pt-4 pb-1 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                      Recent
+                    </div>
+                  )}
+                  {(showCourses ? recent : recent.slice(0, Math.max(0, 8 - pinned.length))).map(renderCourseRow)}
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -3106,104 +2939,613 @@ const App: React.FC = () => {
         })();
       }}
     >
-       <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4 custom-scrollbar">
+       <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4 custom-scrollbar pb-24 pt-1">
+         <div className="bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl p-4 shadow-sm">
+           <input
+             type="search"
+             value={assignmentSearchQuery}
+             onChange={(e) => setAssignmentSearchQuery(e.target.value)}
+             placeholder="Search assignments…"
+             className="w-full px-4 py-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-700/60 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 outline-none"
+           />
+           <button
+             type="button"
+             onClick={(e) => selectedCourse && handleOpenAsnCreation(selectedCourse, e)}
+             disabled={!classroom || !isOnline || !selectedCourse || selectedCourse.source === 'local'}
+             className="mt-3 w-full py-3 rounded-xl bg-emerald-500 text-white font-black uppercase tracking-widest text-[12px] shadow-sm hover:bg-emerald-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+           >
+             Create in Google Classroom
+           </button>
+           {(!classroom || !isOnline || selectedCourse?.source === 'local') && (
+             <div className="mt-2 text-[11px] text-slate-500 dark:text-slate-300">
+               Connect to Google Classroom to create assignments.
+             </div>
+           )}
+         </div>
+
+         <div className="px-1">
+           <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 px-2">
+             {classroom && isOnline && selectedCourse?.source !== 'local' ? 'Google Classroom assignments' : 'Local / draft assignments'}
+           </div>
+         </div>
+
          {filteredAssignmentsList.map((assignment) => (
-            <div
-              key={assignment.id}
-              draggable
-              onDragStart={() => setDragAssignmentId(assignment.id)}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault();
-                if (!dragAssignmentId || dragAssignmentId === assignment.id) return;
-                setAssignmentSort('manual');
-                setAssignments(prev => {
-                  const next = [...prev];
-                  const from = next.findIndex(a => a.id === dragAssignmentId);
-                  const to = next.findIndex(a => a.id === assignment.id);
-                  if (from === -1 || to === -1) return prev;
-                  const [item] = next.splice(from, 1);
-                  next.splice(to, 0, item);
-                  return next;
-                });
-                setDragAssignmentId(null);
-              }}
-              className={`p-4 bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl border rounded-xl flex items-center justify-between shadow-sm hover:-translate-y-0.5 transition-all ${
-                dragAssignmentId === assignment.id ? 'border-emerald-400 ring-2 ring-emerald-300' : 'border-slate-200 dark:border-slate-700 hover:border-emerald-400'
-              }`}
-            >
+           <div
+             key={assignment.id}
+             draggable
+             onDragStart={() => setDragAssignmentId(assignment.id)}
+             onDragOver={(e) => e.preventDefault()}
+             onDrop={(e) => {
+               e.preventDefault();
+               if (!dragAssignmentId || dragAssignmentId === assignment.id) return;
+               setAssignmentSort('manual');
+               setAssignments(prev => {
+                 const next = [...prev];
+                 const from = next.findIndex(a => a.id === dragAssignmentId);
+                 const to = next.findIndex(a => a.id === assignment.id);
+                 if (from === -1 || to === -1) return prev;
+                 const [item] = next.splice(from, 1);
+                 next.splice(to, 0, item);
+                 return next;
+               });
+               setDragAssignmentId(null);
+             }}
+             className={`p-4 bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl border rounded-xl flex items-center justify-between shadow-sm hover:-translate-y-0.5 transition-all ${
+               dragAssignmentId === assignment.id ? 'border-emerald-400 ring-2 ring-emerald-300' : 'border-slate-200 dark:border-slate-700 hover:border-emerald-400'
+             }`}
+           >
+             <button
+               type="button"
+               onClick={() => {
+                 setAssignments(prev => prev.map(a => a.id === assignment.id ? { ...a, lastUsed: Date.now() } : a));
+                 setSelectedAssignment({ ...assignment, lastUsed: Date.now() });
+                 setPhase(AppPhase.GRADE_SCAN_SETUP);
+               }}
+               onDoubleClick={(e) => {
+                 e.stopPropagation();
+                 if (!selectedCourse) return;
+                 const title = window.prompt('Rename assignment', assignment.title);
+                 if (!title || !title.trim()) return;
+                 if (classroom && isOnline && selectedCourse.source !== 'local') {
+                   classroom.updateAssignment(selectedCourse.id, assignment.id, title.trim())
+                     .then((updated) => {
+                       setAssignments(prev => prev.map(a => a.id === assignment.id ? { ...a, ...updated } : a));
+                     })
+                     .catch(err => {
+                       console.error('Failed to rename assignment', err);
+                       setAuthError('Could not rename assignment in Google Classroom.');
+                     });
+                 } else {
+                   setAssignments(prev => prev.map(a => a.id === assignment.id ? { ...a, title: title.trim() } : a));
+                 }
+               }}
+               className="flex items-center gap-4 flex-1 text-left"
+             >
+               <div className="w-10 h-10 bg-slate-100 dark:bg-slate-700 rounded-xl flex items-center justify-center text-slate-500 dark:text-slate-400">
+                 <Layers className="w-5 h-5" />
+               </div>
+               <div className="min-w-0">
+                 <h4 className="text-sm font-black text-slate-800 dark:text-slate-100 truncate">{assignment.title}</h4>
+                 <p className="text-slate-500 text-[9px] font-black uppercase tracking-[0.15em]">{assignment.maxScore} Points</p>
+               </div>
+             </button>
+
+             <div className="flex items-center gap-1 ml-3">
                <button
                  type="button"
-                 onClick={() => { setSelectedAssignment(assignment); setPhase(AppPhase.RUBRIC_SETUP); }}
-                 onDoubleClick={(e) => {
+                 onClick={(e) => {
                    e.stopPropagation();
                    if (!selectedCourse) return;
-                   const title = window.prompt('Rename assignment', assignment.title);
-                   if (!title || !title.trim()) return;
+                   if (!window.confirm('Delete this assignment? This will also remove it from Google Classroom if it is synced.')) return;
                    if (classroom && isOnline && selectedCourse.source !== 'local') {
-                     classroom.updateAssignment(selectedCourse.id, assignment.id, title.trim())
-                       .then((updated) => {
-                         setAssignments(prev => prev.map(a => a.id === assignment.id ? { ...a, ...updated } : a));
+                     classroom.deleteAssignment(selectedCourse.id, assignment.id)
+                       .then(() => {
+                         setAssignments(prev => prev.filter(a => a.id !== assignment.id));
+                         if (selectedAssignment?.id === assignment.id) {
+                           setSelectedAssignment(null);
+                         }
                        })
                        .catch(err => {
-                         console.error('Failed to rename assignment', err);
-                         setAuthError('Could not rename assignment in Google Classroom.');
+                         console.error('Failed to delete assignment', err);
+                         setAuthError('Could not delete assignment in Google Classroom.');
                        });
                    } else {
-                     setAssignments(prev => prev.map(a => a.id === assignment.id ? { ...a, title: title.trim() } : a));
+                     setAssignments(prev => prev.filter(a => a.id !== assignment.id));
+                     if (selectedAssignment?.id === assignment.id) {
+                       setSelectedAssignment(null);
+                     }
                    }
                  }}
-                 className="flex items-center gap-4 flex-1 text-left"
+                 className="p-1.5 rounded-full bg-white/60 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-rose-500 hover:bg-rose-50 hover:text-rose-600 transition-colors"
+                 title="Delete assignment"
                >
-                 <div className="w-10 h-10 bg-slate-100 dark:bg-slate-700 rounded-xl flex items-center justify-center text-slate-500 dark:text-slate-400">
-                   <Layers className="w-5 h-5" />
-                 </div>
-                 <div>
-                   <h4 className="text-sm font-black text-slate-800 dark:text-slate-100">{assignment.title}</h4>
-                   <p className="text-slate-500 text-[9px] font-black uppercase tracking-[0.15em]">{assignment.maxScore} Points</p>
-                 </div>
+                 <Trash2 className="w-4 h-4" />
                </button>
+             </div>
+           </div>
+         ))}
 
-               <div className="flex items-center gap-1 ml-3">
-                 <button
-                   type="button"
-                   onClick={(e) => {
-                     e.stopPropagation();
-                     if (!selectedCourse) return;
-                     if (!window.confirm('Delete this assignment? This will also remove it from Google Classroom if it is synced.')) return;
-                     if (classroom && isOnline && selectedCourse.source !== 'local') {
-                       classroom.deleteAssignment(selectedCourse.id, assignment.id)
-                         .then(() => {
-                           setAssignments(prev => prev.filter(a => a.id !== assignment.id));
-                           if (selectedAssignment?.id === assignment.id) {
-                             setSelectedAssignment(null);
-                           }
-                         })
-                         .catch(err => {
-                           console.error('Failed to delete assignment', err);
-                           setAuthError('Could not delete assignment in Google Classroom.');
-                         });
-                     } else {
-                       setAssignments(prev => prev.filter(a => a.id !== assignment.id));
-                       if (selectedAssignment?.id === assignment.id) {
-                         setSelectedAssignment(null);
-                       }
-                     }
-                   }}
-                   className="p-1.5 rounded-full bg-white/60 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-rose-500 hover:bg-rose-50 hover:text-rose-600 transition-colors"
-                   title="Delete assignment"
-                 >
-                   <Trash2 className="w-4 h-4" />
-                 </button>
-               </div>
-            </div>
-          ))}
-
-          <div onClick={(e) => handleOpenAsnCreation(selectedCourse!, e)} className="p-4 mt-2 bg-white/40 dark:bg-slate-800/40 border-2 border-dashed border-emerald-400 dark:border-emerald-500 rounded-xl flex items-center justify-center gap-3 shadow-sm cursor-pointer hover:bg-white/60 dark:hover:bg-slate-800/60 hover:-translate-y-0.5 transition-all">
-            <PlusCircle className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />
-            <h4 className="text-sm font-black text-emerald-700 dark:text-emerald-300 uppercase tracking-widest">Create Assignment</h4>
-          </div>
+         {filteredAssignmentsList.length === 0 && (
+           <div className="py-10 text-center text-slate-500 text-sm font-bold">No assignments match.</div>
+         )}
        </div>
+    </PageWrapper>
+  );
+
+  const renderScanSetup = () => (
+    <PageWrapper
+      headerTitle="Scan setup"
+      headerSubtitle={selectedAssignment?.title || undefined}
+      onBack={() => setPhase(AppPhase.ASSIGNMENT_SELECT)}
+      isOnline={isOnline}
+      isDarkMode={isDarkMode}
+      setIsDarkMode={setIsDarkMode}
+      syncStatus={syncStatus}
+    >
+      <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-hidden pb-24 pt-1">
+        <div className="p-4 rounded-2xl bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 shadow-sm">
+          <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Current session</div>
+          <div className="mt-1 text-base font-black text-slate-900 dark:text-white truncate">
+            {selectedCourse?.name || 'Select course'} · {selectedAssignment?.title || 'Select assignment'}
+          </div>
+          <div className="text-sm text-slate-600 dark:text-slate-300 mt-0.5">
+            Batch scan is recommended — it prevents mis-attribution.
+          </div>
+        </div>
+        {!selectedCourse || !selectedAssignment ? (
+          <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-200 text-sm font-semibold">
+            Select a course and assignment before scanning.
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 gap-3">
+              <button
+                type="button"
+                onClick={() => setScanStudentMode('batch')}
+                className={`p-4 rounded-2xl border text-left shadow-sm transition-colors ${
+                  scanStudentMode === 'batch'
+                    ? 'bg-emerald-500 text-white border-emerald-500'
+                    : 'bg-white/70 dark:bg-slate-800/55 border-slate-200/70 dark:border-slate-700/60 hover:opacity-90'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className={`text-[10px] font-black uppercase tracking-widest ${scanStudentMode === 'batch' ? 'text-emerald-100' : 'text-slate-500'}`}>
+                      Recommended
+                    </div>
+                    <div className={`mt-1 text-base font-black ${scanStudentMode === 'batch' ? 'text-white' : 'text-slate-900 dark:text-white'}`}>
+                      Batch scan
+                    </div>
+                    <div className={`text-sm mt-0.5 ${scanStudentMode === 'batch' ? 'text-emerald-50/90' : 'text-slate-600 dark:text-slate-300'}`}>
+                      Choose students & order once. Each scan applies to the next student.
+                    </div>
+                  </div>
+                  <div className={`w-6 h-6 rounded-full border flex items-center justify-center shrink-0 ${
+                    scanStudentMode === 'batch'
+                      ? 'border-white/30 bg-white/15'
+                      : 'border-slate-300 dark:border-slate-600'
+                  }`}>
+                    {scanStudentMode === 'batch' && <Check className="w-4 h-4 text-white" />}
+                  </div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setScanStudentMode('single')}
+                className={`p-4 rounded-2xl border text-left shadow-sm transition-colors ${
+                  scanStudentMode === 'single'
+                    ? 'bg-indigo-600 text-white border-indigo-600'
+                    : 'bg-white/70 dark:bg-slate-800/55 border-slate-200/70 dark:border-slate-700/60 hover:opacity-90'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className={`text-[10px] font-black uppercase tracking-widest ${scanStudentMode === 'single' ? 'text-indigo-100' : 'text-slate-500'}`}>
+                      Quick start
+                    </div>
+                    <div className={`mt-1 text-base font-black ${scanStudentMode === 'single' ? 'text-white' : 'text-slate-900 dark:text-white'}`}>
+                      Single student
+                    </div>
+                    <div className={`text-sm mt-0.5 ${scanStudentMode === 'single' ? 'text-indigo-50/90' : 'text-slate-600 dark:text-slate-300'}`}>
+                      You’ll confirm/match a student as you scan.
+                    </div>
+                  </div>
+                  <div className={`w-6 h-6 rounded-full border flex items-center justify-center shrink-0 ${
+                    scanStudentMode === 'single'
+                      ? 'border-white/30 bg-white/15'
+                      : 'border-slate-300 dark:border-slate-600'
+                  }`}>
+                    {scanStudentMode === 'single' && <Check className="w-4 h-4 text-white" />}
+                  </div>
+                </div>
+              </button>
+            </div>
+
+            <div className="mt-auto grid grid-cols-1 gap-3">
+              {scanStudentMode === 'batch' ? (
+                <button
+                  type="button"
+                  onClick={() => setPhase(AppPhase.GRADE_BATCH_ROSTER)}
+                  className="w-full py-4 rounded-2xl bg-emerald-500 text-white font-black uppercase tracking-widest text-[14px] shadow-sm hover:bg-emerald-600 transition-colors"
+                >
+                  Choose students & order
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setPhase(AppPhase.RUBRIC_SETUP)}
+                  className="w-full py-4 rounded-2xl bg-indigo-600 text-white font-black uppercase tracking-widest text-[14px] shadow-sm hover:bg-indigo-700 transition-colors"
+                >
+                  Start scanning
+                </button>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </PageWrapper>
+  );
+
+  const renderBatchRoster = () => (
+    <PageWrapper
+      headerTitle="Batch roster"
+      headerSubtitle={selectedCourse?.name || undefined}
+      onBack={() => setPhase(AppPhase.GRADE_SCAN_SETUP)}
+      isOnline={isOnline}
+      isDarkMode={isDarkMode}
+      setIsDarkMode={setIsDarkMode}
+      syncStatus={syncStatus}
+    >
+      <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-hidden pb-24 pt-1">
+        {!selectedCourse || !selectedAssignment ? (
+          <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-200 text-sm font-semibold">
+            Select a course and assignment before choosing a batch roster.
+          </div>
+        ) : (
+          <>
+            <div className="bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl p-4 shadow-sm">
+              <input
+                type="search"
+                value={batchRosterQuery}
+                onChange={(e) => setBatchRosterQuery(e.target.value)}
+                placeholder="Search students…"
+                className="w-full px-4 py-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-700/60 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 outline-none"
+              />
+
+              <div className="mt-3 flex items-center gap-2 overflow-x-auto custom-scrollbar">
+                {(
+                  [
+                    ['all', 'All'],
+                    ['not_graded', 'Not graded'],
+                    ['at_risk', 'At‑risk'],
+                    ['missing_email', 'Missing email'],
+                    ['recently_graded', 'Recently graded'],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setBatchRosterFilter(id)}
+                    className={`px-3 py-2 rounded-full border text-[10px] font-black uppercase tracking-widest whitespace-nowrap transition-colors ${
+                      batchRosterFilter === id
+                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        : 'bg-white/60 dark:bg-slate-900/40 text-slate-600 dark:text-slate-200 border-slate-200/70 dark:border-slate-700/60 hover:opacity-90'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                  {batchSelectedStudentIds.size} selected
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setBatchRosterSort('last_name')}
+                    className={`px-3 py-2 rounded-full border text-[10px] font-black uppercase tracking-widest transition-colors ${
+                      batchRosterSort === 'last_name'
+                        ? 'bg-emerald-500 text-white border-emerald-500'
+                        : 'bg-white/60 dark:bg-slate-900/40 text-slate-600 dark:text-slate-200 border-slate-200/70 dark:border-slate-700/60 hover:opacity-90'
+                    }`}
+                  >
+                    Sort A‑Z
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBatchRosterSort('manual')}
+                    className={`px-3 py-2 rounded-full border text-[10px] font-black uppercase tracking-widest transition-colors ${
+                      batchRosterSort === 'manual'
+                        ? 'bg-emerald-500 text-white border-emerald-500'
+                        : 'bg-white/60 dark:bg-slate-900/40 text-slate-600 dark:text-slate-200 border-slate-200/70 dark:border-slate-700/60 hover:opacity-90'
+                    }`}
+                  >
+                    Manual
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex-1 min-h-0 bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl shadow-sm overflow-hidden">
+              <div className="h-full overflow-y-auto custom-scrollbar p-2">
+                {(() => {
+                  const selectedCourseId = selectedCourse.id;
+                  const selectedAssignmentId = selectedAssignment.id;
+                  const query = batchRosterQuery.trim().toLowerCase();
+
+                  const studentPctById: Record<string, number> = {};
+                  const lastGradedById: Record<string, number> = {};
+                  history.forEach((w) => {
+                    if (w.courseId !== selectedCourseId || w.assignmentId !== selectedAssignmentId || !w.studentId) return;
+                    if (!studentPctById[w.studentId]) studentPctById[w.studentId] = 0;
+                    const pct = w.maxScore ? (w.score / w.maxScore) * 100 : 0;
+                    studentPctById[w.studentId] = pct;
+                    lastGradedById[w.studentId] = Math.max(lastGradedById[w.studentId] || 0, w.timestamp || 0);
+                  });
+
+                  const now = Date.now();
+                  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+
+                  let roster = [...students];
+                  if (query) roster = roster.filter((s) => s.name.toLowerCase().includes(query));
+
+                  if (batchRosterFilter === 'missing_email') roster = roster.filter((s) => !s.email);
+                  if (batchRosterFilter === 'at_risk') roster = roster.filter((s) => (studentPctById[s.id] ?? 100) < 70);
+                  if (batchRosterFilter === 'recently_graded') roster = roster.filter((s) => (lastGradedById[s.id] ?? 0) >= now - sevenDaysMs);
+                  if (batchRosterFilter === 'not_graded') roster = roster.filter((s) => !lastGradedById[s.id]);
+
+                  if (batchRosterSort === 'last_name') {
+                    roster.sort((a, b) => a.name.localeCompare(b.name));
+                  }
+
+                  const move = (id: string, dir: -1 | 1) => {
+                    setBatchRosterOrderIds((prev) => {
+                      const idx = prev.indexOf(id);
+                      if (idx === -1) return prev;
+                      const nextIdx = idx + dir;
+                      if (nextIdx < 0 || nextIdx >= prev.length) return prev;
+                      const next = [...prev];
+                      const [item] = next.splice(idx, 1);
+                      next.splice(nextIdx, 0, item);
+                      return next;
+                    });
+                  };
+
+                  const orderedRoster =
+                    batchRosterSort === 'manual' && batchRosterOrderIds.length > 0
+                      ? [
+                          ...batchRosterOrderIds
+                            .map((id) => roster.find((s) => s.id === id))
+                            .filter((s): s is Student => !!s),
+                          ...roster.filter((s) => !batchRosterOrderIds.includes(s.id)),
+                        ]
+                      : roster;
+
+                  if (orderedRoster.length === 0) {
+                    return <div className="py-10 text-center text-slate-500 text-sm font-bold">No students match.</div>;
+                  }
+
+                  return orderedRoster.map((s) => {
+                    const checked = batchSelectedStudentIds.has(s.id);
+                    const pct = studentPctById[s.id];
+                    const atRisk = typeof pct === 'number' ? pct < 70 : false;
+                    return (
+                      <div
+                        key={s.id}
+                        className={`p-3 rounded-xl border mb-2 flex items-center justify-between gap-3 ${
+                          checked
+                            ? 'bg-indigo-50 dark:bg-indigo-900/30 border-indigo-400/60'
+                            : 'bg-white dark:bg-slate-800 border-slate-200/70 dark:border-slate-700/60'
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBatchSelectedStudentIds((prev) => {
+                              const next = new Set(prev);
+                              const isSelected = next.has(s.id);
+                              if (isSelected) next.delete(s.id);
+                              else next.add(s.id);
+                              return next;
+                            });
+                            if (batchRosterSort === 'manual') {
+                              setBatchRosterOrderIds((prev) => {
+                                const has = prev.includes(s.id);
+                                // If already selected, remove from manual order. If newly selected, append.
+                                if (has) return prev.filter((id) => id !== s.id);
+                                return [...prev, s.id];
+                              });
+                            }
+                          }}
+                          className="flex items-center gap-3 flex-1 text-left min-w-0"
+                        >
+                          <div className={`w-6 h-6 rounded-full border flex items-center justify-center shrink-0 ${
+                            checked ? 'border-indigo-500 bg-indigo-600' : 'border-slate-300 dark:border-slate-600'
+                          }`}>
+                            {checked && <Check className="w-4 h-4 text-white" />}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="font-black text-sm truncate text-slate-900 dark:text-white">{s.name}</div>
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                              {!s.email && (
+                                <span className="px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-[9px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-200">
+                                  No email
+                                </span>
+                              )}
+                              {atRisk && (
+                                <span className="px-2 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/20 text-[9px] font-black uppercase tracking-widest text-rose-600 dark:text-rose-300">
+                                  At‑risk
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </button>
+                        {batchRosterSort === 'manual' && checked && (
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => move(s.id, -1)}
+                              className="px-3 py-2 rounded-xl bg-white/60 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-[10px] font-black uppercase tracking-widest"
+                              title="Move up"
+                            >
+                              Up
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => move(s.id, 1)}
+                              className="px-3 py-2 rounded-xl bg-white/60 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-[10px] font-black uppercase tracking-widest"
+                              title="Move down"
+                            >
+                              Down
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setScanStudentMode('batch');
+                const selectedIds = Array.from(batchSelectedStudentIds);
+                const ordered =
+                  batchRosterSort === 'manual' && batchRosterOrderIds.length > 0
+                    ? batchRosterOrderIds.filter((id) => batchSelectedStudentIds.has(id))
+                    : selectedIds.sort((a, b) => {
+                        const aName = students.find((s) => s.id === a)?.name || '';
+                        const bName = students.find((s) => s.id === b)?.name || '';
+                        return aName.localeCompare(bName);
+                      });
+                batchStudentOrderRef.current = ordered;
+                batchNextIndexRef.current = 0;
+                setPhase(AppPhase.RUBRIC_SETUP);
+              }}
+              disabled={batchSelectedStudentIds.size === 0}
+              className="mt-auto py-4 px-5 rounded-2xl bg-emerald-500 text-white font-black uppercase tracking-widest text-[14px] shadow-sm hover:bg-emerald-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Continue to rubric
+            </button>
+          </>
+        )}
+      </div>
+    </PageWrapper>
+  );
+
+  const renderSyncPreflight = () => (
+    <PageWrapper
+      headerTitle="Sync preflight"
+      headerSubtitle={selectedCourse?.name || undefined}
+      onBack={() => setPhase(AppPhase.AUDIT)}
+      isOnline={isOnline}
+      isDarkMode={isDarkMode}
+      setIsDarkMode={setIsDarkMode}
+      syncStatus={syncStatus}
+    >
+      <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-hidden pb-24 pt-1">
+        {(() => {
+          const targetIndexes = syncPreflightIndexes && syncPreflightIndexes.length > 0 ? syncPreflightIndexes : gradedWorks.map((_, i) => i);
+          const works = targetIndexes.map((i) => gradedWorks[i]).filter(Boolean);
+          const gradesCount = works.length;
+          const emailCount = works.filter((w) => !!w.studentEmail).length;
+          const drivePages = works.reduce((sum, w) => sum + (w.imageUrls?.length || 0), 0);
+          const failedIndexes = gradedWorks
+            .map((w, i) => ({ w, i }))
+            .filter(({ w }) => syncFailedKeys.has(`${w.courseId}::${w.assignmentId}::${w.studentId}::${w.timestamp}`))
+            .map(({ i }) => i);
+
+          return (
+            <>
+              <div className="p-4 rounded-2xl bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 shadow-sm">
+                <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Summary</div>
+                <div className="mt-2 grid grid-cols-3 gap-2">
+                  <div className="p-3 rounded-xl bg-white/60 dark:bg-slate-900/40 border border-slate-200/60 dark:border-slate-700/60">
+                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Grades</div>
+                    <div className="mt-1 text-lg font-black text-slate-900 dark:text-white">{gradesCount}</div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-white/60 dark:bg-slate-900/40 border border-slate-200/60 dark:border-slate-700/60">
+                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Emails</div>
+                    <div className="mt-1 text-lg font-black text-slate-900 dark:text-white">{emailCount}</div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-white/60 dark:bg-slate-900/40 border border-slate-200/60 dark:border-slate-700/60">
+                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Drive pages</div>
+                    <div className="mt-1 text-lg font-black text-slate-900 dark:text-white">{drivePages}</div>
+                  </div>
+                </div>
+                <div className="mt-3 text-[11px] text-slate-600 dark:text-slate-300">
+                  Sync will post grades to Google Classroom, optionally email students, and save scans to Drive.
+                </div>
+              </div>
+
+              {syncReceipts.length > 0 && (
+                <div className="p-4 rounded-2xl bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 shadow-sm overflow-hidden">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Last sync receipt</div>
+                  <div className="mt-3 max-h-[220px] overflow-y-auto custom-scrollbar space-y-2">
+                    {syncReceipts.map((r) => (
+                      <div
+                        key={r.key}
+                        className={`p-3 rounded-xl border flex items-center justify-between gap-3 ${
+                          r.ok
+                            ? 'bg-emerald-500/5 border-emerald-500/20'
+                            : 'bg-rose-500/5 border-rose-500/20'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <div className="font-black text-sm text-slate-900 dark:text-white truncate">{r.studentName}</div>
+                          {!r.ok && r.error && (
+                            <div className="text-[11px] text-rose-600 dark:text-rose-300 truncate">{r.error}</div>
+                          )}
+                          {r.ok && (
+                            <div className="text-[11px] text-slate-600 dark:text-slate-300">
+                              Drive: {r.drivePagesSaved ?? 0} · Email: {r.emailOk === undefined ? 'n/a' : r.emailOk ? 'sent' : 'failed'}
+                            </div>
+                          )}
+                        </div>
+                        <div className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border shrink-0 ${
+                          r.ok
+                            ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-700 dark:text-emerald-300'
+                            : 'bg-rose-500/10 border-rose-500/20 text-rose-600 dark:text-rose-300'
+                        }`}>
+                          {r.ok ? 'OK' : 'Failed'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-auto grid grid-cols-1 gap-2">
+                {failedIndexes.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSyncPreflightIndexes(failedIndexes);
+                      void startSyncProcess(failedIndexes);
+                    }}
+                    className="py-4 px-5 rounded-2xl bg-amber-500 text-white font-black uppercase tracking-widest text-[14px] shadow-sm hover:bg-amber-600 transition-colors"
+                  >
+                    Retry failed only ({failedIndexes.length})
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void startSyncProcess(targetIndexes)}
+                  disabled={gradesCount === 0}
+                  className="py-4 px-5 rounded-2xl bg-emerald-500 text-white font-black uppercase tracking-widest text-[14px] shadow-sm hover:bg-emerald-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Start sync
+                </button>
+              </div>
+            </>
+          );
+        })()}
+      </div>
     </PageWrapper>
   );
 
@@ -3261,7 +3603,7 @@ const App: React.FC = () => {
       <PageWrapper 
         headerTitle="Scan Rubric" 
         headerSubtitle={selectedAssignment?.title || "Criteria Setup"} 
-        onBack={() => setPhase(AppPhase.ASSIGNMENT_SELECT)} 
+        onBack={() => setPhase(AppPhase.GRADE_SCAN_SETUP)} 
         isOnline={isOnline}
         isDarkMode={isDarkMode}
         setIsDarkMode={setIsDarkMode}
@@ -3581,6 +3923,11 @@ const App: React.FC = () => {
     const selectedStudentId = selectedQuickPickIds.size > 0 ? Array.from(selectedQuickPickIds)[0] : null;
     const selectedStudentObj = students.find(s => s.id === selectedStudentId);
     const displayStudentName = selectedStudentObj ? selectedStudentObj.name : (pendingWork?.studentName || "Unknown Student");
+    const expectedBatchStudentId =
+      scanStudentMode === 'batch' ? batchStudentOrderRef.current[batchNextIndexRef.current] : null;
+    const expectedBatchStudent = expectedBatchStudentId
+      ? students.find((s) => s.id === expectedBatchStudentId)
+      : null;
 
     return (
       <PageWrapper headerTitle={gradingMode === GradingMode.MULTI_PAGE ? 'Multi Page Mode' : 'Single Page Mode'} onBack={() => setPhase(AppPhase.MODE_SELECTION)} isOnline={isOnline} isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode}>
@@ -3660,6 +4007,14 @@ const App: React.FC = () => {
               )}
             </div>
 
+            {scanStudentMode === 'batch' && expectedBatchStudent && !showQuickPick && (
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 pointer-events-none">
+                <div className="px-4 py-2 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-white text-[10px] font-black uppercase tracking-widest shadow-lg max-w-[320px] truncate">
+                  Next student · {expectedBatchStudent.name}
+                </div>
+              </div>
+            )}
+
             <div className="relative z-40 flex items-center justify-center gap-6 mb-6 mt-auto pb-4">
               <div className="bg-black/50 backdrop-blur-xl p-2 rounded-full flex gap-3 items-center shadow-lg border border-white/20">
                  <button onClick={toggleFlash} className={`p-4 rounded-full border-2 transition-all ${isFlashOn ? 'bg-yellow-400 text-black border-transparent shadow-[0_0_20px_rgba(250,204,21,0.6)]' : 'bg-white/10 text-white border-white/30 hover:bg-white/20'}`} title="Toggle Flash">
@@ -3712,6 +4067,51 @@ const App: React.FC = () => {
                    <h3 className="font-black text-slate-800 dark:text-slate-100 text-center mb-4 text-[16px] uppercase tracking-widest border-b border-slate-100 dark:border-slate-700 pb-4">
                      Review & Match
                    </h3>
+
+                   {scanStudentMode === 'batch' && expectedBatchStudent && (() => {
+                     const candidateStudents =
+                       batchSelectedStudentIds.size > 0
+                         ? students.filter((s) => batchSelectedStudentIds.has(s.id))
+                         : students;
+                     const detectedName = (pendingWork.studentName || '').toLowerCase().replace(/[^a-z]/g, '');
+                     const detectedMatch =
+                       detectedName.length > 2
+                         ? candidateStudents.find((s) => {
+                             const sName = s.name.toLowerCase().replace(/[^a-z]/g, '');
+                             return sName.includes(detectedName) || detectedName.includes(sName);
+                           })
+                         : null;
+                     const detectedId = detectedMatch?.id || null;
+                     const conflict = !!detectedId && detectedId !== expectedBatchStudent.id;
+                     if (!conflict) return null;
+                     return (
+                       <div className="mb-4 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30">
+                         <div className="text-[10px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-200">
+                           Resolve attribution
+                         </div>
+                         <div className="mt-1 text-sm font-semibold text-slate-800 dark:text-slate-100">
+                           Detected <span className="font-black">{detectedMatch?.name}</span>, expected{' '}
+                           <span className="font-black">{expectedBatchStudent.name}</span>.
+                         </div>
+                         <div className="mt-3 grid grid-cols-2 gap-2">
+                           <button
+                             type="button"
+                             onClick={() => setSelectedQuickPickIds(new Set([expectedBatchStudent.id]))}
+                             className="py-2.5 rounded-xl bg-emerald-500 text-white font-black uppercase tracking-widest text-[10px]"
+                           >
+                             Use expected
+                           </button>
+                           <button
+                             type="button"
+                             onClick={() => detectedId && setSelectedQuickPickIds(new Set([detectedId]))}
+                             className="py-2.5 rounded-xl bg-indigo-600 text-white font-black uppercase tracking-widest text-[10px]"
+                           >
+                             Use detected
+                           </button>
+                         </div>
+                       </div>
+                     );
+                   })()}
 
                    {/* 1st Line: Student Name & Score */}
                    <div className="flex gap-4 mb-4 shrink-0 h-20">
@@ -3792,7 +4192,13 @@ const App: React.FC = () => {
 
                    <div className="flex gap-3 mt-4 shrink-0">
                      <button onClick={() => { setShowQuickPick(false); setPendingWork(null); }} className="flex-1 py-4 bg-slate-100 dark:bg-slate-800 rounded-xl font-black text-slate-600 dark:text-slate-300 uppercase text-[11px] tracking-widest hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors shadow-sm">Cancel</button>
-                     <button onClick={confirmQuickPickStudents} disabled={selectedQuickPickIds.size === 0} className="flex-1 py-4 bg-emerald-500 text-white rounded-xl font-black uppercase text-[11px] tracking-widest disabled:opacity-50 hover:bg-emerald-600 transition-colors shadow-md">Done</button>
+                     <button
+                       onClick={confirmQuickPickStudents}
+                       disabled={selectedQuickPickIds.size === 0}
+                       className="flex-1 py-4 bg-emerald-500 text-white rounded-xl font-black uppercase text-[11px] tracking-widest disabled:opacity-50 hover:bg-emerald-600 transition-colors shadow-md"
+                     >
+                       {scanStudentMode === 'batch' && selectedStudentObj ? `Apply to ${selectedStudentObj.name}` : 'Done'}
+                     </button>
                    </div>
 
                  </div>
@@ -3809,176 +4215,216 @@ const App: React.FC = () => {
     );
   };
 
-  const renderAudit = () => (
-    <PageWrapper headerTitle="Review Grades" headerSubtitle={`${gradedWorks.length} pending`} onBack={() => setPhase(AppPhase.GRADING_LOOP)} isOnline={isOnline} isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode} syncStatus={syncStatus}>
-      <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-4">
-        <div className="sticky top-0 z-20 bg-white/70 dark:bg-slate-800/70 backdrop-blur-md border border-slate-200 dark:border-slate-700 rounded-xl p-4 shadow-sm">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-slate-500 text-[10px] font-black uppercase tracking-widest">Bulk review</div>
-              <div className="font-black text-slate-800 dark:text-slate-100 text-[14px] mt-1">
-                {auditSelectedIndexes.size > 0 ? `${auditSelectedIndexes.size} selected` : 'All pending are editable'}
-              </div>
-            </div>
+  const renderAudit = () => {
+    const getRowState = (w: GradedWork): 'error' | 'draft' | 'ready' => {
+      if (!w.studentId || !w.assignmentId || !w.courseId) return 'error';
+      if (w.status === 'synced') return 'ready';
+      const hasScore = typeof w.score === 'number' && !Number.isNaN(w.score);
+      const hasFeedback = (w.feedback || '').trim().length > 0;
+      return hasScore && hasFeedback ? 'ready' : 'draft';
+    };
 
-            <div className="flex flex-col items-end gap-2 shrink-0">
-              <label className="flex items-center gap-2 select-none cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={auditEditSelectedOnly}
-                  onChange={(e) => {
-                    const checked = e.target.checked;
-                    if (checked && auditSelectedIndexes.size === 0) {
-                      setAuditSelectedIndexes(new Set(gradedWorks.map((_, i) => i)));
-                    }
-                    setAuditEditSelectedOnly(checked);
-                  }}
-                />
-                <span className="text-[12px] font-bold text-slate-700 dark:text-slate-200">Edit selected only</span>
-              </label>
-              <div className="flex gap-2">
+    const visible = gradedWorks
+      .map((w, idx) => ({ w, idx, state: getRowState(w) }))
+      .filter(({ state }) => {
+        if (auditFilter === 'all') return true;
+        if (auditFilter === 'errors') return state === 'error';
+        if (auditFilter === 'drafts') return state === 'draft';
+        return state === 'ready';
+      });
+
+    const selectedCount = auditSelectedIndexes.size;
+    const effectiveSelection = selectedCount > 0 ? Array.from(auditSelectedIndexes) : visible.map((v) => v.idx);
+
+    return (
+      <PageWrapper
+        headerTitle="Review queue"
+        headerSubtitle={`${gradedWorks.length} pending`}
+        onBack={() => setPhase(AppPhase.GRADING_LOOP)}
+        isOnline={isOnline}
+        isDarkMode={isDarkMode}
+        setIsDarkMode={setIsDarkMode}
+        syncStatus={syncStatus}
+      >
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar flex flex-col gap-3 pb-24 pt-1">
+          <div className="sticky top-0 z-20 bg-white/70 dark:bg-slate-800/70 backdrop-blur-md border border-slate-200 dark:border-slate-700 rounded-2xl p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Queue control</div>
+                <div className="mt-1 text-sm font-black text-slate-900 dark:text-white truncate">
+                  {selectedCount > 0 ? `${selectedCount} selected` : `${visible.length} shown`}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
                 <button
                   type="button"
-                  onClick={() => setAuditSelectedIndexes(new Set(gradedWorks.map((_, i) => i)))}
-                  disabled={gradedWorks.length === 0}
-                  className="px-3 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-200 text-[10px] font-black uppercase tracking-widest border border-indigo-200/60 disabled:opacity-50"
+                  onClick={() => setAuditSelectedIndexes(new Set(visible.map((v) => v.idx)))}
+                  disabled={visible.length === 0}
+                  className="px-3 py-2 rounded-xl bg-white/60 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-[10px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-200 disabled:opacity-50"
                 >
                   Select all
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    setAuditSelectedIndexes(new Set());
-                    setAuditEditSelectedOnly(false);
-                  }}
-                  disabled={gradedWorks.length === 0}
-                  className="px-3 py-1.5 rounded-lg bg-white/60 dark:bg-slate-800/60 text-slate-600 dark:text-slate-300 text-[10px] font-black uppercase tracking-widest border border-slate-200/70 disabled:opacity-50"
+                  onClick={() => setAuditSelectedIndexes(new Set())}
+                  disabled={selectedCount === 0}
+                  className="px-3 py-2 rounded-xl bg-white/60 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-[10px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-200 disabled:opacity-50"
                 >
                   Clear
                 </button>
               </div>
             </div>
+
+            <div className="mt-3 flex items-center gap-2 overflow-x-auto custom-scrollbar">
+              {(
+                [
+                  ['all', 'All'],
+                  ['errors', 'Errors'],
+                  ['drafts', 'Drafts'],
+                  ['ready', 'Ready'],
+                ] as const
+              ).map(([id, labelText]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setAuditFilter(id)}
+                  className={`px-3 py-2 rounded-full border text-[10px] font-black uppercase tracking-widest whitespace-nowrap transition-colors ${
+                    auditFilter === id
+                      ? 'bg-indigo-600 text-white border-indigo-600'
+                      : 'bg-white/60 dark:bg-slate-900/40 text-slate-600 dark:text-slate-200 border-slate-200/70 dark:border-slate-700/60 hover:opacity-90'
+                  }`}
+                >
+                  {labelText}
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (effectiveSelection.length === 0) return;
+                  setGradedWorks((prev) => prev.filter((_, i) => !new Set(effectiveSelection).has(i)));
+                  setAuditSelectedIndexes(new Set());
+                }}
+                disabled={effectiveSelection.length === 0}
+                className="py-2.5 rounded-xl bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-300 border border-red-200/60 dark:border-red-500/20 text-[10px] font-black uppercase tracking-widest disabled:opacity-50"
+              >
+                Delete
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (effectiveSelection.length === 0) return;
+                  const set = new Set(effectiveSelection);
+                  setGradedWorks((prev) => prev.map((w, i) => (set.has(i) ? { ...w, status: 'draft' as const } : w)));
+                }}
+                disabled={effectiveSelection.length === 0}
+                className="py-2.5 rounded-xl bg-white/60 dark:bg-slate-900/40 text-slate-700 dark:text-slate-200 border border-slate-200/70 dark:border-slate-700/60 text-[10px] font-black uppercase tracking-widest disabled:opacity-50"
+              >
+                Mark draft
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (effectiveSelection.length === 0) return;
+                  setSyncPreflightIndexes(effectiveSelection);
+                  setAuditSelectedIndexes(new Set());
+                  setPhase(AppPhase.GRADE_SYNC_PREFLIGHT);
+                }}
+                disabled={effectiveSelection.length === 0}
+                className="py-2.5 rounded-xl bg-emerald-500 text-white border border-emerald-500 text-[10px] font-black uppercase tracking-widest disabled:opacity-50"
+              >
+                Sync
+              </button>
+            </div>
           </div>
 
-          <div className="flex gap-2 mt-4">
-            <button
-              type="button"
-              onClick={() => {
-                if (auditSelectedIndexes.size === 0) return;
-                setGradedWorks(prev => prev.filter((_, i) => !auditSelectedIndexes.has(i)));
-                setAuditSelectedIndexes(new Set());
-                setAuditEditSelectedOnly(false);
-              }}
-              disabled={auditSelectedIndexes.size === 0}
-              className="flex-1 py-2.5 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-xl font-bold text-[11px] uppercase tracking-widest hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors flex items-center justify-center gap-1.5 border border-red-200/50 dark:border-red-500/20 disabled:opacity-50"
-            >
-              <Trash2 className="w-3.5 h-3.5" /> Delete selected
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (auditSelectedIndexes.size === 0) return;
-                setGradedWorks(prev =>
-                  prev.map((w, i) => (auditSelectedIndexes.has(i) ? { ...w, status: 'draft' as const } : w))
-                );
-              }}
-              disabled={auditSelectedIndexes.size === 0}
-              className="flex-1 py-2.5 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-xl font-bold text-[11px] uppercase tracking-widest hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors flex items-center justify-center gap-1.5 border border-indigo-200/50 dark:border-indigo-500/20 disabled:opacity-50"
-            >
-              <RefreshCw className="w-3.5 h-3.5" /> Mark as draft
-            </button>
-          </div>
-        </div>
-
-        {gradedWorks.map((work, idx) => {
-          const isSelected = auditSelectedIndexes.has(idx);
-          const editAllowed = !auditEditSelectedOnly || isSelected;
-          return (
-            <div key={idx} className="bg-white/70 dark:bg-slate-800/70 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col">
-              <div className="flex justify-between items-center mb-3 gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setAuditSelectedIndexes(prev => {
+          {visible.map(({ w, idx, state }) => {
+            const isSelected = auditSelectedIndexes.has(idx);
+            const preview = (w.feedback || '').trim().replace(/\s+/g, ' ').slice(0, 110);
+            return (
+              <div
+                key={idx}
+                className={`p-4 rounded-2xl border shadow-sm bg-white/70 dark:bg-slate-800/70 ${
+                  isSelected ? 'border-indigo-400/70' : 'border-slate-200/70 dark:border-slate-700/60'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuditSelectedIndexes((prev) => {
                         const next = new Set(prev);
-                        if (checked) next.add(idx);
-                        else next.delete(idx);
+                        if (next.has(idx)) next.delete(idx);
+                        else next.add(idx);
                         return next;
                       });
                     }}
-                  />
-                  <h4 className="font-black text-slate-800 dark:text-slate-100 truncate pr-2">
-                    {work.studentName}
-                  </h4>
-                </div>
+                    className="flex items-start gap-3 flex-1 text-left min-w-0"
+                  >
+                    <div className={`w-6 h-6 rounded-full border flex items-center justify-center shrink-0 ${
+                      isSelected ? 'border-indigo-500 bg-indigo-600' : 'border-slate-300 dark:border-slate-600'
+                    }`}>
+                      {isSelected && <Check className="w-4 h-4 text-white" />}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="font-black text-sm text-slate-900 dark:text-white truncate">{w.studentName || 'Unknown student'}</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <div className="text-[11px] font-black text-indigo-700 dark:text-indigo-300">
+                          {w.score}/{w.maxScore}
+                        </div>
+                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${
+                          state === 'error'
+                            ? 'bg-rose-500/10 border-rose-500/20 text-rose-600 dark:text-rose-300'
+                            : state === 'draft'
+                              ? 'bg-amber-500/10 border-amber-500/20 text-amber-700 dark:text-amber-200'
+                              : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-700 dark:text-emerald-300'
+                        }`}>
+                          {state === 'error' ? 'Error' : state === 'draft' ? 'Draft' : 'Ready'}
+                        </span>
+                        {w.status === 'synced' && (
+                          <span className="px-2 py-0.5 rounded-full bg-slate-900/5 dark:bg-white/10 border border-slate-200/60 dark:border-slate-700/60 text-[9px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-200">
+                            Synced
+                          </span>
+                        )}
+                      </div>
+                      {preview && (
+                        <div className="mt-2 text-[12px] text-slate-600 dark:text-slate-300 line-clamp-2">
+                          {preview}
+                        </div>
+                      )}
+                    </div>
+                  </button>
 
-                <div className="flex items-center gap-1 shrink-0">
-                  <input
-                    type="number"
-                    value={work.score}
-                    disabled={!editAllowed}
-                    onChange={(e) => {
-                      if (!editAllowed) return;
-                      const w = [...gradedWorks];
-                      w[idx].score = parseFloat(e.target.value) || 0;
-                      setGradedWorks(w);
-                    }}
-                    className={`w-12 bg-transparent text-right font-black text-indigo-600 outline-none text-[16px] ${editAllowed ? '' : 'opacity-50 cursor-not-allowed'}`}
-                  />
-                  <span className="text-slate-400 font-bold text-[16px]">/{work.maxScore}</span>
+                  <div className="flex flex-col gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleRescan(idx)}
+                      className="px-3 py-2 rounded-xl bg-white/60 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-[10px] font-black uppercase tracking-widest text-slate-700 dark:text-slate-200"
+                    >
+                      Rescan
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteScan(idx)}
+                      className="px-3 py-2 rounded-xl bg-red-50 dark:bg-red-900/30 border border-red-200/60 dark:border-red-500/20 text-[10px] font-black uppercase tracking-widest text-red-600 dark:text-red-300"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
               </div>
+            );
+          })}
 
-              <textarea
-                value={work.feedback}
-                disabled={!editAllowed}
-                onChange={(e) => {
-                  if (!editAllowed) return;
-                  const w = [...gradedWorks];
-                  w[idx].feedback = e.target.value;
-                  setGradedWorks(w);
-                }}
-                className={`w-full bg-slate-50 dark:bg-slate-900 rounded-xl p-3 text-[16px] border border-slate-200 dark:border-slate-700 outline-none resize-none mb-3 ${editAllowed ? '' : 'opacity-60 cursor-not-allowed'}`}
-                rows={2}
-              />
-
-              <div className="flex gap-2 mt-auto">
-                <button onClick={() => handleRescan(idx)} className="flex-1 py-2.5 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-xl font-bold text-[11px] uppercase tracking-widest hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors flex items-center justify-center gap-1.5 border border-indigo-200/50 dark:border-indigo-500/20">
-                   <RefreshCw className="w-3.5 h-3.5" /> Rescan
-                </button>
-                <button onClick={() => handleDeleteScan(idx)} className="flex-1 py-2.5 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-xl font-bold text-[11px] uppercase tracking-widest hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors flex items-center justify-center gap-1.5 border border-red-200/50 dark:border-red-500/20">
-                   <Trash2 className="w-3.5 h-3.5" /> Delete
-                </button>
-              </div>
-            </div>
-          );
-        })}
-
-        {gradedWorks.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-slate-400 mt-10">
-            <Layers className="w-12 h-12 mb-3 opacity-50" />
-            <p className="font-bold text-[16px]">No scans pending.</p>
-          </div>
-        )}
-      </div>
-
-      <button
-        onClick={() => {
-          const idxs = auditSelectedIndexes.size > 0 ? Array.from(auditSelectedIndexes) : undefined;
-          setAuditSelectedIndexes(new Set());
-          setAuditEditSelectedOnly(false);
-          void startSyncProcess(idxs);
-        }}
-        disabled={gradedWorks.length === 0}
-        className="w-full mt-4 py-4 bg-emerald-500 text-white rounded-xl font-black uppercase tracking-widest text-[16px] shadow-sm hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:hover:translate-y-0"
-      >
-         {auditSelectedIndexes.size > 0 ? `Sync selected (${auditSelectedIndexes.size})` : `Sync all (${gradedWorks.length})`} <CloudUpload className="inline ml-2 w-4 h-4" />
-      </button>
-    </PageWrapper>
-  );
+          {visible.length === 0 && (
+            <div className="py-10 text-center text-slate-500 text-sm font-bold">Nothing to show.</div>
+          )}
+        </div>
+      </PageWrapper>
+    );
+  };
 
   const renderSyncing = () => (
     <PageWrapper isOnline={isOnline} isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode} syncStatus={syncStatus}>
@@ -6018,10 +6464,13 @@ const App: React.FC = () => {
       {phase === 'COURSE_CREATION' && renderCourseCreation()}
       {phase === AppPhase.ASSIGNMENT_SELECT && renderAssignmentSelect()}
       {phase === AppPhase.ASSIGNMENT_CREATION && renderAssignmentCreation()}
+      {phase === AppPhase.GRADE_SCAN_SETUP && renderScanSetup()}
+      {phase === AppPhase.GRADE_BATCH_ROSTER && renderBatchRoster()}
       {phase === AppPhase.RUBRIC_SETUP && renderRubricSetup()}
       {phase === AppPhase.MODE_SELECTION && renderModeSelection()}
       {phase === AppPhase.GRADING_LOOP && renderGradingLoop()}
       {phase === AppPhase.AUDIT && renderAudit()}
+      {phase === AppPhase.GRADE_SYNC_PREFLIGHT && renderSyncPreflight()}
       {phase === AppPhase.SYNCING && renderSyncing()}
       {phase === AppPhase.FINALE && renderFinale()}
       {phase === AppPhase.PAYWALL && renderPaywall()}
