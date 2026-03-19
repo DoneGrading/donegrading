@@ -656,21 +656,22 @@ const App: React.FC = () => {
   const PLAN_US_STATE_KEY = 'dg_plan_us_state';
   const FILE_VAULT_KEY = 'dg_file_vault_links';
 
-  const [lessonTopic, setLessonTopic] = useState('');
+  const [lessonTopic, _setLessonTopic] = useState('');
   const [lessonResult, setLessonResult] = useState<LessonScriptResult | null>(null);
   const [lessonLoading, setLessonLoading] = useState(false);
   const [planAiError, setPlanAiError] = useState<string | null>(null);
-  const [planActionLoading, setPlanActionLoading] = useState<null | 'share'>(null);
+  const [planActionLoading, _setPlanActionLoading] = useState<null | 'share'>(null);
+  void planActionLoading;
   const [planActionMessage, setPlanActionMessage] = useState<string | null>(null);
   const [_diffLevel, setDiffLevel] = useState<'simplified' | 'advanced' | null>(null);
   const [differentiationText, setDifferentiationText] = useState('');
   const [diffLoading, setDiffLoading] = useState(false);
   const [fileVaultLinks, setFileVaultLinks] = useState<{ label: string; url: string }[]>(() => safeParseJson(localStorage.getItem(FILE_VAULT_KEY), [] as { label: string; url: string }[]));
 
-  const [planLessonTitle, _setPlanLessonTitle] = useState('');
-  const [planUnit, _setPlanUnit] = useState('Unit 4: Ecosystems');
+  const [planLessonTitle, setPlanLessonTitle] = useState('');
+  const [planUnit, setPlanUnit] = useState('Unit 4: Ecosystems');
   const [planVersion, _setPlanVersion] = useState<PlanVersion>('Standard');
-  const [planTab, setPlanTab] = useState<'hub' | 'context' | 'blocks' | 'resources' | 'assessment'>('hub');
+  const [planTab, setPlanTab] = useState<'doNow' | 'iDo' | 'weDo' | 'youDo' | 'exit'>('doNow');
   const [planContextOpen, setPlanContextOpen] = useState(false);
   const [planBlockTab, setPlanBlockTab] = useState<'A' | 'B' | 'C' | 'D'>('A');
   const [planBlockLocks, setPlanBlockLocks] = useState<Record<'A' | 'B' | 'C' | 'D', boolean>>({
@@ -4989,11 +4990,12 @@ const App: React.FC = () => {
       const body = encodeURIComponent(`${buildPlanText()}\n\nCreated by DoneGrading`);
       window.location.href = `mailto:?subject=${subject}&body=${body}`;
     };
+    void handleEmailPlan;
     const handleSharePlan = async () => {
       const title = `Lesson Plan: ${planLessonTitle || 'Lesson'}`;
       const text = buildPlanText();
       try {
-        setPlanActionLoading('share');
+        _setPlanActionLoading('share');
         if ((navigator as any).share) {
           await (navigator as any).share({ title, text });
         } else {
@@ -5003,9 +5005,10 @@ const App: React.FC = () => {
       } catch {
         setPlanActionMessage('Could not share right now.');
       } finally {
-        setPlanActionLoading(null);
+        _setPlanActionLoading(null);
       }
     };
+    void handleSharePlan;
     const buildFallbackLesson = (topic: string): LessonScriptResult => ({
       outline: `1) Warm-up: Activate prior knowledge about ${topic}.\n2) Teach core concept with a short model and examples.\n3) Guided practice with think-pair-share checks.\n4) Independent task applying the concept.\n5) Exit ticket to verify mastery.`,
       vocabulary: [topic.split(' ')[0] || 'concept', 'evidence', 'analyze', 'apply', 'explain'],
@@ -5015,24 +5018,10 @@ const App: React.FC = () => {
         `What part of ${topic} still feels confusing?`,
       ],
     });
-    const handlePlanActionSelect = async (action: string) => {
-      if (action === 'save') {
-        handleSavePlanNow();
-        setPlanActionMessage('Lesson plan saved.');
-        return;
-      }
-      if (action === 'print') {
-        window.print();
-        return;
-      }
-      if (action === 'email') {
-        handleEmailPlan();
-        return;
-      }
-      if (action === 'share') {
-        await handleSharePlan();
-      }
+    const handlePlanActionSelect = async (_action: string) => {
+      // kept for future menu actions; currently unused in simplified flow
     };
+    void handlePlanActionSelect;
     const handleGeneratePlan = async () => {
       const topic = (lessonTopic || planLessonTitle || `${planSubject} lesson for grade ${planGrade}`).trim();
       if (!topic) {
@@ -5080,7 +5069,7 @@ const App: React.FC = () => {
           const indep = outlineLines.find((l) => /independent|task|apply/i.test(l)) || `Independent practice: students apply the concept to a short task.`;
           setIndependentNotes(indep);
         }
-        setPlanTab('blocks');
+        setPlanTab('iDo');
         if (!res) {
           setPlanActionMessage('AI unavailable. Generated a template draft instead.');
         }
@@ -5160,61 +5149,96 @@ const App: React.FC = () => {
             }
             .plan-print-footer { display: none; }
           `}</style>
-          {/* Compact header + tab bar: inset card to match sections */}
+          {/* Compact header + step tabs */}
           <div className="plan-no-print flex-none flex flex-col gap-2 mx-2 mt-1 mb-2 px-3 py-2 bg-white/90 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-700 rounded-xl shadow-sm">
-            <div className="grid grid-cols-2 gap-1">
+            <div className="flex items-center justify-between gap-2">
+              <div className="space-y-1">
+                <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-500">
+                  Lesson shell
+                </div>
+                <div className="space-y-1.5">
+                  <input
+                    value={planLessonTitle}
+                    onChange={(e) => setPlanLessonTitle(e.target.value)}
+                    placeholder="Lesson title"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-950/90 text-[11px] font-semibold text-slate-800 dark:text-slate-100 outline-none"
+                  />
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <input
+                      value={planUnit}
+                      onChange={(e) => setPlanUnit(e.target.value)}
+                      placeholder="Unit"
+                      className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-950/90 text-[10px] text-slate-700 dark:text-slate-100 outline-none"
+                    />
+                    <input
+                      value={planGrade}
+                      onChange={(e) => setPlanGrade(e.target.value)}
+                      placeholder="Grade"
+                      className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-950/90 text-[10px] text-slate-700 dark:text-slate-100 outline-none"
+                    />
+                    <input
+                      value={planSubject}
+                      onChange={(e) => setPlanSubject(e.target.value)}
+                      placeholder="Subject"
+                      className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-950/90 text-[10px] text-slate-700 dark:text-slate-100 outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-1 text-right">
+                <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-500">
+                  {lastSavedLabel}
+                </div>
+                <div className="inline-flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={handleSavePlanNow}
+                    className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-900 text-white text-[10px] font-semibold"
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleGeneratePlan()}
+                    disabled={lessonLoading}
+                    className="px-2.5 py-1.5 rounded-lg bg-sky-600 text-white text-[10px] font-black uppercase tracking-[0.18em] flex items-center gap-1.5 disabled:opacity-60"
+                  >
+                    {lessonLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                    {lessonLoading ? 'Drafting…' : 'Draft with AI'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 mt-1">
+              <div className="inline-flex rounded-full bg-slate-100 dark:bg-slate-800 p-0.5 text-[10px]">
+                {([
+                  { id: 'doNow', label: 'Do now' },
+                  { id: 'iDo', label: 'I do' },
+                  { id: 'weDo', label: 'We do' },
+                  { id: 'youDo', label: 'You do' },
+                  { id: 'exit', label: 'Exit ticket' },
+                ] as const).map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setPlanTab(tab.id)}
+                    className={`px-3 py-1 rounded-full font-semibold ${
+                      planTab === tab.id ? 'bg-sky-600 text-white shadow-sm' : 'text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
               <button
                 type="button"
-                onClick={() => void handleGeneratePlan()}
-                disabled={lessonLoading}
-                className="flex-1 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider bg-indigo-600 text-white disabled:opacity-50 flex items-center justify-center gap-1"
+                onClick={() => setPlanContextOpen(true)}
+                className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/70 text-[9px] font-semibold text-slate-700 dark:text-slate-100"
               >
-                {lessonLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-                {lessonLoading ? 'Generating…' : 'Generate'}
+                Edit context
               </button>
-              <select
-                className="flex-1 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700"
-                defaultValue=""
-                disabled={planActionLoading === 'share'}
-                onChange={(e) => {
-                  const action = e.target.value;
-                  e.target.value = '';
-                  if (!action) return;
-                  void handlePlanActionSelect(action);
-                }}
-              >
-                <option value="">Actions</option>
-                <option value="save">Save</option>
-                <option value="print">Print</option>
-                <option value="email">Email</option>
-                <option value="share">{planActionLoading === 'share' ? 'Sharing…' : 'Share'}</option>
-              </select>
             </div>
-            <div className="flex gap-1 bg-slate-100/70 dark:bg-slate-900/70 p-0.5 rounded-lg">
-              {(['hub', 'context', 'blocks', 'resources', 'assessment'] as const).map((tab) => (
-                <button
-                  key={tab}
-                  type="button"
-                  onClick={() => setPlanTab(tab)}
-                  className={`flex-1 py-1.5 rounded-md text-[9px] font-bold uppercase tracking-wider flex items-center justify-center gap-1 ${
-                    planTab === tab
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
-                  }`}
-                >
-                  {tab === 'hub'
-                    ? 'Hub'
-                    : tab === 'context'
-                      ? 'Context'
-                      : tab === 'blocks'
-                        ? 'Draft'
-                        : tab === 'resources'
-                          ? 'Resources'
-                          : 'Assess'}
-                </button>
-              ))}
-            </div>
-            <p className="text-[8px] text-slate-400 text-center">{lastSavedLabel}</p>
             {planAiError && (
               <p className="text-[9px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded px-2 py-1">
                 {planAiError}
@@ -5227,7 +5251,7 @@ const App: React.FC = () => {
             )}
           </div>
 
-          {/* Single panel: only active tab content, no page scroll */}
+          {/* Single panel: only active step content, no page scroll */}
           <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
             {planContextOpen && (
               <div className="plan-no-print absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-xl p-4 flex flex-col">
@@ -5350,16 +5374,7 @@ const App: React.FC = () => {
                   </div>
 
                   <div className="pt-3 border-t border-slate-100 dark:border-slate-700 grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPlanContextOpen(false);
-                        setPlanTab('context');
-                      }}
-                      className="py-3 rounded-2xl bg-white/70 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-black uppercase tracking-widest text-[11px]"
-                    >
-                      Standards
-                    </button>
+                    <div />
                     <button
                       type="button"
                       onClick={() => setPlanContextOpen(false)}
@@ -5371,113 +5386,279 @@ const App: React.FC = () => {
                 </div>
               </div>
             )}
-            {planTab === 'hub' && (
-              <div className="flex-1 min-h-0 overflow-hidden p-2 flex flex-col gap-3">
-                <div className="p-4 rounded-2xl bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 shadow-sm">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Planning context</div>
-                      <div className="mt-1 text-sm font-black text-slate-900 dark:text-white truncate">
-                        Grade {planGrade} · {planSubject} · {planDuration} min · {planStateRegion}
-                      </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <span className="px-2.5 py-1 rounded-full bg-slate-900/5 dark:bg-white/10 border border-slate-200/60 dark:border-slate-700/60 text-[10px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-200">
-                          Standards · {pinnedStandards.length}
-                        </span>
-                        <span className="px-2.5 py-1 rounded-full bg-slate-900/5 dark:bg-white/10 border border-slate-200/60 dark:border-slate-700/60 text-[10px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-200">
-                          Class profile · {classProfile.trim() ? 'On' : 'Off'}
-                        </span>
+
+            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2 space-y-2">
+              <section className="plan-print-plain bg-sky-50/80 dark:bg-sky-900/20 border border-sky-200 dark:border-sky-700 rounded-xl p-3">
+                <p className="text-[10px] font-semibold text-sky-800 dark:text-sky-100">
+                  Grade {planGrade || '?'} · {planSubject || 'Subject'} · {planDuration || 45} min · {planStateRegion}
+                </p>
+                <p className="text-[10px] text-slate-600 dark:text-slate-300 mt-1">
+                  Follow the simple flow: Do now → I do → We do → You do → Exit ticket.
+                </p>
+              </section>
+
+              {planTab === 'doNow' && (
+                <section className="bg-white/95 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-3">
+                  <p className={sectionTitle}>Step 1 · Do now (warm‑up)</p>
+                  <textarea
+                    value={hookContent}
+                    onChange={(e) => setHookContent(e.target.value)}
+                    placeholder="1–3 minute task students can start immediately as they enter."
+                    className="w-full min-h-[64px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
+                  />
+                  <div className="grid grid-cols-3 gap-2 text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setHookContent((prev) =>
+                          `${prev || ''}${prev ? '\n\n' : ''}Scaffold: add a model example on the board and a sentence frame.`,
+                        )
+                      }
+                      className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
+                    >
+                      Scaffold
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setHookContent((prev) =>
+                          `${prev || ''}${prev ? '\n\n' : ''}Differentiate: 2 versions (on‑level + challenge) for the same skill.`,
+                        )
+                      }
+                      className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
+                    >
+                      Differentiate
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCfuIdeas((prev) =>
+                          `${prev || ''}${prev ? '\n' : ''}CFU: thumb check after Do now (👍 / 👎 / ✋).`,
+                        )
+                      }
+                      className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
+                    >
+                      Check for understanding
+                    </button>
+                  </div>
+                </section>
+              )}
+
+              {planTab === 'iDo' && (
+                <section className="bg-white/95 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-3">
+                  <p className={sectionTitle}>Step 2 · I do (direct instruction)</p>
+                  <textarea
+                    value={directPoints}
+                    onChange={(e) => setDirectPoints(e.target.value)}
+                    placeholder="Mini-lesson steps: how you will model the new learning."
+                    className="w-full min-h-[96px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
+                  />
+                  <div className="grid grid-cols-3 gap-2 text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDirectPoints((prev) =>
+                          `${prev || ''}${prev ? '\n\n' : ''}Scaffold: think‑aloud + worked example before students try.`,
+                        )
+                      }
+                      className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
+                    >
+                      Scaffold
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setGuidedTemplate('Socratic Seminar')
+                      }
+                      className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
+                    >
+                      Differentiate
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCfuIdeas((prev) =>
+                          `${prev || ''}${prev ? '\n' : ''}CFU: cold‑call 3 students to restate the step in their own words.`,
+                        )
+                      }
+                      className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
+                    >
+                      Check for understanding
+                    </button>
+                  </div>
+                </section>
+              )}
+
+              {planTab === 'weDo' && (
+                <section className="bg-white/95 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-3">
+                  <p className={sectionTitle}>Step 3 · We do (guided practice)</p>
+                  <textarea
+                    value={guidedNotes}
+                    onChange={(e) => setGuidedNotes(e.target.value)}
+                    placeholder="Problems or tasks you will complete together with students."
+                    className="w-full min-h-[96px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
+                  />
+                  <div className="grid grid-cols-3 gap-2 text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setGuidedNotes((prev) =>
+                          `${prev || ''}${prev ? '\n\n' : ''}Scaffold: use sentence frames and partner talk before calling on volunteers.`,
+                        )
+                      }
+                      className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
+                    >
+                      Scaffold
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setGuidedTemplate('Jigsaw')
+                      }
+                      className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
+                    >
+                      Differentiate
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCfuIdeas((prev) =>
+                          `${prev || ''}${prev ? '\n' : ''}CFU: after each example, quick show of hands or mini whiteboard check.`,
+                        )
+                      }
+                      className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
+                    >
+                      Check for understanding
+                    </button>
+                  </div>
+                </section>
+              )}
+
+              {planTab === 'youDo' && (
+                <section className="bg-white/95 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-3">
+                  <p className={sectionTitle}>Step 4 · You do (independent practice)</p>
+                  <textarea
+                    value={independentNotes}
+                    onChange={(e) => setIndependentNotes(e.target.value)}
+                    placeholder="Independent task where students apply the new learning."
+                    className="w-full min-h-[96px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
+                  />
+                  <div className="grid grid-cols-3 gap-2 text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setIndependentNotes((prev) =>
+                          `${prev || ''}${prev ? '\n\n' : ''}Scaffold: provide a checklist or graphic organizer for the task.`,
+                        )
+                      }
+                      className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
+                    >
+                      Scaffold
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setGuidedTemplate('Think-Pair-Share')
+                      }
+                      className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
+                    >
+                      Differentiate
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCfuIdeas((prev) =>
+                          `${prev || ''}${prev ? '\n' : ''}CFU: circulate with a quick 1‑sentence conference at 3–5 desks.`,
+                        )
+                      }
+                      className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
+                    >
+                      Check for understanding
+                    </button>
+                  </div>
+                </section>
+              )}
+
+              {planTab === 'exit' && (
+                <section className="bg-white/95 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-3">
+                  <p className={sectionTitle}>Step 5 · Exit ticket & look‑fors</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className={label}>Exit ticket prompt</label>
+                      <textarea
+                        value={exitTicketPrompt}
+                        onChange={(e) => setExitTicketPrompt(e.target.value)}
+                        placeholder="What do you want to see on paper before students leave?"
+                        className="w-full min-h-[56px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
+                      />
+                      <button
+                        type="button"
+                        className="mt-1 px-2 py-1 rounded-lg bg-sky-600 text-white text-[10px] font-semibold"
+                        onClick={() => {
+                          const base = exitTicketPrompt || effectiveTopic;
+                          setExitTicketQuestions([
+                            `Explain one big idea you learned about ${base.toLowerCase()}.`,
+                            `Give an example of ${base.toLowerCase()} in your own words.`,
+                            `What is one question you still have about ${base.toLowerCase()}?`,
+                          ]);
+                        }}
+                      >
+                        Draft 3 questions
+                      </button>
+                      {exitTicketQuestions.length > 0 && (
+                        <ul className="mt-1 list-decimal list-inside text-[11px] text-slate-700 dark:text-slate-200 space-y-0.5">
+                          {exitTicketQuestions.map((q, idx) => (
+                            <li key={idx}>{q}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className={label}>Success criteria (look‑fors)</label>
+                      <button
+                        type="button"
+                        className="px-2 py-1 rounded-lg bg-sky-600 text-white text-[10px] font-semibold"
+                        onClick={() =>
+                          setSuccessCriteria([
+                            'Students can explain the big idea in their own words.',
+                            'Students accurately use 2–3 key vocabulary terms.',
+                            'Most students complete the independent task with minimal re‑teaching.',
+                          ])
+                        }
+                      >
+                        Draft 3 look‑fors
+                      </button>
+                      {successCriteria.length > 0 && (
+                        <ul className="mt-1 list-disc list-inside text-[11px] text-slate-700 dark:text-slate-200 space-y-0.5">
+                          {successCriteria.map((c, idx) => (
+                            <li key={idx}>{c}</li>
+                          ))}
+                        </ul>
+                      )}
+                      <div className="mt-2 border-t border-slate-200 dark:border-slate-700 pt-2">
+                        <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400 mb-1">
+                          Pencil‑down reflection
+                        </p>
+                        <div className="relative">
+                          <textarea
+                            value={reflectionNote}
+                            onChange={(e) => setReflectionNote(e.target.value)}
+                            placeholder='“Next time, skip the video—it was too long.” This note will be pinned to this lesson.'
+                            className="w-full min-h-[56px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar pr-12"
+                          />
+                          <VoiceInputButton
+                            onResult={(text) => setReflectionNote((prev) => prev + (prev ? ' ' : '') + text)}
+                            className="absolute right-2 bottom-2"
+                          />
+                        </div>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setPlanContextOpen(true)}
-                      className="px-3 py-2 rounded-xl bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest shadow-sm hover:bg-indigo-700 transition-colors shrink-0"
-                    >
-                      Edit
-                    </button>
                   </div>
-                </div>
+                </section>
+              )}
+            </div>
 
-                <div className="p-4 rounded-2xl bg-emerald-500 text-white shadow-sm">
-                  <div className="text-[10px] font-black uppercase tracking-widest text-emerald-100">90‑second quickstart</div>
-                  <div className="mt-1 text-base font-black">Get a usable draft fast</div>
-                  <div className="mt-3 grid grid-cols-1 gap-2">
-                    <input
-                      value={lessonTopic}
-                      onChange={(e) => setLessonTopic(e.target.value)}
-                      placeholder="Topic or lesson title… (voice-friendly)"
-                      className="w-full px-4 py-3 rounded-xl bg-white/95 text-slate-900 placeholder:text-slate-400 outline-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => void handleGeneratePlan()}
-                      disabled={lessonLoading}
-                      className="w-full py-3 rounded-xl bg-slate-900/15 hover:bg-slate-900/20 border border-white/20 text-white font-black uppercase tracking-widest text-[12px] flex items-center justify-center gap-2 disabled:opacity-60"
-                    >
-                      {lessonLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                      {lessonLoading ? 'Generating…' : 'Generate draft'}
-                    </button>
-                  </div>
-                  <div className="mt-3 text-[11px] text-emerald-50/90">
-                    Draft lands in <span className="font-black">Draft</span> tab as Hook → Direct → Guided → Independent + CFUs.
-                  </div>
-                </div>
-
-                <div className="p-4 rounded-2xl bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 shadow-sm">
-                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Exports</div>
-                  <div className="mt-2 grid grid-cols-3 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handlePlanActionSelect('save')}
-                      className="py-3 rounded-2xl bg-indigo-600 text-white font-black uppercase tracking-widest text-[11px] shadow-sm hover:bg-indigo-700 transition-colors"
-                    >
-                      Save
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handlePlanActionSelect('share')}
-                      className="py-3 rounded-2xl bg-white/70 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-slate-700 dark:text-slate-200 font-black uppercase tracking-widest text-[11px] shadow-sm hover:opacity-90 transition-opacity"
-                    >
-                      Share
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handlePlanActionSelect('print')}
-                      className="py-3 rounded-2xl bg-white/70 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-slate-700 dark:text-slate-200 font-black uppercase tracking-widest text-[11px] shadow-sm hover:opacity-90 transition-opacity"
-                    >
-                      Print
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-3 gap-3 mt-auto">
-                  <button
-                    type="button"
-                    onClick={() => setPlanTab('blocks')}
-                    className="py-4 rounded-2xl bg-indigo-600 text-white font-black uppercase tracking-widest text-[12px] shadow-sm hover:bg-indigo-700 transition-colors"
-                  >
-                    Open draft
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPlanTab('assessment')}
-                    className="py-4 rounded-2xl bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 text-slate-900 dark:text-white font-black uppercase tracking-widest text-[12px] shadow-sm hover:opacity-90 transition-opacity"
-                  >
-                    Checks & exit
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPlanTab('resources')}
-                    className="py-4 rounded-2xl bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 text-slate-900 dark:text-white font-black uppercase tracking-widest text-[12px] shadow-sm hover:opacity-90 transition-opacity"
-                  >
-                    Resources
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {planTab === 'context' && (
+            {false && (planTab as any) === 'context' && (
             <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2 space-y-2">
             <aside className="space-y-2">
               <section className="plan-print-plain bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-3 space-y-1">
@@ -5695,7 +5876,7 @@ const App: React.FC = () => {
             </div>
             )}
 
-            {planTab === 'blocks' && (
+            {false && (planTab as any) === 'blocks' && (
             <div className="flex-1 min-h-0 overflow-hidden flex flex-col p-2">
               <section className="plan-print-plain mb-2 bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-2">
                 <p className="text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
@@ -6091,7 +6272,7 @@ const App: React.FC = () => {
             </div>
             )}
 
-            {planTab === 'resources' && (
+            {false && (planTab as any) === 'resources' && (
             <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2">
             <aside className="w-full space-y-3">
               <section className="plan-print-plain bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-3">
@@ -6165,7 +6346,7 @@ const App: React.FC = () => {
                               onClick={() => {
                                 const line = `- ${card.title} (${card.source}) ${card.url}`;
                                 setHookContent((prev) => (prev ? `${prev}\n${line}` : line));
-                                setPlanTab('blocks');
+                                setPlanTab('iDo');
                                 setPlanBlockTab('A');
                                 setPlanActionMessage('Attached to Hook (A).');
                               }}
@@ -6178,7 +6359,7 @@ const App: React.FC = () => {
                               onClick={() => {
                                 const line = `- ${card.title} (${card.source}) ${card.url}`;
                                 setDirectPoints((prev) => (prev ? `${prev}\n${line}` : line));
-                                setPlanTab('blocks');
+                                setPlanTab('iDo');
                                 setPlanBlockTab('B');
                                 setPlanActionMessage('Attached to Direct instruction (B).');
                               }}
@@ -6191,7 +6372,7 @@ const App: React.FC = () => {
                               onClick={() => {
                                 const line = `- ${card.title} (${card.source}) ${card.url}`;
                                 setGuidedNotes((prev) => (prev ? `${prev}\n${line}` : line));
-                                setPlanTab('blocks');
+                                setPlanTab('iDo');
                                 setPlanBlockTab('C');
                                 setPlanActionMessage('Attached to Guided practice (C).');
                               }}
@@ -6204,7 +6385,7 @@ const App: React.FC = () => {
                               onClick={() => {
                                 const line = `- ${card.title} (${card.source}) ${card.url}`;
                                 setIndependentNotes((prev) => (prev ? `${prev}\n${line}` : line));
-                                setPlanTab('blocks');
+                                setPlanTab('iDo');
                                 setPlanBlockTab('D');
                                 setPlanActionMessage('Attached to Independent practice (D).');
                               }}
@@ -6276,9 +6457,9 @@ const App: React.FC = () => {
                 <p className={sectionTitle}>
                   Vocabulary Bank
                 </p>
-                {lessonResult?.vocabulary?.length ? (
+                {lessonResult && Array.isArray((lessonResult as LessonScriptResult).vocabulary) && (lessonResult as LessonScriptResult).vocabulary.length ? (
                   <ul className="grid grid-cols-2 gap-1 text-[10px]">
-                    {lessonResult.vocabulary.map((word, idx) => (
+                    {(lessonResult as LessonScriptResult).vocabulary.map((word, idx) => (
                       <li
                         key={`${word}-${idx}`}
                         className="px-2 py-1 rounded-full bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 truncate"
@@ -6365,7 +6546,7 @@ const App: React.FC = () => {
             </div>
             )}
 
-            {planTab === 'assessment' && (
+            {false && (planTab as any) === 'assessment' && (
             <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2">
           <section className="plan-print-plain bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-3 mb-2">
             <p className="text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
@@ -7751,7 +7932,7 @@ const App: React.FC = () => {
               }`}
             >
               <Home className="w-4 h-4 mb-0.5" />
-              <span className="text-[7px] font-semibold uppercase tracking-[0.16em]">Dashboard</span>
+              <span className="text-[7px] font-bold uppercase tracking-[0.16em]">Dashboard</span>
             </button>
             <button
               type="button"
@@ -7769,7 +7950,7 @@ const App: React.FC = () => {
               }`}
             >
               <BookOpen className="w-4 h-4 mb-0.5" />
-              <span className="text-[7px] font-semibold uppercase tracking-[0.16em]">Plan</span>
+              <span className="text-[7px] font-bold uppercase tracking-[0.16em]">Plan</span>
             </button>
             <button
               type="button"
@@ -7787,7 +7968,7 @@ const App: React.FC = () => {
               }`}
             >
               <LayoutDashboard className="w-4 h-4 mb-0.5" />
-              <span className="text-[7px] font-semibold uppercase tracking-[0.16em]">Grade</span>
+              <span className="text-[7px] font-bold uppercase tracking-[0.16em]">Grade</span>
             </button>
             <button
               type="button"
@@ -7851,7 +8032,7 @@ const App: React.FC = () => {
               }`}
             >
               <Calendar className="w-4 h-4 mb-0.5" />
-              <span className="text-[7px] font-semibold uppercase tracking-[0.16em]">Schedule</span>
+              <span className="text-[7px] font-bold uppercase tracking-[0.16em]">Schedule</span>
             </button>
             <button
               type="button"
@@ -7869,7 +8050,7 @@ const App: React.FC = () => {
               }`}
             >
               <MessageCircle className="w-4 h-4 mb-0.5" />
-              <span className="text-[7px] font-semibold uppercase tracking-[0.16em]">Communicate</span>
+              <span className="text-[7px] font-bold uppercase tracking-[0.16em]">Communicate</span>
             </button>
             <button
               type="button"
@@ -7887,7 +8068,7 @@ const App: React.FC = () => {
               }`}
             >
               <Settings className="w-4 h-4 mb-0.5" />
-              <span className="text-[7px] font-semibold uppercase tracking-[0.16em]">Options</span>
+              <span className="text-[7px] font-bold uppercase tracking-[0.16em]">Options</span>
             </button>
           </div>
         </div>
