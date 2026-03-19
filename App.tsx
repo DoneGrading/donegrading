@@ -1326,7 +1326,7 @@ const App: React.FC = () => {
     // Route through the existing selection flow instead of jumping directly to the camera.
     if (!selectedCourse) {
       setShowCourses(true);
-      setPhase(AppPhase.DASHBOARD);
+      setPhase(AppPhase.GRADE_COURSE_PICKER);
       return;
     }
     if (!selectedAssignment) {
@@ -2230,8 +2230,6 @@ const App: React.FC = () => {
     );
     const otherCourses = coursesFilteredForUI.slice(3);
 
-    // Total redesign: render the Grade tab as a step-by-step workflow.
-    const coursesForHub = showCourses ? coursesFilteredForUI : coursesFilteredForUI.slice(0, 3);
     const canScan = !!selectedCourse && !!selectedAssignment;
 
     return (
@@ -2263,205 +2261,89 @@ const App: React.FC = () => {
           })();
         }}
       >
-        <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-y-auto pb-24 pt-1 custom-scrollbar">
+        <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-hidden pb-24 pt-1">
           <div className="bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl p-4 shadow-sm">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <h2 className="text-lg font-black text-slate-900 dark:text-white truncate">Teacher grading workflow</h2>
-                <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">
-                  <span className="font-bold text-slate-700 dark:text-slate-200">Step 1</span>
-                  {selectedCourse ? `: ${selectedCourse.name}` : ': select a course'} ·{' '}
-                  <span className="font-bold text-slate-700 dark:text-slate-200">Step 2</span>
-                  {selectedAssignment ? `: ${selectedAssignment.title}` : ': select an assignment'}
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleStartGrading}
-                className={`px-4 py-3 rounded-xl font-black text-[13px] tracking-widest uppercase shadow-sm transition-all ${
-                  canScan ? 'bg-emerald-500 text-white hover:bg-emerald-600' : 'bg-indigo-600 text-white hover:bg-indigo-700'
-                }`}
-              >
-                Continue <Camera className="inline w-4 h-4 ml-2" />
-              </button>
-            </div>
-
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => setPhase(AppPhase.AUDIT)}
-                disabled={pendingGrades <= 0}
-                className="px-4 py-3 rounded-xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 font-black text-[12px] uppercase tracking-widest text-slate-800 dark:text-slate-100 hover:opacity-90 disabled:opacity-50 transition-colors"
-              >
-                Review ({pendingGrades}) <ArrowRight className="inline w-4 h-4 ml-2" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setPhase(AppPhase.RECORDS)}
-                disabled={atRiskStudents.length === 0}
-                className="px-4 py-3 rounded-xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 font-black text-[12px] uppercase tracking-widest text-slate-800 dark:text-slate-100 hover:opacity-90 disabled:opacity-50 transition-colors"
-              >
-                Check in ({atRiskStudents.length}) <Target className="inline w-4 h-4 ml-2" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setPhase(AppPhase.ROSTER_VIEW)}
-                className="px-4 py-3 rounded-xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 font-black text-[12px] uppercase tracking-widest text-slate-800 dark:text-slate-100 hover:opacity-90 transition-colors"
-              >
-                Rosters ({totalStudents}) <Users className="inline w-4 h-4 ml-2" />
-              </button>
-            </div>
-
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2">
-              Emails: {syncProgress.emailSuccesses} sent · {syncProgress.emailFailures} failed
+            <h2 className="text-lg font-black text-slate-900 dark:text-white">Grade</h2>
+            <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">
+              Course → Assignment → Scan → Review & Sync (Google Classroom).
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Step 1 */}
-            <div className="bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl p-4 shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <div className="text-xs font-black uppercase tracking-widest text-slate-500">Step 1</div>
-                  <h3 className="font-black text-slate-900 dark:text-white">Choose a course</h3>
-                </div>
-                <button
-                  type="button"
-                  className="text-[11px] font-semibold uppercase tracking-widest text-slate-600 dark:text-slate-300 hover:opacity-90"
-                  onClick={() => setShowCourses(prev => !prev)}
-                >
-                  {showCourses ? 'Show less' : `Show all (${otherCourses.length + 3})`}
-                </button>
+          <div className="grid grid-cols-1 gap-3">
+            <button
+              type="button"
+              onClick={() => setPhase(AppPhase.GRADE_COURSE_PICKER)}
+              className="p-4 rounded-2xl bg-white/70 dark:bg-slate-800/50 border border-slate-200/70 dark:border-slate-700/60 text-left shadow-sm hover:opacity-90 transition-opacity"
+            >
+              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Step 1</div>
+              <div className="mt-1 text-base font-black text-slate-900 dark:text-white">
+                {selectedCourse ? selectedCourse.name : 'Select course'}
               </div>
-
-              <input
-                type="search"
-                value={courseSearch}
-                onChange={(e) => setCourseSearch(e.target.value)}
-                placeholder="Search courses…"
-                className="w-full px-3 py-2 rounded-xl bg-slate-900/60 border border-slate-700 text-xs text-slate-100 placeholder:text-slate-500 outline-none"
-              />
-
-              <div className="mt-3 flex flex-col gap-2 max-h-72 overflow-y-auto custom-scrollbar">
-                {coursesForHub.length === 0 && (
-                  <div className="py-8 text-center text-slate-500 text-xs font-bold">No courses match.</div>
-                )}
-
-                {coursesForHub.map((course) => {
-                  const active = selectedCourse?.id === course.id;
-                  return (
-                    <div
-                      key={course.id}
-                      className={`p-3 rounded-xl border flex items-center justify-between gap-3 ${
-                        active
-                          ? 'bg-indigo-50 dark:bg-indigo-900/30 border-indigo-400/60'
-                          : 'bg-white dark:bg-slate-800 border-slate-200/70 dark:border-slate-700/60'
-                      }`}
-                    >
-                      <div className="min-w-0 flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center text-white shrink-0">
-                          <BookOpen className="w-5 h-5" />
-                        </div>
-                        <div className="min-w-0">
-                          <div className="font-bold text-sm truncate text-slate-900 dark:text-white">{course.name}</div>
-                          <div className="text-xs text-slate-500 dark:text-slate-300">
-                            {course.period}{course.source === 'local' ? ' · Local' : ''}
-                          </div>
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          // Step-based navigation: selecting a course jumps to Step 2.
-                          void selectCourse(course);
-                        }}
-                        className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-[11px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-colors shrink-0"
-                      >
-                        {active ? 'Selected' : 'Select'}
-                      </button>
-                    </div>
-                  );
-                })}
+              <div className="text-sm text-slate-600 dark:text-slate-300 mt-0.5">
+                Choose the class you will post grades to
               </div>
-            </div>
+            </button>
 
-            {/* Step 2 */}
-            <div className="bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl p-4 shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <div className="text-xs font-black uppercase tracking-widest text-slate-500">Step 2</div>
-                  <h3 className="font-black text-slate-900 dark:text-white">Choose an assignment</h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setPhase(AppPhase.ASSIGNMENT_SELECT)}
-                  disabled={!selectedCourse}
-                  className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-[11px] font-black uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  Open assignments
-                </button>
+            <button
+              type="button"
+              onClick={() => setPhase(AppPhase.ASSIGNMENT_SELECT)}
+              disabled={!selectedCourse}
+              className="p-4 rounded-2xl bg-white/70 dark:bg-slate-800/50 border border-slate-200/70 dark:border-slate-700/60 text-left shadow-sm hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Step 2</div>
+              <div className="mt-1 text-base font-black text-slate-900 dark:text-white">
+                {selectedAssignment ? selectedAssignment.title : 'Select assignment'}
               </div>
+              <div className="text-sm text-slate-600 dark:text-slate-300 mt-0.5">
+                Pick or create the assignment in Google Classroom
+              </div>
+            </button>
 
-              {!selectedCourse ? (
-                <div className="py-6 text-center text-slate-500 text-xs font-bold">Select a course to continue.</div>
-              ) : (
-                <div className="text-sm text-slate-600 dark:text-slate-300">
-                  {selectedAssignment
-                    ? (
-                      <>
-                        Selected: <span className="font-bold text-slate-800 dark:text-slate-100">{selectedAssignment.title}</span>
-                      </>
-                    )
-                    : (
-                      <>Next: pick an assignment on the next screen.</>
-                    )}
-                </div>
-              )}
-            </div>
+            <button
+              type="button"
+              onClick={handleStartGrading}
+              disabled={!canScan}
+              className="p-4 rounded-2xl bg-emerald-500 text-white text-left shadow-sm hover:bg-emerald-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <div className="text-[10px] font-black uppercase tracking-widest text-emerald-100">Step 3</div>
+              <div className="mt-1 text-base font-black">Scan student work</div>
+              <div className="text-sm text-emerald-50/90 mt-0.5">
+                Single or batch scan, then verify feedback
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPhase(AppPhase.AUDIT)}
+              disabled={pendingGrades <= 0}
+              className="p-4 rounded-2xl bg-indigo-600 text-white text-left shadow-sm hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <div className="text-[10px] font-black uppercase tracking-widest text-indigo-100">Step 4</div>
+              <div className="mt-1 text-base font-black">Review & sync</div>
+              <div className="text-sm text-indigo-50/90 mt-0.5">
+                Sync selected ({pendingGrades}) to Classroom
+              </div>
+            </button>
           </div>
 
-          {/* Step 3 */}
-          <div className="bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl p-4 shadow-sm">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="text-xs font-black uppercase tracking-widest text-slate-500">Step 3</div>
-                <h3 className="font-black text-slate-900 dark:text-white">Scan student work</h3>
-                <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">
-                  Choose single scan or batch scan multiple students. Then verify feedbacks + modify scores/feedback as needed.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={handleStartGrading}
-                disabled={!canScan}
-                className="px-4 py-3 rounded-xl bg-emerald-500 text-white font-black text-[13px] tracking-widest uppercase hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
-              >
-                Start scan <Camera className="inline w-4 h-4 ml-2" />
-              </button>
-            </div>
-          </div>
-
-          {/* Step 4 */}
-          <div className="bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl p-4 shadow-sm">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="text-xs font-black uppercase tracking-widest text-slate-500">Step 4</div>
-                <h3 className="font-black text-slate-900 dark:text-white">Review & sync</h3>
-                <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">
-                  Review selected scans, then sync to Google Classroom. Emails + Drive saving happen during sync.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setPhase(AppPhase.AUDIT)}
-                disabled={pendingGrades <= 0}
-                className="px-4 py-3 rounded-xl bg-indigo-600 text-white font-black text-[13px] tracking-widest uppercase hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
-              >
-                Review grades ({pendingGrades}) <CloudUpload className="inline w-4 h-4 ml-2" />
-              </button>
-            </div>
+          <div className="mt-auto grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => setPhase(AppPhase.RECORDS)}
+              disabled={atRiskStudents.length === 0}
+              className="p-3 rounded-2xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 text-left hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">At-risk</div>
+              <div className="text-lg font-black text-slate-900 dark:text-white">{atRiskStudents.length}</div>
+            </button>
+            <button
+              type="button"
+              onClick={() => setPhase(AppPhase.ROSTER_VIEW)}
+              className="p-3 rounded-2xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 text-left hover:opacity-90 transition-opacity"
+            >
+              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Students</div>
+              <div className="text-lg font-black text-slate-900 dark:text-white">{totalStudents}</div>
+            </button>
           </div>
         </div>
       </PageWrapper>
@@ -2846,6 +2728,90 @@ const App: React.FC = () => {
                 <PlusCircle className="w-6 h-6 shrink-0" />
                 <span className="text-sm font-semibold uppercase tracking-wide">Create Course</span>
               </button>
+            </div>
+          </div>
+        </div>
+      </PageWrapper>
+    );
+  };
+
+  const renderGradeCoursePicker = () => {
+    const pendingByCourseId: Record<string, number> = {};
+    gradedWorks.forEach(w => {
+      if (!w.courseId) return;
+      pendingByCourseId[w.courseId] = (pendingByCourseId[w.courseId] || 0) + 1;
+    });
+
+    const coursesFilteredForUI = dashboardResults.courses.filter((course) =>
+      courseSearch.trim()
+        ? course.name.toLowerCase().includes(courseSearch.toLowerCase())
+        : true
+    );
+    const coursesForPicker = showCourses ? coursesFilteredForUI : coursesFilteredForUI.slice(0, 8);
+
+    return (
+      <PageWrapper
+        headerTitle="Select course"
+        headerSubtitle={todayLabel || undefined}
+        isOnline={isOnline}
+        isDarkMode={isDarkMode}
+        setIsDarkMode={setIsDarkMode}
+        syncStatus={syncStatus}
+        onBack={() => setPhase(AppPhase.DASHBOARD)}
+      >
+        <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-hidden pb-24 pt-1">
+          <div className="bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl p-4 shadow-sm">
+            <input
+              type="search"
+              value={courseSearch}
+              onChange={(e) => setCourseSearch(e.target.value)}
+              placeholder="Search courses…"
+              className="w-full px-4 py-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-700/60 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 outline-none"
+            />
+            <div className="mt-3 flex items-center justify-between">
+              <div className="text-xs font-black uppercase tracking-widest text-slate-500">
+                {coursesFilteredForUI.length} course{coursesFilteredForUI.length === 1 ? '' : 's'}
+              </div>
+              <button
+                type="button"
+                className="text-[11px] font-semibold uppercase tracking-widest text-slate-600 dark:text-slate-300 hover:opacity-90"
+                onClick={() => setShowCourses(prev => !prev)}
+              >
+                {showCourses ? 'Show less' : 'Show all'}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 min-h-0 bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl shadow-sm overflow-hidden">
+            <div className="h-full overflow-y-auto custom-scrollbar p-2">
+              {coursesForPicker.length === 0 && (
+                <div className="py-10 text-center text-slate-500 text-sm font-bold">No courses match.</div>
+              )}
+              {coursesForPicker.map((course) => {
+                const active = selectedCourse?.id === course.id;
+                const pending = pendingByCourseId[course.id] || 0;
+                return (
+                  <button
+                    key={course.id}
+                    type="button"
+                    onClick={() => void selectCourse(course)}
+                    className={`w-full p-3 rounded-xl border flex items-center justify-between gap-3 text-left mb-2 ${
+                      active
+                        ? 'bg-indigo-50 dark:bg-indigo-900/30 border-indigo-400/60'
+                        : 'bg-white dark:bg-slate-800 border-slate-200/70 dark:border-slate-700/60 hover:opacity-90'
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <div className="font-black text-sm truncate text-slate-900 dark:text-white">{course.name}</div>
+                      <div className="text-xs text-slate-500 dark:text-slate-300 mt-0.5">
+                        {course.period}{course.source === 'local' ? ' · Local' : ''}
+                        {pending > 0 ? ` · ${pending} in queue` : ''}
+                      </div>
+                    </div>
+                    <ArrowRight className="w-4 h-4 text-slate-400 shrink-0" />
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -6054,6 +6020,7 @@ const App: React.FC = () => {
       {phase === AppPhase.PLAN && renderPlan()}
       {phase === AppPhase.SCHEDULE && renderSchedule()}
       {phase === AppPhase.DASHBOARD && renderDashboard()}
+      {phase === AppPhase.GRADE_COURSE_PICKER && renderGradeCoursePicker()}
       {phase === AppPhase.ROSTER_VIEW && renderRosterView()}
       {phase === 'COURSE_CREATION' && renderCourseCreation()}
       {phase === AppPhase.ASSIGNMENT_SELECT && renderAssignmentSelect()}
