@@ -2262,13 +2262,6 @@ const App: React.FC = () => {
         }}
       >
         <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-hidden pb-24 pt-1">
-          <div className="bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl p-4 shadow-sm">
-            <h2 className="text-lg font-black text-slate-900 dark:text-white">Grade</h2>
-            <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">
-              Course → Assignment → Scan → Review & Sync (Google Classroom).
-            </p>
-          </div>
-
           <div className="grid grid-cols-1 gap-3">
             <button
               type="button"
