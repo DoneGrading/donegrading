@@ -13,6 +13,11 @@ export type AnalyticsEvent =
   | 'scan_capture'
   | 'rubric_created'
   | 'lesson_generated'
+  | 'lesson_plan_print'
+  | 'lesson_plan_download_html'
+  | 'lesson_plan_share'
+  | 'lesson_plan_drive_save'
+  | 'lesson_plan_email_admin'
   | 'message_sent'
   | 'paywall_view'
   | 'subscription_start';

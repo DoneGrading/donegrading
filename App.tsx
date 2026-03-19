@@ -24,6 +24,10 @@ import {
   Calendar,
   Settings,
   Share2,
+  Printer,
+  Download,
+  CloudUpload,
+  Mail,
 } from 'lucide-react';
 import { AppPhase, GradingMode, Course, Assignment, Student, GradedWork, GradingResponse, GeometricData, SubscriptionStatus } from './types';
 import {
@@ -350,6 +354,199 @@ const uploadImageToDrive = async (token: string, base64Data: string, fileName: s
     throw new Error(`Drive Upload Error: ${err.error?.message}`);
   }
   return res.json();
+};
+
+const escapeHtml = (s: string) =>
+  (s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+type LessonPlanExportFields = {
+  planLessonTitle: string;
+  lessonTopic: string;
+  educatorName: string;
+  planStateRegion: string;
+  planGrade: string;
+  planSubject: string;
+  planDuration: number;
+  planUnit: string;
+  planVersion: string;
+  planObjective: string;
+  planStudentSuccessCriteria: string;
+  planPrepMaterials: string;
+  pinnedStandards: StandardItem[];
+  standardsQuery: string;
+  classProfile: string;
+  hookType: string;
+  hookContent: string;
+  directPoints: string;
+  guidedTemplate: string;
+  guidedNotes: string;
+  independentNotes: string;
+  cfuIdeas: string;
+  resourceCards: ResourceCard[];
+  resourceQuery: string;
+  exitTicketPrompt: string;
+  exitTicketQuestions: string[];
+  successCriteria: string[];
+  lessonResult: LessonScriptResult | null;
+  reflectionNote: string;
+};
+
+/** Full HTML document for Drive, download, print-as-tab, and email (body is escaped). */
+function buildLessonPlanHtmlDocument(f: LessonPlanExportFields, generatedAtIso: string): string {
+  const lessonTitle = f.planLessonTitle || f.lessonTopic || 'Lesson plan';
+  const metaRows: [string, string][] = [
+    ['State / standards', f.planStateRegion],
+    ['Grade', f.planGrade],
+    ['Subject', f.planSubject],
+    ['Duration', `${f.planDuration} minutes`],
+    ['Unit', f.planUnit || '—'],
+    ['Plan format', f.planVersion],
+  ];
+  if (f.classProfile.trim()) metaRows.push(['Class profile', f.classProfile.trim()]);
+
+  const standardsHtml =
+    f.pinnedStandards.length > 0
+      ? `<ul class="list">${f.pinnedStandards.map((s) => `<li><strong>${escapeHtml(s.code)}</strong> — ${escapeHtml(s.label)}</li>`).join('')}</ul>`
+      : `<p class="pre">${escapeHtml(f.standardsQuery.trim() || 'N/A')}</p>`;
+
+  const vocab = f.lessonResult?.vocabulary?.length
+    ? f.lessonResult.vocabulary.map((w) => escapeHtml(w)).join(', ')
+    : 'N/A';
+
+  const aiQs = f.lessonResult?.discussionQuestions?.length
+    ? `<ol class="list">${f.lessonResult.discussionQuestions.map((q) => `<li>${escapeHtml(q)}</li>`).join('')}</ol>`
+    : '';
+
+  const exitQs =
+    f.exitTicketQuestions.length > 0
+      ? `<ol class="list">${f.exitTicketQuestions.map((q) => `<li>${escapeHtml(q)}</li>`).join('')}</ol>`
+      : '<p class="muted">—</p>';
+
+  const successList =
+    f.successCriteria.length > 0
+      ? `<ol class="list">${f.successCriteria.map((s) => `<li>${escapeHtml(s)}</li>`).join('')}</ol>`
+      : '<p class="muted">—</p>';
+
+  const resources =
+    f.resourceCards.length > 0
+      ? `<ul class="list">${f.resourceCards.map((c) => `<li><strong>${escapeHtml(c.title)}</strong> <span class="muted">(${escapeHtml(c.source)})</span><br/><a href="${escapeHtml(c.url)}">${escapeHtml(c.url)}</a> — ${escapeHtml(c.blurb)}</li>`).join('')}</ul>`
+      : `<p class="pre">${escapeHtml(f.resourceQuery.trim() || 'N/A')}</p>`;
+
+  const section = (title: string, inner: string) =>
+    `<section class="block"><h2>${escapeHtml(title)}</h2>${inner}</section>`;
+
+  const pre = (text: string) => `<div class="pre">${escapeHtml(text.trim() || 'N/A')}</div>`;
+
+  const metaTable = `<table class="meta"><tbody>${metaRows
+    .map(([k, v]) => `<tr><th>${escapeHtml(k)}</th><td>${escapeHtml(v)}</td></tr>`)
+    .join('')}</tbody></table>`;
+
+  const bodyInner = [
+    `<header class="doc-header"><h1>${escapeHtml(lessonTitle)}</h1><p class="sub">${escapeHtml(f.educatorName || 'Educator')} · ${escapeHtml(
+      new Date(generatedAtIso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }),
+    )}</p></header>`,
+    metaTable,
+    section('Learning objective (I can…)', pre(f.planObjective)),
+    section('Student success criteria', pre(f.planStudentSuccessCriteria)),
+    section('Prep / materials / tools', pre(f.planPrepMaterials)),
+    section('Standards', standardsHtml),
+    section('Do now / hook', `<p class="tag">${escapeHtml(f.hookType)}</p>${pre(f.hookContent)}`),
+    section('Direct instruction (I do)', pre(f.directPoints)),
+    section('Discussion structure', `<p class="pre">${escapeHtml(f.guidedTemplate)}</p>`),
+    section('Guided practice (We do)', pre(f.guidedNotes)),
+    section('Independent practice (You do)', pre(f.independentNotes)),
+    section('Checks for understanding (CFU)', pre(f.cfuIdeas)),
+    section(
+      'Assessment — exit ticket',
+      `<p><strong>Prompt:</strong> ${escapeHtml(f.exitTicketPrompt.trim() || 'N/A')}</p><h3>Questions</h3>${exitQs}<h3>Success criteria</h3>${successList}`,
+    ),
+    section('Vocabulary', `<p>${vocab}</p>`),
+    section('Discussion questions (AI draft)', aiQs || '<p class="muted">—</p>'),
+    section('Resource links', resources),
+    section('Reflection / notes', pre(f.reflectionNote)),
+    `<footer class="foot">Created with <strong>DoneGrading</strong> · ${escapeHtml(generatedAtIso)}</footer>`,
+  ].join('\n');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>${escapeHtml(lessonTitle)} — Lesson plan</title>
+  <style>
+    :root { --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; --bg:#f8fafc; --card:#fff; }
+    * { box-sizing: border-box; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 24px; color: var(--ink); background: var(--bg); line-height: 1.5; }
+    .wrap { max-width: 800px; margin: 0 auto; background: var(--card); padding: 32px 36px; border-radius: 16px; border: 1px solid var(--line); box-shadow: 0 4px 24px rgba(15,23,42,0.06); }
+    .doc-header h1 { margin: 0 0 8px; font-size: 1.65rem; letter-spacing: -0.02em; }
+    .sub { margin: 0; color: var(--muted); font-size: 0.9rem; }
+    .meta { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 0.88rem; }
+    .meta th, .meta td { text-align: left; padding: 8px 12px; border: 1px solid var(--line); vertical-align: top; }
+    .meta th { width: 34%; background: #f1f5f9; color: #334155; font-weight: 600; }
+    .block { margin-top: 28px; page-break-inside: avoid; }
+    .block h2 { margin: 0 0 10px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); font-weight: 800; }
+    .block h3 { margin: 16px 0 8px; font-size: 0.85rem; color: #334155; }
+    .pre { white-space: pre-wrap; word-break: break-word; background: #f8fafc; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font-size: 0.92rem; margin: 0; }
+    .tag { display: inline-block; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #0369a1; background: #e0f2fe; padding: 4px 10px; border-radius: 999px; margin-bottom: 8px; }
+    .list { margin: 0; padding-left: 1.2rem; }
+    .list li { margin: 6px 0; }
+    .muted { color: var(--muted); }
+    .foot { margin-top: 36px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 0.8rem; color: var(--muted); text-align: center; }
+    a { color: #2563eb; word-break: break-all; }
+    @media print {
+      body { background: #fff; padding: 0; }
+      .wrap { box-shadow: none; border: none; border-radius: 0; max-width: none; padding: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    ${bodyInner}
+  </div>
+</body>
+</html>`;
+}
+
+const uploadTextFileToDrive = async (
+  token: string,
+  textContent: string,
+  fileName: string,
+  folderId: string,
+  mimeType: 'text/html' | 'text/plain' = 'text/html',
+) => {
+  const boundary = '-------314159265358979323847';
+  const delimiter = `\r\n--${boundary}\r\n`;
+  const closeDelim = `\r\n--${boundary}--`;
+  const metadata = JSON.stringify({
+    name: fileName,
+    parents: [folderId],
+    mimeType,
+  });
+  const multipartRequestBody =
+    `${delimiter}Content-Type: application/json; charset=UTF-8\r\n\r\n${metadata}${delimiter}Content-Type: ${mimeType}; charset=UTF-8\r\n\r\n${textContent}${closeDelim}`;
+
+  const res = await fetch(
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink,mimeType',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': `multipart/related; boundary=${boundary}`,
+      },
+      body: multipartRequestBody,
+    },
+  );
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(`Drive Upload Error: ${(err as { error?: { message?: string } }).error?.message || res.statusText}`);
+  }
+  return res.json() as Promise<{ id?: string; webViewLink?: string }>;
 };
 
 // --- MAIN APP COMPONENT ---
@@ -730,6 +927,7 @@ const App: React.FC = () => {
   // Plan tab (The Architect)
   const PLAN_STATE_KEY = 'dg_plan_state_v1';
   const PLAN_US_STATE_KEY = 'dg_plan_us_state';
+  const PLAN_ADMIN_EMAIL_KEY = 'dg_plan_admin_email';
   const FILE_VAULT_KEY = 'dg_file_vault_links';
 
   const persistedPlan = (() => {
@@ -744,8 +942,15 @@ const App: React.FC = () => {
   const [lessonResult, setLessonResult] = useState<LessonScriptResult | null>(null);
   const [lessonLoading, setLessonLoading] = useState(false);
   const [planAiError, setPlanAiError] = useState<string | null>(null);
-  const [, setPlanActionLoading] = useState<null | 'share'>(null);
+  const [planActionLoading, setPlanActionLoading] = useState<'share' | 'drive' | 'email' | null>(null);
   const [planActionMessage, setPlanActionMessage] = useState<string | null>(null);
+  const [planAdminEmail, setPlanAdminEmail] = useState<string>(() => {
+    try {
+      return localStorage.getItem(PLAN_ADMIN_EMAIL_KEY) || '';
+    } catch {
+      return '';
+    }
+  });
   const [, setDiffLevel] = useState<'simplified' | 'advanced' | null>(null);
   const [differentiationText, setDifferentiationText] = useState('');
   const [diffLoading, setDiffLoading] = useState(false);
@@ -1006,6 +1211,13 @@ const App: React.FC = () => {
   }, [scheduleView]);
   useEffect(() => { try { localStorage.setItem(FILE_VAULT_KEY, JSON.stringify(fileVaultLinks)); } catch { /* ignore */ } }, [fileVaultLinks, FILE_VAULT_KEY]);
   useEffect(() => {
+    try {
+      localStorage.setItem(PLAN_ADMIN_EMAIL_KEY, planAdminEmail);
+    } catch {
+      /* ignore */
+    }
+  }, [planAdminEmail, PLAN_ADMIN_EMAIL_KEY]);
+  useEffect(() => {
     // Lightweight autosave for the Plan tab so educators don't lose work.
     try {
       const payload = {
@@ -1035,6 +1247,7 @@ const App: React.FC = () => {
         exitTicketQuestions,
         successCriteria,
         reflectionNote,
+        resourceCards,
       };
       localStorage.setItem(PLAN_STATE_KEY, JSON.stringify(payload));
       localStorage.setItem(PLAN_US_STATE_KEY, planStateRegion);
@@ -1071,6 +1284,7 @@ const App: React.FC = () => {
     exitTicketQuestions,
     successCriteria,
     reflectionNote,
+    resourceCards,
   ]);
   useEffect(() => localStorage.setItem('dg_history', JSON.stringify(history)), [history]);
   useEffect(() => localStorage.setItem('dg_cache_courses', JSON.stringify(courses)), [courses]);
@@ -5255,6 +5469,7 @@ const App: React.FC = () => {
           exitTicketQuestions,
           successCriteria,
           reflectionNote,
+          resourceCards,
         };
         localStorage.setItem(PLAN_STATE_KEY, JSON.stringify(payload));
         localStorage.setItem(PLAN_US_STATE_KEY, planStateRegion);
@@ -5278,10 +5493,13 @@ const App: React.FC = () => {
         .trim() || (cfuIdeas ? `CFU checks:\n${cfuIdeas}` : 'N/A');
       return [
         `Lesson: ${planLessonTitle || lessonTopic || 'Untitled Lesson'}`,
+        `Unit: ${planUnit}`,
+        `Plan format: ${planVersion}`,
         `State: ${planStateRegion}`,
         `Grade: ${planGrade}`,
         `Subject: ${planSubject}`,
         `Duration: ${planDuration} mins`,
+        classProfile.trim() ? `Class profile: ${classProfile}` : '',
         '',
         'Learning objective (I can...)',
         planObjective || 'I can...',
@@ -5294,6 +5512,10 @@ const App: React.FC = () => {
         '',
         'Standards',
         standards || standardsQuery || 'N/A',
+        '',
+        'Do now / Hook',
+        `Hook type: ${hookType}`,
+        hookContent || 'N/A',
         '',
         'Direct Instruction',
         directPoints || 'N/A',
@@ -5321,22 +5543,187 @@ const App: React.FC = () => {
         'Discussion / CFU',
         discussion || 'N/A',
         '',
+        'Reflection / notes',
+        reflectionNote || 'N/A',
+        '',
         `Created by DoneGrading`,
-      ].filter(Boolean).join('\n');
+      ]
+        .filter(Boolean)
+        .join('\n');
     };
-    const handleEmailPlan = () => {
+
+    const getLessonPlanExportFields = (): LessonPlanExportFields => ({
+      planLessonTitle,
+      lessonTopic,
+      educatorName: educatorName || '',
+      planStateRegion,
+      planGrade,
+      planSubject,
+      planDuration,
+      planUnit,
+      planVersion,
+      planObjective,
+      planStudentSuccessCriteria,
+      planPrepMaterials,
+      pinnedStandards,
+      standardsQuery,
+      classProfile,
+      hookType,
+      hookContent,
+      directPoints,
+      guidedTemplate,
+      guidedNotes,
+      independentNotes,
+      cfuIdeas,
+      resourceCards,
+      resourceQuery,
+      exitTicketPrompt,
+      exitTicketQuestions,
+      successCriteria,
+      lessonResult,
+      reflectionNote,
+    });
+
+    const handlePrintLessonPlan = () => {
+      handleSavePlanNow();
+      const html = buildLessonPlanHtmlDocument(getLessonPlanExportFields(), new Date().toISOString());
+      const w = window.open('', '_blank', 'noopener,noreferrer');
+      if (!w) {
+        setPlanActionMessage('Pop-up blocked. Allow pop-ups to print, or use Download HTML.');
+        return;
+      }
+      w.document.write(html);
+      w.document.close();
+      w.focus();
+      requestAnimationFrame(() => {
+        try {
+          w.print();
+        } catch {
+          setPlanActionMessage('Could not open print dialog.');
+        }
+      });
+      logEvent('lesson_plan_print');
+    };
+
+    const handleDownloadLessonPlanHtml = () => {
+      handleSavePlanNow();
+      const iso = new Date().toISOString().slice(0, 10);
+      const slug = (planLessonTitle || lessonTopic || 'lesson-plan')
+        .replace(/[^\w\s-]/g, '')
+        .trim()
+        .slice(0, 56)
+        .replace(/\s+/g, '-')
+        .toLowerCase();
+      const html = buildLessonPlanHtmlDocument(getLessonPlanExportFields(), new Date().toISOString());
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${slug || 'lesson-plan'}-${iso}.html`;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setPlanActionMessage('Lesson plan downloaded as HTML (open in any browser; use Print to PDF if needed).');
+      logEvent('lesson_plan_download_html');
+    };
+
+    const handleSaveLessonPlanToDrive = async () => {
+      if (!accessToken) {
+        setPlanActionMessage('Sign in with Google to save to Drive.');
+        return;
+      }
+      if (!isOnline) {
+        setPlanActionMessage('You are offline. Connect to save to Drive.');
+        return;
+      }
+      handleSavePlanNow();
+      setPlanActionLoading('drive');
+      setPlanActionMessage(null);
+      try {
+        const rootId = await getOrCreateDriveFolder(accessToken, 'DoneGrading Lesson Plans');
+        const iso = new Date().toISOString().slice(0, 10);
+        const slug = (planLessonTitle || lessonTopic || 'Lesson-plan')
+          .replace(/[^\w\s-]/g, '')
+          .trim()
+          .slice(0, 48)
+          .replace(/\s+/g, ' ');
+        const fileName = `${slug || 'Lesson plan'} — ${iso}.html`;
+        const html = buildLessonPlanHtmlDocument(getLessonPlanExportFields(), new Date().toISOString());
+        const meta = await uploadTextFileToDrive(accessToken, html, fileName, rootId, 'text/html');
+        const link = meta.webViewLink || `https://drive.google.com/file/d/${meta.id}/view`;
+        setPlanActionMessage(`Saved to Google Drive: ${fileName}. Open in Drive to view or share.`);
+        logEvent('lesson_plan_drive_save');
+        try {
+          window.open(link, '_blank', 'noopener,noreferrer');
+        } catch {
+          /* ignore */
+        }
+      } catch (e) {
+        setPlanActionMessage(e instanceof Error ? e.message : 'Could not save to Drive.');
+      } finally {
+        setPlanActionLoading(null);
+      }
+    };
+
+    const handleEmailPlanToAdmin = async () => {
+      const to = planAdminEmail.trim();
+      if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+        setPlanActionMessage('Add a valid admin email address below.');
+        return;
+      }
+      handleSavePlanNow();
+      const subject = `Lesson plan: ${planLessonTitle || lessonTopic || 'Lesson'}`;
+      const plain = buildPlanText();
+      const htmlDoc = buildLessonPlanHtmlDocument(getLessonPlanExportFields(), new Date().toISOString());
+
+      if (classroom && accessToken && isOnline) {
+        setPlanActionLoading('email');
+        setPlanActionMessage(null);
+        try {
+          await classroom.sendLessonPlanEmail(to, subject, plain, htmlDoc);
+          setPlanActionMessage(`Lesson plan emailed to ${to} via Gmail.`);
+          logEvent('lesson_plan_email_admin');
+        } catch (e) {
+          setPlanActionMessage(e instanceof Error ? e.message : 'Gmail send failed. Try “Open in email app” or check permissions.');
+        } finally {
+          setPlanActionLoading(null);
+        }
+        return;
+      }
+
+      const maxMailto = 1800;
+      if (plain.length > maxMailto) {
+        setPlanActionMessage(
+          `Plan is long for a mailto link. Sign in with Google to email the formatted plan via Gmail, or use Download HTML and attach it.`,
+        );
+        return;
+      }
+      const subj = encodeURIComponent(subject);
+      const body = encodeURIComponent(`${plain}\n\n— Sent from DoneGrading`);
+      window.location.href = `mailto:${encodeURIComponent(to)}?subject=${subj}&body=${body}`;
+      setPlanActionMessage('Opened your email app with the lesson plan (plain text).');
+      logEvent('lesson_plan_email_admin');
+    };
+
+    const handleOpenLessonPlanInEmailApp = () => {
+      const to = planAdminEmail.trim();
       const subject = encodeURIComponent(`Lesson Plan: ${planLessonTitle || 'Lesson'}`);
       const body = encodeURIComponent(`${buildPlanText()}\n\nCreated by DoneGrading`);
-      window.location.href = `mailto:?subject=${subject}&body=${body}`;
+      const q = `subject=${subject}&body=${body}`;
+      window.location.href = to ? `mailto:${encodeURIComponent(to)}?${q}` : `mailto:?${q}`;
     };
-    void handleEmailPlan;
+
     const handleSharePlan = async () => {
       const title = `Lesson Plan: ${planLessonTitle || 'Lesson'}`;
       const text = buildPlanText();
       try {
         setPlanActionLoading('share');
+        setPlanActionMessage(null);
         if (typeof navigator.share === 'function') {
           await navigator.share({ title, text });
+          logEvent('lesson_plan_share');
         } else {
           await navigator.clipboard.writeText(text);
           setPlanActionMessage('Lesson plan copied to clipboard.');
@@ -5347,7 +5734,6 @@ const App: React.FC = () => {
         setPlanActionLoading(null);
       }
     };
-    void handleSharePlan;
     const buildFallbackLesson = (topic: string): LessonScriptResult => ({
       outline: `1) Warm-up: Activate prior knowledge about ${topic}.\n2) Teach core concept with a short model and examples.\n3) Guided practice with think-pair-share checks.\n4) Independent task applying the concept.\n5) Exit ticket to verify mastery.`,
       vocabulary: [topic.split(' ')[0] || 'concept', 'evidence', 'analyze', 'apply', 'explain'],
@@ -5726,6 +6112,99 @@ const App: React.FC = () => {
                 {planActionMessage}
               </p>
             )}
+
+            <div className="rounded-xl border border-indigo-200/80 dark:border-indigo-800/80 bg-indigo-50/50 dark:bg-indigo-950/30 p-2.5 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[9px] font-black uppercase tracking-[0.18em] text-indigo-800 dark:text-indigo-200">
+                  Export &amp; share
+                </p>
+                <p className="text-[8px] text-indigo-600/90 dark:text-indigo-300/80 max-w-[55%] text-right leading-tight">
+                  Print, download HTML, Share sheet, Drive, or email your admin (Gmail when signed in with Google).
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => handlePrintLessonPlan()}
+                  className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-700 text-[10px] font-semibold text-indigo-900 dark:text-indigo-100 shadow-sm hover:bg-indigo-100/50 dark:hover:bg-indigo-900/40"
+                >
+                  <Printer className="w-3 h-3 shrink-0" />
+                  Print / PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDownloadLessonPlanHtml()}
+                  className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-700 text-[10px] font-semibold text-indigo-900 dark:text-indigo-100 shadow-sm hover:bg-indigo-100/50 dark:hover:bg-indigo-900/40"
+                >
+                  <Download className="w-3 h-3 shrink-0" />
+                  Download HTML
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleSharePlan()}
+                  disabled={planActionLoading !== null}
+                  className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-700 text-[10px] font-semibold text-indigo-900 dark:text-indigo-100 shadow-sm hover:bg-indigo-100/50 dark:hover:bg-indigo-900/40 disabled:opacity-50"
+                >
+                  {planActionLoading === 'share' ? (
+                    <Loader2 className="w-3 h-3 shrink-0 animate-spin" />
+                  ) : (
+                    <Share2 className="w-3 h-3 shrink-0" />
+                  )}
+                  Share
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleSaveLessonPlanToDrive()}
+                  disabled={planActionLoading !== null || !accessToken}
+                  title={!accessToken ? 'Sign in with Google to save to Drive' : 'Save formatted plan to Google Drive'}
+                  className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-indigo-600 text-white border border-indigo-700 text-[10px] font-semibold shadow-sm hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {planActionLoading === 'drive' ? (
+                    <Loader2 className="w-3 h-3 shrink-0 animate-spin" />
+                  ) : (
+                    <CloudUpload className="w-3 h-3 shrink-0" />
+                  )}
+                  Save to Drive
+                </button>
+              </div>
+              <div className="flex flex-col sm:flex-row sm:items-end gap-2 pt-0.5 border-t border-indigo-200/60 dark:border-indigo-800/60">
+                <div className="flex-1 min-w-0">
+                  <label className="text-[8px] font-bold uppercase tracking-widest text-indigo-700 dark:text-indigo-300 block mb-0.5">
+                    Admin email
+                  </label>
+                  <input
+                    type="email"
+                    value={planAdminEmail}
+                    onChange={(e) => setPlanAdminEmail(e.target.value)}
+                    placeholder="principal@school.org"
+                    className="w-full px-2 py-1.5 rounded-lg border border-indigo-200 dark:border-indigo-700 bg-white/95 dark:bg-slate-900/90 text-[11px] text-slate-800 dark:text-slate-100 outline-none focus:ring-2 focus:ring-indigo-400/40"
+                  />
+                </div>
+                <div className="flex flex-wrap gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => void handleEmailPlanToAdmin()}
+                    disabled={planActionLoading !== null}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-[10px] font-bold disabled:opacity-50"
+                  >
+                    {planActionLoading === 'email' ? (
+                      <Loader2 className="w-3 h-3 shrink-0 animate-spin" />
+                    ) : (
+                      <Mail className="w-3 h-3 shrink-0" />
+                    )}
+                    Email admin
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenLessonPlanInEmailApp()}
+                    className="px-2 py-1.5 rounded-lg border border-indigo-300 dark:border-indigo-600 text-[9px] font-semibold text-indigo-900 dark:text-indigo-100 bg-white/80 dark:bg-slate-900/60"
+                    title="Opens your default mail app (plain text)"
+                  >
+                    Email app…
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Single panel: only active step content, no page scroll */}

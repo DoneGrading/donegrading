@@ -360,4 +360,59 @@ ${mimeBody}`;
       throw new Error(`Email failed: ${errorMessage}`);
     }
   }
+
+  /**
+   * Send a formatted lesson plan (HTML + plain-text alternative) via Gmail API.
+   * `fullHtmlDocument` must be a complete HTML document (caller escapes user content).
+   */
+  async sendLessonPlanEmail(toEmail: string, subject: string, plainText: string, fullHtmlDocument: string): Promise<void> {
+    if (!toEmail) return;
+
+    const textBody = plainText ?? "";
+    const altBoundary = "DONEGRADING-PLAN-ALT";
+
+    const mimeBody =
+`MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="${altBoundary}"
+
+--${altBoundary}
+Content-Type: text/plain; charset="UTF-8"
+
+${textBody}
+
+--${altBoundary}
+Content-Type: text/html; charset="UTF-8"
+
+${fullHtmlDocument}
+
+--${altBoundary}--`;
+
+    const fullMessage =
+`To: ${toEmail}
+Subject: ${subject}
+${mimeBody}`;
+
+    const base64Encoded = btoa(unescape(encodeURIComponent(fullMessage)));
+    const raw = base64Encoded.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+    const response = await fetch(`${GMAIL_BASE_URL}/users/me/messages/send`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ raw }),
+    });
+
+    if (!response.ok) {
+      let errorMessage = "Gmail API error";
+      try {
+        const err = await response.json();
+        errorMessage = err.error?.message || errorMessage;
+      } catch {
+        errorMessage = await response.text() || errorMessage;
+      }
+      throw new Error(`Email failed: ${errorMessage}`);
+    }
+  }
 }
