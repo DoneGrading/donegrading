@@ -682,7 +682,7 @@ const App: React.FC = () => {
     const v = persistedPlan?.version as PlanVersion | undefined;
     return v === 'Standard' || v === 'Sub Plan' || v === 'Period 2 (Advanced)' ? v : 'Standard';
   });
-  const [planTab, setPlanTab] = useState<'doNow' | 'iDo' | 'weDo' | 'youDo' | 'exit'>('doNow');
+  const [planTab, setPlanTab] = useState<'setup' | 'doNow' | 'iDo' | 'weDo' | 'youDo' | 'exit'>('setup');
   const [planContextOpen, setPlanContextOpen] = useState(false);
   const [planBlockTab, setPlanBlockTab] = useState<'A' | 'B' | 'C' | 'D'>('A');
   const [planBlockLocks, setPlanBlockLocks] = useState<Record<'A' | 'B' | 'C' | 'D', boolean>>({
@@ -709,6 +709,8 @@ const App: React.FC = () => {
     const v = persistedPlan?.duration;
     return typeof v === 'number' && Number.isFinite(v) ? v : 55;
   });
+  const [planObjective, setPlanObjective] = useState<string>(() => (persistedPlan?.planObjective as string) || '');
+  const [planPrepMaterials, setPlanPrepMaterials] = useState<string>(() => (persistedPlan?.planPrepMaterials as string) || '');
   const [standardsQuery, setStandardsQuery] = useState<string>(() => (persistedPlan?.standardsQuery as string) || '');
   const [standardsSuggestions, setStandardsSuggestions] = useState<StandardItem[]>([]);
   const [pinnedStandards, setPinnedStandards] = useState<StandardItem[]>(() => (persistedPlan?.pinnedStandards as StandardItem[]) || []);
@@ -924,6 +926,8 @@ const App: React.FC = () => {
         grade: planGrade,
         subject: planSubject,
         duration: planDuration,
+        planObjective,
+        planPrepMaterials,
         standardsQuery,
         pinnedStandards,
         classProfile,
@@ -957,6 +961,8 @@ const App: React.FC = () => {
     planGrade,
     planSubject,
     planDuration,
+    planObjective,
+    planPrepMaterials,
     standardsQuery,
     pinnedStandards,
     classProfile,
@@ -4933,6 +4939,73 @@ const App: React.FC = () => {
         : `Saved ${planLastSaved.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 
     const effectiveTopic = lessonTopic || planLessonTitle || 'Your lesson topic';
+    const draftObjectiveIfEmpty = () => {
+      if (planObjective.trim()) return;
+      const base = planLessonTitle || lessonTopic || effectiveTopic;
+      setPlanObjective(`I can explain ${base} and use evidence + key vocabulary to answer questions.`);
+    };
+    const draftPrepList = () => {
+      const base = planLessonTitle || lessonTopic || effectiveTopic;
+      const supports: string[] = [];
+      if (/ELL|ESL|ELLs|ELL\/ESL/i.test(classProfile)) supports.push('ELL supports: word bank + sentence frames');
+      if (/ADHD/i.test(classProfile)) supports.push('ADHD supports: visual timer + movement break at transitions');
+      if (/IEP|504/i.test(classProfile)) supports.push('IEP/504 supports: chunked directions + frequent check-ins');
+      if (/Dyslexia/i.test(classProfile)) supports.push('Dyslexia supports: reduced clutter + larger text + optional audio');
+      if (/Autism/i.test(classProfile)) supports.push('Autism supports: clear routine, explicit expectations, example/non-example');
+
+      const differentiationLine = supports.length ? `Differentiation/provides:\n- ${supports.join('\n- ')}` : '';
+      const suggestion = [
+        'Prep list (before class):',
+        `- Board/slide plan for “${base}” (agenda + 1 worked example)`,
+        '- Do now prompt (1–3 minutes) + quick check (thumbs / show hands)',
+        '- I do worked example steps (model + think-aloud)',
+        '- We do guided practice set (partner talk + a CFU after each example)',
+        '- You do independent task directions + a clear success checklist',
+        '- Exit ticket (3 questions) + look-fors rubric',
+        differentiationLine || '- Differentiation supports (sentence frames, extra examples, and quick reteach prompts)',
+        '- Materials: markers, mini whiteboards (or scrap paper), handouts/notes, sticky notes',
+      ]
+        .filter(Boolean)
+        .join('\n');
+      setPlanPrepMaterials((prev) => {
+        if (!prev.trim()) return suggestion;
+        return `${prev}\n\n${suggestion}`;
+      });
+    };
+    const cfuPreview = (() => {
+      const lines = (cfuIdeas || '')
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean);
+      return lines.slice(-3).join('\n');
+    })();
+    const pacing = (() => {
+      const total = Number.isFinite(planDuration) && planDuration > 0 ? planDuration : 45;
+      let doNow = Math.max(3, Math.round(total * 0.15));
+      let iDo = Math.max(6, Math.round(total * 0.28));
+      let weDo = Math.max(6, Math.round(total * 0.27));
+      let youDo = Math.max(6, Math.round(total * 0.22));
+      let exit = Math.max(3, total - (doNow + iDo + weDo + youDo));
+
+      // If exit got pushed up by the minimum, trim from the largest block to keep total consistent.
+      const sum = doNow + iDo + weDo + youDo + exit;
+      if (sum !== total) {
+        const delta = sum - total;
+        const blocks: Array<[string, number, () => void]> = [
+          ['doNow', doNow, () => { doNow = Math.max(3, doNow - delta); }],
+          ['iDo', iDo, () => { iDo = Math.max(6, iDo - delta); }],
+          ['weDo', weDo, () => { weDo = Math.max(6, weDo - delta); }],
+          ['youDo', youDo, () => { youDo = Math.max(6, youDo - delta); }],
+          ['exit', exit, () => { exit = Math.max(3, exit - delta); }],
+        ];
+        const largest = blocks.sort((a, b) => b[1] - a[1])[0];
+        if (largest) largest[2]();
+      }
+
+      // Setup time is “objective framing + success criteria mention” (teacher read before Do now).
+      const setup = Math.max(2, Math.round(total * 0.08));
+      return { setup, doNow, iDo, weDo, youDo, exit };
+    })();
     const handleSavePlanNow = () => {
       try {
         const payload = {
@@ -4944,6 +5017,8 @@ const App: React.FC = () => {
           grade: planGrade,
           subject: planSubject,
           duration: planDuration,
+          planObjective,
+          planPrepMaterials,
           standardsQuery,
           pinnedStandards,
           classProfile,
@@ -4970,13 +5045,28 @@ const App: React.FC = () => {
     const buildPlanText = () => {
       const standards = pinnedStandards.map((s) => `${s.code}: ${s.label}`).join('\n');
       const vocab = lessonResult?.vocabulary?.join(', ') || '';
-      const discussion = lessonResult?.discussionQuestions?.map((q, i) => `${i + 1}. ${q}`).join('\n') || cfuIdeas;
+      const aiDiscussion =
+        lessonResult?.discussionQuestions?.map((q, i) => `${i + 1}. ${q}`).join('\n') || '';
+      const discussion = [
+        aiDiscussion ? aiDiscussion : '',
+        cfuIdeas ? `${aiDiscussion ? aiDiscussion + '\n' : ''}CFU checks:\n${cfuIdeas}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim() || (cfuIdeas ? `CFU checks:\n${cfuIdeas}` : 'N/A');
       return [
         `Lesson: ${planLessonTitle || lessonTopic || 'Untitled Lesson'}`,
         `State: ${planStateRegion}`,
         `Grade: ${planGrade}`,
         `Subject: ${planSubject}`,
         `Duration: ${planDuration} mins`,
+        '',
+        'Learning objective (I can...)',
+        planObjective || 'I can...',
+        '',
+        'Prep / Materials / Tools (before class)',
+        planPrepMaterials || 'N/A',
         '',
         'Standards',
         standards || standardsQuery || 'N/A',
@@ -4986,6 +5076,9 @@ const App: React.FC = () => {
         '',
         'Guided Practice',
         guidedNotes || 'N/A',
+        '',
+        'Discussion structure',
+        guidedTemplate || 'N/A',
         '',
         'Independent Practice',
         independentNotes || 'N/A',
@@ -5052,6 +5145,47 @@ const App: React.FC = () => {
       }
       setPlanAiError(null);
       setLessonLoading(true);
+      const draftObjectiveIfEmpty = () => {
+        if (planObjective.trim()) return;
+        const base = planLessonTitle || lessonTopic || topic;
+        const stdLabel = pinnedStandards[0]?.label?.trim();
+        if (stdLabel) {
+          const cleaned = stdLabel.replace(/\.$/, '');
+          setPlanObjective(
+            `I can explain what “${cleaned}” looks like in our lesson, using evidence and key vocabulary to answer questions.`,
+          );
+          return;
+        }
+        setPlanObjective(`I can explain ${base} and use evidence + key vocabulary to answer questions.`);
+      };
+      const draftPrepIfEmpty = () => {
+        if (planPrepMaterials.trim()) return;
+        const base = planLessonTitle || lessonTopic || topic;
+        const stdLabel = pinnedStandards[0]?.label?.trim();
+        const supports: string[] = [];
+        if (/ELL|ESL|ELLs|ELL\/ESL/i.test(classProfile)) supports.push('ELL supports: word bank + sentence frames');
+        if (/ADHD/i.test(classProfile)) supports.push('ADHD supports: visual timer + movement break at transitions');
+        if (/IEP|504/i.test(classProfile)) supports.push('IEP/504 supports: chunked directions + frequent check-ins');
+        if (/Dyslexia/i.test(classProfile)) supports.push('Dyslexia supports: reduced clutter + larger text + optional audio');
+        if (/Autism/i.test(classProfile)) supports.push('Autism supports: clear routine, explicit expectations, example/non-example');
+
+        const differentiationLine = supports.length ? `Differentiation/provides:\n- ${supports.join('\n- ')}` : '';
+        const stdTag = stdLabel ? ` (standard: ${stdLabel.replace(/\.$/, '')})` : '';
+        const suggestion = [
+          'Prep list (before class):',
+          `- Board/slide plan for “${base}”${stdTag} (agenda + 1 worked example)`,
+          '- Do now prompt (1–3 minutes) + quick check (thumbs / show hands)',
+          '- I do worked example steps (model + think-aloud)',
+          '- We do guided practice set (partner talk + a CFU after each example)',
+          '- You do independent task directions + a clear success checklist',
+          '- Exit ticket (3 questions) + look-fors rubric',
+          differentiationLine || '- Differentiation supports (sentence frames, extra examples, and quick reteach prompts)',
+          '- Materials: markers, mini whiteboards (or scrap paper), handouts/notes, sticky notes',
+        ]
+          .filter(Boolean)
+          .join('\n');
+        setPlanPrepMaterials(suggestion);
+      };
       try {
         let timedOut = false;
         const timeoutPromise = new Promise<null>((resolve) => {
@@ -5068,6 +5202,9 @@ const App: React.FC = () => {
           setCfuIdeas(fallback.discussionQuestions.join('\n'));
           setPlanAiError(null);
           setPlanActionMessage('AI timed out. Generated a template draft instead.');
+          draftObjectiveIfEmpty();
+          draftPrepIfEmpty();
+          setPlanTab('setup');
           return;
         }
         const finalRes = res || buildFallbackLesson(topic);
@@ -5091,7 +5228,9 @@ const App: React.FC = () => {
           const indep = outlineLines.find((l) => /independent|task|apply/i.test(l)) || `Independent practice: students apply the concept to a short task.`;
           setIndependentNotes(indep);
         }
-        setPlanTab('iDo');
+        draftObjectiveIfEmpty();
+        draftPrepIfEmpty();
+        setPlanTab('setup');
         if (!res) {
           setPlanActionMessage('AI unavailable. Generated a template draft instead.');
         }
@@ -5111,6 +5250,9 @@ const App: React.FC = () => {
         setCfuIdeas(fallback.discussionQuestions.join('\n'));
         setPlanAiError(null);
         setPlanActionMessage('AI failed unexpectedly. Generated a template draft instead.');
+        if (!planObjective.trim()) draftObjectiveIfEmpty();
+        if (!planPrepMaterials.trim()) draftPrepIfEmpty();
+        setPlanTab('setup');
       } finally {
         setLessonLoading(false);
       }
@@ -5235,6 +5377,7 @@ const App: React.FC = () => {
             <div className="flex items-center justify-between gap-2 mt-1">
               <div className="inline-flex rounded-full bg-slate-100 dark:bg-slate-800 p-0.5 text-[10px]">
                 {([
+                    { id: 'setup', label: 'Objective' },
                   { id: 'doNow', label: 'Do now' },
                   { id: 'iDo', label: 'I do' },
                   { id: 'weDo', label: 'We do' },
@@ -5261,6 +5404,38 @@ const App: React.FC = () => {
                 Edit context
               </button>
             </div>
+              <div className="bg-sky-50/80 dark:bg-sky-900/20 border border-sky-200 dark:border-sky-700 rounded-xl p-2 mt-1">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[9px] font-black uppercase tracking-[0.18em] text-sky-800 dark:text-sky-100">
+                    Prep / Materials / Tools
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => draftPrepList()}
+                      className="px-2 py-1 rounded-lg bg-sky-600 text-white text-[10px] font-semibold"
+                    >
+                      Draft prep list
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  value={planPrepMaterials}
+                  onChange={(e) => setPlanPrepMaterials(e.target.value)}
+                  placeholder="What do you need to prepare before class? (board plan, examples, handouts, tools, differentiated supports...)"
+                  className="mt-1 w-full min-h-[64px] px-2.5 py-1.5 rounded-xl border border-sky-200 dark:border-sky-700 bg-white/95 dark:bg-slate-900/80 text-[11px] outline-none resize-none custom-scrollbar"
+                />
+                {cfuPreview && (
+                  <div className="mt-2">
+                    <p className="text-[9px] font-black uppercase tracking-widest text-sky-800 dark:text-sky-100">
+                      CFU preview
+                    </p>
+                    <pre className="mt-1 w-full max-h-24 overflow-y-auto whitespace-pre-wrap text-[10px] leading-[1.25] px-2 py-1.5 rounded-xl border border-sky-200 dark:border-sky-700 bg-white/60 dark:bg-slate-900/40 custom-scrollbar">
+                      {cfuPreview}
+                    </pre>
+                  </div>
+                )}
+              </div>
             {planAiError && (
               <p className="text-[9px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded px-2 py-1">
                 {planAiError}
@@ -5575,13 +5750,55 @@ const App: React.FC = () => {
                   Grade {planGrade || '?'} · {planSubject || 'Subject'} · {planDuration || 45} min · {planStateRegion}
                 </p>
                 <p className="text-[10px] text-slate-600 dark:text-slate-300 mt-1">
-                  Follow the simple flow: Do now → I do → We do → You do → Exit ticket.
+                  Follow the complete flow: Objective → Do now → I do → We do → You do → Exit ticket.
                 </p>
               </section>
 
+              {planTab === 'setup' && (
+                <section className="bg-white/95 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-3">
+                  <p className={sectionTitle}>Step 0 · Objective (I can...) · {pacing.setup} min</p>
+                  <textarea
+                    value={planObjective}
+                    onChange={(e) => setPlanObjective(e.target.value)}
+                    placeholder="I can explain how __ works using evidence and key vocabulary."
+                    className="w-full min-h-[96px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
+                  />
+                  <div className="grid grid-cols-3 gap-2 text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() => draftObjectiveIfEmpty()}
+                      className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
+                    >
+                      Draft objective
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const std = pinnedStandards[0]?.label;
+                        if (!std) return;
+                        const label = std.trim().replace(/\.$/, '');
+                        const objective = `I can ${label.charAt(0).toLowerCase()}${label.slice(1)}`;
+                        setPlanObjective(objective);
+                      }}
+                      disabled={!pinnedStandards.length}
+                      className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100 disabled:opacity-40"
+                    >
+                      From first standard
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPlanObjective('')}
+                      className="px-2 py-1 rounded-lg border border-slate-200 bg-white/90 text-slate-700 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-200"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </section>
+              )}
+
               {planTab === 'doNow' && (
                 <section className="bg-white/95 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-3">
-                  <p className={sectionTitle}>Step 1 · Do now (warm‑up)</p>
+                  <p className={sectionTitle}>Step 1 · Do now (warm‑up) · {pacing.doNow} min</p>
                   <textarea
                     value={hookContent}
                     onChange={(e) => setHookContent(e.target.value)}
@@ -5615,7 +5832,7 @@ const App: React.FC = () => {
                       type="button"
                       onClick={() =>
                         setCfuIdeas((prev) =>
-                          `${prev || ''}${prev ? '\n' : ''}CFU: thumb check after Do now (👍 / 👎 / ✋).`,
+                          `${prev || ''}${prev ? '\n' : ''}After Do now: thumb check (👍 / 👎 / ✋).`,
                         )
                       }
                       className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
@@ -5628,7 +5845,7 @@ const App: React.FC = () => {
 
               {planTab === 'iDo' && (
                 <section className="bg-white/95 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-3">
-                  <p className={sectionTitle}>Step 2 · I do (direct instruction)</p>
+                  <p className={sectionTitle}>Step 2 · I do (direct instruction) · {pacing.iDo} min</p>
                   <textarea
                     value={directPoints}
                     onChange={(e) => setDirectPoints(e.target.value)}
@@ -5654,13 +5871,13 @@ const App: React.FC = () => {
                       }
                       className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
                     >
-                      Differentiate
+                      Socratic Seminar
                     </button>
                     <button
                       type="button"
                       onClick={() =>
                         setCfuIdeas((prev) =>
-                          `${prev || ''}${prev ? '\n' : ''}CFU: cold‑call 3 students to restate the step in their own words.`,
+                          `${prev || ''}${prev ? '\n' : ''}After I do: cold-call 3 students to restate the step in their own words.`,
                         )
                       }
                       className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
@@ -5668,12 +5885,18 @@ const App: React.FC = () => {
                       Check for understanding
                     </button>
                   </div>
+                  <div className="mt-1 flex items-center gap-2 text-[10px]">
+                    <span className="font-semibold text-slate-600 dark:text-slate-300">Discussion structure:</span>
+                    <span className="px-2 py-0.5 rounded-full border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100">
+                      {guidedTemplate}
+                    </span>
+                  </div>
                 </section>
               )}
 
               {planTab === 'weDo' && (
                 <section className="bg-white/95 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-3">
-                  <p className={sectionTitle}>Step 3 · We do (guided practice)</p>
+                  <p className={sectionTitle}>Step 3 · We do (guided practice) · {pacing.weDo} min</p>
                   <textarea
                     value={guidedNotes}
                     onChange={(e) => setGuidedNotes(e.target.value)}
@@ -5699,13 +5922,13 @@ const App: React.FC = () => {
                       }
                       className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
                     >
-                      Differentiate
+                      Jigsaw
                     </button>
                     <button
                       type="button"
                       onClick={() =>
                         setCfuIdeas((prev) =>
-                          `${prev || ''}${prev ? '\n' : ''}CFU: after each example, quick show of hands or mini whiteboard check.`,
+                          `${prev || ''}${prev ? '\n' : ''}After We do: quick show of hands / mini-whiteboard check after each example.`,
                         )
                       }
                       className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
@@ -5713,12 +5936,18 @@ const App: React.FC = () => {
                       Check for understanding
                     </button>
                   </div>
+                  <div className="mt-1 flex items-center gap-2 text-[10px]">
+                    <span className="font-semibold text-slate-600 dark:text-slate-300">Discussion structure:</span>
+                    <span className="px-2 py-0.5 rounded-full border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100">
+                      {guidedTemplate}
+                    </span>
+                  </div>
                 </section>
               )}
 
               {planTab === 'youDo' && (
                 <section className="bg-white/95 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-3">
-                  <p className={sectionTitle}>Step 4 · You do (independent practice)</p>
+                  <p className={sectionTitle}>Step 4 · You do (independent practice) · {pacing.youDo} min</p>
                   <textarea
                     value={independentNotes}
                     onChange={(e) => setIndependentNotes(e.target.value)}
@@ -5744,13 +5973,13 @@ const App: React.FC = () => {
                       }
                       className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
                     >
-                      Differentiate
+                      Think-Pair-Share
                     </button>
                     <button
                       type="button"
                       onClick={() =>
                         setCfuIdeas((prev) =>
-                          `${prev || ''}${prev ? '\n' : ''}CFU: circulate with a quick 1‑sentence conference at 3–5 desks.`,
+                          `${prev || ''}${prev ? '\n' : ''}After You do: 1-sentence conference at 3–5 desks.`,
                         )
                       }
                       className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
@@ -5758,12 +5987,18 @@ const App: React.FC = () => {
                       Check for understanding
                     </button>
                   </div>
+                  <div className="mt-1 flex items-center gap-2 text-[10px]">
+                    <span className="font-semibold text-slate-600 dark:text-slate-300">Discussion structure:</span>
+                    <span className="px-2 py-0.5 rounded-full border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100">
+                      {guidedTemplate}
+                    </span>
+                  </div>
                 </section>
               )}
 
               {planTab === 'exit' && (
                 <section className="bg-white/95 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-3">
-                  <p className={sectionTitle}>Step 5 · Exit ticket & look‑fors</p>
+                  <p className={sectionTitle}>Step 5 · Exit ticket & look‑fors · {pacing.exit} min</p>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div className="space-y-1.5">
                       <label className={label}>Exit ticket prompt</label>
