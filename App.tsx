@@ -33,7 +33,9 @@ import {
   extractRubricFromImage,
   generateRubric,
   generateLessonScript,
+  generateLessonPartChoices,
   generateDifferentiatedLesson,
+  type LessonPartKey,
   type LessonScriptResult,
 } from './services/geminiService';
 import { scheduleReminderNotification } from './lib/notifications';
@@ -711,10 +713,19 @@ const App: React.FC = () => {
   });
   const [planObjective, setPlanObjective] = useState<string>(() => (persistedPlan?.planObjective as string) || '');
   const [planPrepMaterials, setPlanPrepMaterials] = useState<string>(() => (persistedPlan?.planPrepMaterials as string) || '');
+  const [planStudentSuccessCriteria, setPlanStudentSuccessCriteria] = useState<string>(() => (persistedPlan?.planStudentSuccessCriteria as string) || '');
   const [standardsQuery, setStandardsQuery] = useState<string>(() => (persistedPlan?.standardsQuery as string) || '');
   const [standardsSuggestions, setStandardsSuggestions] = useState<StandardItem[]>([]);
   const [pinnedStandards, setPinnedStandards] = useState<StandardItem[]>(() => (persistedPlan?.pinnedStandards as StandardItem[]) || []);
   const [classProfile, setClassProfile] = useState<string>(() => (persistedPlan?.classProfile as string) || '');
+  const [objectiveGenLoadingPart, setObjectiveGenLoadingPart] = useState<LessonPartKey | null>(null);
+  const [objectiveGenError, setObjectiveGenError] = useState<string | null>(null);
+  const [doNowObjectiveChoices, setDoNowObjectiveChoices] = useState<string[]>([]);
+  const [iDoObjectiveChoices, setIDoObjectiveChoices] = useState<string[]>([]);
+  const [weDoObjectiveChoices, setWeDoObjectiveChoices] = useState<string[]>([]);
+  const [youDoObjectiveChoices, setYouDoObjectiveChoices] = useState<string[]>([]);
+  const [exitTicketObjectiveChoices, setExitTicketObjectiveChoices] = useState<string[]>([]);
+
   const [safetyStatus, setSafetyStatus] = useState<'idle' | 'scanning' | 'done' | 'error'>('idle');
   const [safetyFindings, setSafetyFindings] = useState<string | null>(null);
 
@@ -741,6 +752,8 @@ const App: React.FC = () => {
   const [exitTicketQuestions, setExitTicketQuestions] = useState<string[]>(() => (persistedPlan?.exitTicketQuestions as string[]) || []);
   const [successCriteria, setSuccessCriteria] = useState<string[]>(() => (persistedPlan?.successCriteria as string[]) || []);
   const [reflectionNote, setReflectionNote] = useState<string>(() => (persistedPlan?.reflectionNote as string) || '');
+
+  // Objective-based generation choices are tracked per part below.
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -928,6 +941,7 @@ const App: React.FC = () => {
         duration: planDuration,
         planObjective,
         planPrepMaterials,
+        planStudentSuccessCriteria,
         standardsQuery,
         pinnedStandards,
         classProfile,
@@ -963,6 +977,7 @@ const App: React.FC = () => {
     planDuration,
     planObjective,
     planPrepMaterials,
+    planStudentSuccessCriteria,
     standardsQuery,
     pinnedStandards,
     classProfile,
@@ -4972,6 +4987,42 @@ const App: React.FC = () => {
         return `${prev}\n\n${suggestion}`;
       });
     };
+
+    const handleGenerateObjectiveChoices = async (part: LessonPartKey) => {
+      const obj = planObjective.trim();
+      if (!obj) {
+        setObjectiveGenError('Write a learning objective first (Step 0).');
+        return;
+      }
+      setObjectiveGenError(null);
+      setObjectiveGenLoadingPart(part);
+
+      try {
+        const topic = planLessonTitle || lessonTopic || planSubject;
+        const choices = await generateLessonPartChoices({
+          objective: obj,
+          part,
+          grade: planGrade,
+          subject: planSubject,
+          topic,
+        });
+
+        if (!choices || !choices.length) {
+          setObjectiveGenError('Could not generate options from the objective. Try again.');
+          return;
+        }
+
+        if (part === 'doNow') setDoNowObjectiveChoices(choices);
+        if (part === 'iDo') setIDoObjectiveChoices(choices);
+        if (part === 'weDo') setWeDoObjectiveChoices(choices);
+        if (part === 'youDo') setYouDoObjectiveChoices(choices);
+        if (part === 'exitTicket') setExitTicketObjectiveChoices(choices);
+      } catch {
+        setObjectiveGenError('Something went wrong while generating options.');
+      } finally {
+        setObjectiveGenLoadingPart(null);
+      }
+    };
     const cfuPreview = (() => {
       const lines = (cfuIdeas || '')
         .split('\n')
@@ -5019,6 +5070,7 @@ const App: React.FC = () => {
           duration: planDuration,
           planObjective,
           planPrepMaterials,
+          planStudentSuccessCriteria,
           standardsQuery,
           pinnedStandards,
           classProfile,
@@ -5064,6 +5116,9 @@ const App: React.FC = () => {
         '',
         'Learning objective (I can...)',
         planObjective || 'I can...',
+        '',
+        'Student success criteria (share with students)',
+        planStudentSuccessCriteria || 'You know you are successful when ...',
         '',
         'Prep / Materials / Tools (before class)',
         planPrepMaterials || 'N/A',
@@ -5763,6 +5818,41 @@ const App: React.FC = () => {
                     placeholder="I can explain how __ works using evidence and key vocabulary."
                     className="w-full min-h-[96px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
                   />
+                  <div className="space-y-2">
+                    <label className={label}>Success criteria (for students)</label>
+                    <textarea
+                      value={planStudentSuccessCriteria}
+                      onChange={(e) => setPlanStudentSuccessCriteria(e.target.value)}
+                      placeholder="You know you are successful when you can ..."
+                      className="w-full min-h-[72px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
+                    />
+                    <div className="grid grid-cols-2 gap-2 text-[10px]">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const raw = planObjective.trim();
+                          const cleaned = raw
+                            ? raw.replace(/^I can\s*/i, '').replace(/\.$/, '').trim()
+                            : '';
+                          setPlanStudentSuccessCriteria(
+                            cleaned
+                              ? `You know you are successful when you can ${cleaned}.`
+                              : 'You know you are successful when you can explain the objective and use evidence.',
+                          );
+                        }}
+                        className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
+                      >
+                        Draft from objective
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPlanStudentSuccessCriteria('')}
+                        className="px-2 py-1 rounded-lg border border-slate-200 bg-white/90 text-slate-700 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-200"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
                   <div className="grid grid-cols-3 gap-2 text-[10px]">
                     <button
                       type="button"
@@ -5799,6 +5889,51 @@ const App: React.FC = () => {
               {planTab === 'doNow' && (
                 <section className="bg-white/95 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-3">
                   <p className={sectionTitle}>Step 1 · Do now (warm‑up) · {pacing.doNow} min</p>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleGenerateObjectiveChoices('doNow')}
+                        disabled={objectiveGenLoadingPart !== null || !planObjective.trim()}
+                        className="px-2 py-1 rounded-lg bg-sky-600 text-white text-[10px] font-semibold disabled:opacity-60"
+                      >
+                        {objectiveGenLoadingPart === 'doNow' ? 'Generating…' : 'Generate Do Now options'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDoNowObjectiveChoices([])}
+                        disabled={!doNowObjectiveChoices.length}
+                        className="px-2 py-1 rounded-lg border border-slate-200 bg-white/70 text-slate-700 text-[10px] font-semibold disabled:opacity-40"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                    {objectiveGenError && (
+                      <p className="text-[9px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded px-2 py-1">
+                        {objectiveGenError}
+                      </p>
+                    )}
+                    {doNowObjectiveChoices.length > 0 && (
+                      <div className="grid gap-2">
+                        {doNowObjectiveChoices.map((opt, idx) => (
+                          <button
+                            type="button"
+                            key={`${opt}-${idx}`}
+                            onClick={() => {
+                              setHookContent(opt);
+                              setDoNowObjectiveChoices([]);
+                            }}
+                            className="text-left px-2 py-1.5 rounded-xl border border-sky-200 bg-sky-50/60 dark:bg-sky-900/20 text-sky-900 dark:text-sky-100"
+                          >
+                            <p className="text-[10px] font-black uppercase tracking-[0.12em] mb-0.5">
+                              Option {idx + 1}
+                            </p>
+                            <p className="text-[11px] whitespace-pre-wrap">{opt}</p>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <textarea
                     value={hookContent}
                     onChange={(e) => setHookContent(e.target.value)}
@@ -5846,6 +5981,51 @@ const App: React.FC = () => {
               {planTab === 'iDo' && (
                 <section className="bg-white/95 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-3">
                   <p className={sectionTitle}>Step 2 · I do (direct instruction) · {pacing.iDo} min</p>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleGenerateObjectiveChoices('iDo')}
+                        disabled={objectiveGenLoadingPart !== null || !planObjective.trim()}
+                        className="px-2 py-1 rounded-lg bg-sky-600 text-white text-[10px] font-semibold disabled:opacity-60"
+                      >
+                        {objectiveGenLoadingPart === 'iDo' ? 'Generating…' : 'Generate I do options'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIDoObjectiveChoices([])}
+                        disabled={!iDoObjectiveChoices.length}
+                        className="px-2 py-1 rounded-lg border border-slate-200 bg-white/70 text-slate-700 text-[10px] font-semibold disabled:opacity-40"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                    {objectiveGenError && (
+                      <p className="text-[9px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded px-2 py-1">
+                        {objectiveGenError}
+                      </p>
+                    )}
+                    {iDoObjectiveChoices.length > 0 && (
+                      <div className="grid gap-2">
+                        {iDoObjectiveChoices.map((opt, idx) => (
+                          <button
+                            type="button"
+                            key={`${opt}-${idx}`}
+                            onClick={() => {
+                              setDirectPoints(opt);
+                              setIDoObjectiveChoices([]);
+                            }}
+                            className="text-left px-2 py-1.5 rounded-xl border border-sky-200 bg-sky-50/60 dark:bg-sky-900/20 text-sky-900 dark:text-sky-100"
+                          >
+                            <p className="text-[10px] font-black uppercase tracking-[0.12em] mb-0.5">
+                              Option {idx + 1}
+                            </p>
+                            <p className="text-[11px] whitespace-pre-wrap">{opt}</p>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <textarea
                     value={directPoints}
                     onChange={(e) => setDirectPoints(e.target.value)}
@@ -5897,6 +6077,51 @@ const App: React.FC = () => {
               {planTab === 'weDo' && (
                 <section className="bg-white/95 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-3">
                   <p className={sectionTitle}>Step 3 · We do (guided practice) · {pacing.weDo} min</p>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleGenerateObjectiveChoices('weDo')}
+                        disabled={objectiveGenLoadingPart !== null || !planObjective.trim()}
+                        className="px-2 py-1 rounded-lg bg-sky-600 text-white text-[10px] font-semibold disabled:opacity-60"
+                      >
+                        {objectiveGenLoadingPart === 'weDo' ? 'Generating…' : 'Generate We do options'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setWeDoObjectiveChoices([])}
+                        disabled={!weDoObjectiveChoices.length}
+                        className="px-2 py-1 rounded-lg border border-slate-200 bg-white/70 text-slate-700 text-[10px] font-semibold disabled:opacity-40"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                    {objectiveGenError && (
+                      <p className="text-[9px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded px-2 py-1">
+                        {objectiveGenError}
+                      </p>
+                    )}
+                    {weDoObjectiveChoices.length > 0 && (
+                      <div className="grid gap-2">
+                        {weDoObjectiveChoices.map((opt, idx) => (
+                          <button
+                            type="button"
+                            key={`${opt}-${idx}`}
+                            onClick={() => {
+                              setGuidedNotes(opt);
+                              setWeDoObjectiveChoices([]);
+                            }}
+                            className="text-left px-2 py-1.5 rounded-xl border border-sky-200 bg-sky-50/60 dark:bg-sky-900/20 text-sky-900 dark:text-sky-100"
+                          >
+                            <p className="text-[10px] font-black uppercase tracking-[0.12em] mb-0.5">
+                              Option {idx + 1}
+                            </p>
+                            <p className="text-[11px] whitespace-pre-wrap">{opt}</p>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <textarea
                     value={guidedNotes}
                     onChange={(e) => setGuidedNotes(e.target.value)}
@@ -5948,6 +6173,51 @@ const App: React.FC = () => {
               {planTab === 'youDo' && (
                 <section className="bg-white/95 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-3">
                   <p className={sectionTitle}>Step 4 · You do (independent practice) · {pacing.youDo} min</p>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleGenerateObjectiveChoices('youDo')}
+                        disabled={objectiveGenLoadingPart !== null || !planObjective.trim()}
+                        className="px-2 py-1 rounded-lg bg-sky-600 text-white text-[10px] font-semibold disabled:opacity-60"
+                      >
+                        {objectiveGenLoadingPart === 'youDo' ? 'Generating…' : 'Generate You do options'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setYouDoObjectiveChoices([])}
+                        disabled={!youDoObjectiveChoices.length}
+                        className="px-2 py-1 rounded-lg border border-slate-200 bg-white/70 text-slate-700 text-[10px] font-semibold disabled:opacity-40"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                    {objectiveGenError && (
+                      <p className="text-[9px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded px-2 py-1">
+                        {objectiveGenError}
+                      </p>
+                    )}
+                    {youDoObjectiveChoices.length > 0 && (
+                      <div className="grid gap-2">
+                        {youDoObjectiveChoices.map((opt, idx) => (
+                          <button
+                            type="button"
+                            key={`${opt}-${idx}`}
+                            onClick={() => {
+                              setIndependentNotes(opt);
+                              setYouDoObjectiveChoices([]);
+                            }}
+                            className="text-left px-2 py-1.5 rounded-xl border border-sky-200 bg-sky-50/60 dark:bg-sky-900/20 text-sky-900 dark:text-sky-100"
+                          >
+                            <p className="text-[10px] font-black uppercase tracking-[0.12em] mb-0.5">
+                              Option {idx + 1}
+                            </p>
+                            <p className="text-[11px] whitespace-pre-wrap">{opt}</p>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <textarea
                     value={independentNotes}
                     onChange={(e) => setIndependentNotes(e.target.value)}
@@ -6001,6 +6271,52 @@ const App: React.FC = () => {
                   <p className={sectionTitle}>Step 5 · Exit ticket & look‑fors · {pacing.exit} min</p>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div className="space-y-1.5">
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void handleGenerateObjectiveChoices('exitTicket')}
+                            disabled={objectiveGenLoadingPart !== null || !planObjective.trim()}
+                            className="px-2 py-1 rounded-lg bg-sky-600 text-white text-[10px] font-semibold disabled:opacity-60"
+                          >
+                            {objectiveGenLoadingPart === 'exitTicket' ? 'Generating…' : 'Generate Exit ticket options'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setExitTicketObjectiveChoices([])}
+                            disabled={!exitTicketObjectiveChoices.length}
+                            className="px-2 py-1 rounded-lg border border-slate-200 bg-white/70 text-slate-700 text-[10px] font-semibold disabled:opacity-40"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                        {objectiveGenError && (
+                          <p className="text-[9px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded px-2 py-1">
+                            {objectiveGenError}
+                          </p>
+                        )}
+                        {exitTicketObjectiveChoices.length > 0 && (
+                          <div className="grid gap-2">
+                            {exitTicketObjectiveChoices.map((opt, idx) => (
+                              <button
+                                type="button"
+                                key={`${opt}-${idx}`}
+                                onClick={() => {
+                                  setExitTicketPrompt(opt);
+                                  setExitTicketQuestions([]);
+                                  setExitTicketObjectiveChoices([]);
+                                }}
+                                className="text-left px-2 py-1.5 rounded-xl border border-sky-200 bg-sky-50/60 dark:bg-sky-900/20 text-sky-900 dark:text-sky-100"
+                              >
+                                <p className="text-[10px] font-black uppercase tracking-[0.12em] mb-0.5">
+                                  Option {idx + 1}
+                                </p>
+                                <p className="text-[11px] whitespace-pre-wrap">{opt}</p>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                       <label className={label}>Exit ticket prompt</label>
                       <textarea
                         value={exitTicketPrompt}
@@ -6031,6 +6347,14 @@ const App: React.FC = () => {
                       )}
                     </div>
                     <div className="space-y-1.5">
+                      <div className="space-y-1">
+                        <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">
+                          Student success criteria
+                        </p>
+                        <p className="text-[11px] whitespace-pre-wrap text-slate-700 dark:text-slate-200">
+                          {planStudentSuccessCriteria || 'You know you are successful when ...'}
+                        </p>
+                      </div>
                       <label className={label}>Success criteria (look‑fors)</label>
                       <button
                         type="button"

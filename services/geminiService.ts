@@ -414,6 +414,8 @@ export interface LessonScriptResult {
   discussionQuestions: string[];
 }
 
+export type LessonPartKey = 'doNow' | 'iDo' | 'weDo' | 'youDo' | 'exitTicket';
+
 export const generateLessonScript = async (topic: string): Promise<LessonScriptResult | null> => {
   try {
     const apiKey = getApiKey();
@@ -453,6 +455,89 @@ Return ONLY valid JSON with exactly these keys (no markdown, no extra text):
     }
   } catch (e) {
     console.error("Lesson script error", e);
+    return null;
+  }
+};
+
+export const generateLessonPartChoices = async (
+  params: {
+    objective: string;
+    part: LessonPartKey;
+    grade: string;
+    subject: string;
+    topic?: string;
+  }
+): Promise<string[] | null> => {
+  try {
+    const apiKey = getApiKey();
+    if (!apiKey) return null;
+
+    const { objective, part, grade, subject, topic } = params;
+
+    const partGuidance: Record<LessonPartKey, string> = {
+      doNow:
+        "Create a 2–3 minute warm-up (Do Now) aligned to the objective. Provide text a teacher can paste into a student-facing or teacher-facing prompt.",
+      iDo:
+        "Create mini-lesson direct instruction text (I do). Provide concise step prompts a teacher can model/think-aloud.",
+      weDo:
+        "Create guided practice text (We do). Provide collaborative steps and quick check prompts.",
+      youDo:
+        "Create independent practice text (You do). Provide task directions and a success checklist sentence.",
+      exitTicket:
+        "Create an exit ticket prompt a teacher can paste. It should support checking the objective (3 quick prompts if possible, but keep as one prompt text).",
+    };
+
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `You are an expert K-12 curriculum designer.
+
+Objective (teacher-written learning target):
+"${objective}"
+
+Grade: ${grade}
+Subject: ${subject}
+${topic ? `Topic context: ${topic}` : ""}
+
+Task:
+Generate EXACTLY 3 distinct options for the lesson part: "${part}".
+
+Rules:
+- Return ONLY valid JSON.
+- JSON must have exactly one key: "choices"
+- "choices" must be an array of exactly 3 strings.
+- Each string must be concise, classroom-ready, and aligned to the objective.
+- Do NOT include markdown, code fences, or explanations.
+
+Part guidance:
+${partGuidance[part]}`,
+      config: {
+        thinkingConfig: { thinkingBudget: 0 },
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            choices: { type: Type.ARRAY, items: { type: Type.STRING } },
+          },
+          required: ["choices"],
+        },
+      },
+    });
+
+    const text = response.text || "{}";
+    try {
+      const parsed = JSON.parse(text) as { choices: string[] };
+      if (!Array.isArray(parsed.choices)) return null;
+      return parsed.choices.slice(0, 3);
+    } catch {
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return null;
+      const parsed = JSON.parse(jsonMatch[0]) as { choices: string[] };
+      if (!Array.isArray(parsed.choices)) return null;
+      return parsed.choices.slice(0, 3);
+    }
+  } catch (e) {
+    console.error("Lesson part choices generation error", e);
     return null;
   }
 };
