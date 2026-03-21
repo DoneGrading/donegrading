@@ -1,12 +1,21 @@
 /**
  * Shared UI design tokens for consistent buttons, cards, inputs, typography, and spacing.
  * Use these across App.tsx and CommunicationDashboard.tsx.
+ *
+ * Conventions:
+ * - Radius: rounded-lg = compact controls, rounded-xl = default cards/inputs, rounded-2xl = large panels
+ * - Surfaces: bg-white/85–95 + dark:bg-slate-900/80–90 + border-slate-200 dark:border-slate-700
+ * - Primary CTA: indigo-600 / indigo-500 (see btnPrimary + bg-* overrides)
  */
 
 // Cards & panels: one radius, padding, border, background
 export const card =
   'rounded-xl border border-slate-200 dark:border-slate-700 bg-white/85 dark:bg-slate-900/85 p-3 shadow-sm';
-export const cardTight = 'rounded-xl border border-slate-200 dark:border-slate-700 bg-white/85 dark:bg-slate-900/85 p-2 shadow-sm';
+export const cardTight =
+  'rounded-xl border border-slate-200 dark:border-slate-700 bg-white/85 dark:bg-slate-900/85 p-2 shadow-sm';
+/** Larger dashboard-style panel (matches common App.tsx blocks). */
+export const cardLarge =
+  'rounded-2xl border border-slate-200/70 dark:border-slate-700/60 bg-white/70 dark:bg-slate-800/55 p-4 shadow-sm';
 
 // Section / block titles
 export const sectionTitle =

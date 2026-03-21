@@ -1,23 +1,6 @@
 import React from 'react';
 import { ChevronRight, Check } from 'lucide-react';
-
-const ONBOARDING_KEY = 'dg_onboarding_done_v1';
-
-export function hasCompletedOnboarding(): boolean {
-  try {
-    return localStorage.getItem(ONBOARDING_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-export function setOnboardingComplete(): void {
-  try {
-    localStorage.setItem(ONBOARDING_KEY, '1');
-  } catch {
-    // ignore
-  }
-}
+import { setOnboardingComplete } from '../lib/onboardingGate';
 
 type OnboardingProps = {
   onComplete: () => void;
@@ -35,8 +18,7 @@ const STEPS = [
   },
   {
     title: 'Scan Student Work',
-    body:
-      'Point the device camera at your student work. DoneGrading will instantly grade it and provide a personalized feedback.',
+    body: 'Point the device camera at your student work. DoneGrading will instantly grade it and provide a personalized feedback.',
   },
 ];
 
@@ -55,19 +37,23 @@ export function Onboarding({ onComplete, onSkip }: OnboardingProps): React.React
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-950 p-6">
-      <div className="w-full max-w-sm flex flex-col items-center">
+    <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-950 pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] pl-[max(1rem,env(safe-area-inset-left,0px))] pr-[max(1rem,env(safe-area-inset-right,0px))]">
+      <div className="w-full max-w-full md:max-w-lg lg:max-w-xl flex flex-col items-center">
         <div className="flex flex-col items-center gap-5 mb-4">
           <img
             src="/DoneGradingLogo.png"
             alt="DoneGrading logo"
+            loading="lazy"
+            decoding="async"
             className="w-48 max-w-full drop-shadow-lg"
           />
         </div>
         <h2 className="text-lg font-black text-slate-800 dark:text-slate-100 text-center">
           {current?.title}
         </h2>
-        <p className="mt-2 text-sm text-slate-600 dark:text-slate-300 text-center">{current?.body}</p>
+        <p className="mt-2 text-sm text-slate-600 dark:text-slate-300 text-center">
+          {current?.body}
+        </p>
         <div className="flex gap-2 mt-6 w-full">
           <button
             type="button"

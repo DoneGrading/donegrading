@@ -15,10 +15,7 @@ const defaultRetryable = (error: unknown): boolean => {
  * Retry an async function with optional exponential backoff.
  * Retries on 5xx and 429 by default; use retryable to customize.
  */
-export async function withRetry<T>(
-  fn: () => Promise<T>,
-  options: RetryOptions = {}
-): Promise<T> {
+export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions = {}): Promise<T> {
   const {
     maxAttempts = 3,
     delayMs = 1000,

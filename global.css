@@ -4,18 +4,15 @@
 
 @layer base {
   html {
-    font-size: 17px;
+    /* Fluid type: scales with viewport (phone → tablet → desktop) */
+    font-size: clamp(15px, 0.35rem + 2.8vw, 20px);
     height: 100%;
     overflow: hidden;
+    -webkit-text-size-adjust: 100%;
   }
   @supports (height: 100dvh) {
     html {
       height: 100dvh;
-    }
-  }
-  @media (min-width: 768px) {
-    html {
-      font-size: 18px;
     }
   }
   body {

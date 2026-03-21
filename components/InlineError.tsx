@@ -7,7 +7,11 @@ type InlineErrorProps = {
   className?: string;
 };
 
-export function InlineError({ message, onRetry, className = '' }: InlineErrorProps): React.ReactElement {
+export function InlineError({
+  message,
+  onRetry,
+  className = '',
+}: InlineErrorProps): React.ReactElement {
   return (
     <div
       role="alert"

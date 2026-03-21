@@ -3,3 +3,7 @@ dist
 coverage
 *.min.js
 package-lock.json
+
+# Local tooling & test artifacts (avoid churn in format:check)
+.xdg
+test-results

@@ -1,8 +1,5 @@
 {
   "name": "DoneGrading",
   "description": "A high-speed AI-powered grading assistant for teachers that syncs directly with Google Classroom.",
-  "requestFramePermissions": [
-    "camera",
-    "microphone"
-  ]
+  "requestFramePermissions": ["camera", "microphone"]
 }

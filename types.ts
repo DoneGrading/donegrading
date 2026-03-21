@@ -1,4 +1,3 @@
-
 export enum AppPhase {
   AUTHENTICATION,
   DASHBOARD,
@@ -21,12 +20,14 @@ export enum AppPhase {
   ROSTER_VIEW,
   ASSIGNMENT_CREATION,
   PAYWALL,
-  OPTIONS
+  OPTIONS,
+  /** Create a new course (Google Classroom or local). */
+  COURSE_CREATION,
 }
 
 export enum GradingMode {
   SINGLE_PAGE = 'SINGLE_PAGE',
-  MULTI_PAGE = 'MULTI_PAGE'
+  MULTI_PAGE = 'MULTI_PAGE',
 }
 
 export interface Student {

@@ -14,11 +14,11 @@
 
 ## 2. Entry Points & Bootstrap
 
-| File | Role | Issue |
-|------|------|--------|
-| `index.html` | Loads `/main.tsx` | **Only** `main.tsx` is used as entry. |
-| `main.tsx` | Renders `<App />` in StrictMode | Does **not** wrap app in `ErrorBoundary`. |
-| `index.tsx` | Renders `<ErrorBoundary><App /></ErrorBoundary>` | **Dead code** — never loaded by `index.html`. |
+| File         | Role                                             | Issue                                         |
+| ------------ | ------------------------------------------------ | --------------------------------------------- |
+| `index.html` | Loads `/main.tsx`                                | **Only** `main.tsx` is used as entry.         |
+| `main.tsx`   | Renders `<App />` in StrictMode                  | Does **not** wrap app in `ErrorBoundary`.     |
+| `index.tsx`  | Renders `<ErrorBoundary><App /></ErrorBoundary>` | **Dead code** — never loaded by `index.html`. |
 
 **Recommendation:** Either switch `index.html` to load `index.tsx` so the app runs inside `ErrorBoundary`, or move the ErrorBoundary wrapper into `main.tsx` and keep a single entry. Prefer one entry file.
 
@@ -28,7 +28,7 @@
 
 ### 3.1 Hardcoded OAuth Client ID (High)
 
-- **Where:** `App.tsx` line ~396  
+- **Where:** `App.tsx` line ~396
 - **Code:** `const GOOGLE_CLIENT_ID = '137273476022-4il1dq3mj28v0g1c2t59mt3l341evlbl.apps.googleusercontent.com';`
 - **Risk:** Client IDs are generally considered public in OAuth 2.0, but hardcoding prevents environment-specific config and makes rotation harder.
 - **Recommendation:** Move to env, e.g. `VITE_GOOGLE_CLIENT_ID`, with a fallback only for development, and document in `.env.example`.
@@ -48,7 +48,7 @@
 ### 3.4 Drive Query String (Medium)
 
 - **Where:** `App.tsx` — `getOrCreateDriveFolder(token, folderName, parentId)`.
-- **Code:** `let query = \`... name='${folderName}' ...\`;` then `encodeURIComponent(query)`.
+- **Code:** `let query = \`... name='${folderName}' ...\`;`then`encodeURIComponent(query)`.
 - **Risk:** If `folderName` (or `parentId`) contains a single quote (e.g. `Teacher's Folder`), the Drive query string can break or behave unexpectedly.
 - **Recommendation:** Escape single quotes in `folderName`/`parentId` before building the query, or use a safer encoding approach.
 
@@ -186,17 +186,17 @@ If stored data is corrupted or from an older schema, `JSON.parse` can throw and 
 
 ## 11. Checklist Summary
 
-| Category | Finding | Severity |
-|----------|--------|----------|
-| Entry | index.tsx unused; ErrorBoundary not in use | High |
-| Security | GOOGLE_CLIENT_ID hardcoded | High |
-| Security | Drive query: folderName/parentId quote escaping | Medium |
-| Reliability | localStorage JSON.parse without try/catch in several places | Medium |
-| Reliability | Some Gemini JSON.parse without try/catch | Low |
-| Maintainability | App.tsx ~4700 lines | High |
-| Maintainability | CommunicationDashboard ~1186 lines | Medium |
-| TS | noUnusedLocals / noUnusedParameters disabled | Low |
-| Server | server.js static path vs dist | Low (verify) |
+| Category        | Finding                                                     | Severity     |
+| --------------- | ----------------------------------------------------------- | ------------ |
+| Entry           | index.tsx unused; ErrorBoundary not in use                  | High         |
+| Security        | GOOGLE_CLIENT_ID hardcoded                                  | High         |
+| Security        | Drive query: folderName/parentId quote escaping             | Medium       |
+| Reliability     | localStorage JSON.parse without try/catch in several places | Medium       |
+| Reliability     | Some Gemini JSON.parse without try/catch                    | Low          |
+| Maintainability | App.tsx ~4700 lines                                         | High         |
+| Maintainability | CommunicationDashboard ~1186 lines                          | Medium       |
+| TS              | noUnusedLocals / noUnusedParameters disabled                | Low          |
+| Server          | server.js static path vs dist                               | Low (verify) |
 
 ---
 
@@ -226,4 +226,4 @@ The following recommendations were implemented:
 - **TypeScript:** Enabled `noUnusedLocals` and `noUnusedParameters` in tsconfig; fixed unused imports and variables (prefix with `_` or remove).
 - **App split:** Extracted `components/PageWrapper.tsx`, `context/AppContext.tsx`, and `views/AuthView.tsx`; App provides `AppContext.Provider` and renders `<AuthView />` for the AUTHENTICATION phase. Further phases can be extracted the same way.
 
-*End of audit.*
+_End of audit._

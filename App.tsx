@@ -1,4 +1,13 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, {
+  lazy,
+  Suspense,
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+  useDeferredValue,
+} from 'react';
 import {
   BookOpen,
   Camera,
@@ -29,7 +38,17 @@ import {
   CloudUpload,
   Mail,
 } from 'lucide-react';
-import { AppPhase, GradingMode, Course, Assignment, Student, GradedWork, GradingResponse, GeometricData, SubscriptionStatus } from './types';
+import {
+  AppPhase,
+  GradingMode,
+  Course,
+  Assignment,
+  Student,
+  GradedWork,
+  GradingResponse,
+  GeometricData,
+  SubscriptionStatus,
+} from './types';
 import {
   analyzeMultiPagePaper,
   analyzePaper,
@@ -45,7 +64,12 @@ import {
   type LessonScriptResult,
 } from './services/geminiService';
 import { scheduleReminderNotification } from './lib/notifications';
-import { loadAuthSession, saveAuthSession, clearAuthSession, touchAuthSession } from './lib/authSession';
+import {
+  loadAuthSession,
+  saveAuthSession,
+  clearAuthSession,
+  touchAuthSession,
+} from './lib/authSession';
 import { auth } from './lib/firebase';
 import {
   signInWithEmailAndPassword,
@@ -57,20 +81,60 @@ import {
 } from 'firebase/auth';
 import { ClassroomService } from './services/classroomService';
 import { logEvent } from './analytics';
-import { CommunicationDashboard } from './CommunicationDashboard';
 import { sectionTitle, label } from './uiStyles';
 import { safeParseJson } from './utils/safeParseJson';
 import { PageWrapper } from './components/PageWrapper';
+import { HelpLink } from './components/HelpLink';
 import { ConsentBanner } from './components/ConsentBanner';
-import { Onboarding, hasCompletedOnboarding } from './components/Onboarding';
 import { AppContext } from './context/AppContext';
-import { AuthView } from './views/AuthView';
+import { hasCompletedOnboarding } from './lib/onboardingGate';
+
+const AuthViewLazy = lazy(() =>
+  import('./views/AuthView').then((m) => ({ default: m.AuthView }))
+);
+const CommunicationDashboardLazy = lazy(() =>
+  import('./CommunicationDashboard').then((m) => ({ default: m.CommunicationDashboard }))
+);
+const OnboardingLazy = lazy(() =>
+  import('./components/Onboarding').then((m) => ({ default: m.Onboarding }))
+);
+
+function PhaseLazyFallback(): React.ReactElement {
+  return (
+    <div
+      className="fixed inset-0 z-[200] flex flex-col items-center justify-center gap-3 bg-slate-50 dark:bg-slate-950"
+      role="status"
+      aria-live="polite"
+    >
+      <Loader2 className="w-10 h-10 animate-spin text-indigo-500" aria-hidden />
+      <span className="sr-only">Loading…</span>
+    </div>
+  );
+}
 
 type SortMode = 'recent' | 'alphabetical' | 'manual';
 
+/** Tooltip / aria hint for controls that require network (UX #11 — offline clarity). */
+const NEEDS_INTERNET_COMMUNICATE =
+  'Communicate needs the internet for Classroom, messaging, and templates that sync.';
+
 type PlanVersion = 'Standard' | 'Sub Plan' | 'Period 2 (Advanced)';
 
-const PLAN_GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'] as const;
+const PLAN_GRADE_OPTIONS = [
+  'K',
+  '1',
+  '2',
+  '3',
+  '4',
+  '5',
+  '6',
+  '7',
+  '8',
+  '9',
+  '10',
+  '11',
+  '12',
+] as const;
 const PLAN_SUBJECT_OPTIONS = [
   'ENL / ESL',
   'Language Arts',
@@ -104,11 +168,11 @@ const isCommonPlanDurationMinutes = (m: number) =>
 
 /** Firebase / unknown API errors */
 const getUnknownErr = (err: unknown): { code: string; message: string } => {
-  if (!err || typeof err !== "object") return { code: "", message: "" };
+  if (!err || typeof err !== 'object') return { code: '', message: '' };
   const r = err as Record<string, unknown>;
   return {
-    code: typeof r.code === "string" ? r.code : "",
-    message: typeof r.message === "string" ? r.message : "",
+    code: typeof r.code === 'string' ? r.code : '',
+    message: typeof r.message === 'string' ? r.message : '',
   };
 };
 
@@ -129,7 +193,7 @@ type ScheduleItem = {
   title: string;
   date: string; // ISO date string
   view: ScheduleViewMode;
-   // type of block for coloring and grouping
+  // type of block for coloring and grouping
   kind?: 'event' | 'reminder' | 'teacherBlock' | 'appointment' | 'meeting';
   courseId?: string;
   assignmentId?: string;
@@ -138,6 +202,14 @@ type ScheduleItem = {
   endTime?: string; // optional HH:MM end time for blocks
   recurrence: 'once' | 'daily' | 'weekly' | 'monthly';
 };
+
+/** Local calendar YYYY-MM-DD (matches schedule cursor / date inputs). */
+function formatLocalYMD(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 type SpeechRecognitionResultLike = {
   results: ArrayLike<{ 0?: { transcript?: string } }>;
@@ -158,7 +230,7 @@ type WebSpeechRecognition = {
 type WebSpeechRecognitionCtor = new () => WebSpeechRecognition;
 
 function getWebSpeechRecognitionCtor(): WebSpeechRecognitionCtor | undefined {
-  if (typeof window === "undefined") return undefined;
+  if (typeof window === 'undefined') return undefined;
   const w = window as unknown as {
     SpeechRecognition?: WebSpeechRecognitionCtor;
     webkitSpeechRecognition?: WebSpeechRecognitionCtor;
@@ -173,7 +245,7 @@ const useSpeechToText = (
     interimResults?: boolean;
     autoRestart?: boolean;
     lang?: string;
-  },
+  }
 ) => {
   const [isListening, setIsListening] = useState(false);
   const [hasSupport, setHasSupport] = useState(false);
@@ -236,7 +308,7 @@ const useSpeechToText = (
         recognitionRef.current?.start();
         // isListening will flip true in onstart
       } catch (e) {
-        console.error("Speech recognition start failed", e);
+        console.error('Speech recognition start failed', e);
         shouldListenRef.current = false;
       }
     }
@@ -245,7 +317,10 @@ const useSpeechToText = (
   return { isListening, toggleListening, hasSupport };
 };
 
-const VoiceInputButton: React.FC<{ onResult: (text: string) => void, className?: string }> = ({ onResult, className = "" }) => {
+const VoiceInputButton: React.FC<{ onResult: (text: string) => void; className?: string }> = ({
+  onResult,
+  className = '',
+}) => {
   const { isListening, toggleListening, hasSupport } = useSpeechToText(onResult);
 
   if (!hasSupport) return null;
@@ -253,9 +328,12 @@ const VoiceInputButton: React.FC<{ onResult: (text: string) => void, className?:
   return (
     <button
       type="button"
-      onClick={(e) => { e.stopPropagation(); toggleListening(); }}
+      onClick={(e) => {
+        e.stopPropagation();
+        toggleListening();
+      }}
       className={`p-2 rounded-xl transition-all duration-300 shadow-sm backdrop-blur-md ${isListening ? 'bg-red-500 text-white animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.6)]' : 'bg-white/60 dark:bg-slate-800/60 border border-white/50 dark:border-slate-700/50 text-slate-500 dark:text-slate-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/20 hover:text-indigo-600 dark:hover:text-indigo-300 active:scale-95'} ${className}`}
-      title={isListening ? "Stop Listening" : "Start Voice Input"}
+      title={isListening ? 'Stop Listening' : 'Start Voice Input'}
     >
       {isListening ? <MicOff className="w-3 h-3" /> : <Mic className="w-3 h-3" />}
     </button>
@@ -269,15 +347,25 @@ const cropImageToBoundingBox = (base64: string, corners: GeometricData | null): 
     const img = new Image();
     img.onload = () => {
       try {
-        const actualXs = [corners.topLeft[0], corners.topRight[0], corners.bottomRight[0], corners.bottomLeft[0]].map(x => (x / 1000) * img.width);
-        const actualYs = [corners.topLeft[1], corners.topRight[1], corners.bottomRight[1], corners.bottomLeft[1]].map(y => (y / 1000) * img.height);
+        const actualXs = [
+          corners.topLeft[0],
+          corners.topRight[0],
+          corners.bottomRight[0],
+          corners.bottomLeft[0],
+        ].map((x) => (x / 1000) * img.width);
+        const actualYs = [
+          corners.topLeft[1],
+          corners.topRight[1],
+          corners.bottomRight[1],
+          corners.bottomLeft[1],
+        ].map((y) => (y / 1000) * img.height);
 
         const cx = actualXs.reduce((a, b) => a + b, 0) / 4;
         const cy = actualYs.reduce((a, b) => a + b, 0) / 4;
 
         const scale = 0.96;
-        const insetXs = actualXs.map(x => cx + (x - cx) * scale);
-        const insetYs = actualYs.map(y => cy + (y - cy) * scale);
+        const insetXs = actualXs.map((x) => cx + (x - cx) * scale);
+        const insetYs = actualYs.map((y) => cy + (y - cy) * scale);
 
         const minX = Math.max(0, Math.min(...insetXs));
         const maxX = Math.min(img.width, Math.max(...insetXs));
@@ -326,29 +414,56 @@ const getOrCreateDriveFolder = async (token: string, folderName: string, parentI
   let query = `mimeType='application/vnd.google-apps.folder' and name='${safeName}' and trashed=false`;
   if (safeParent) query += ` and '${safeParent}' in parents`;
 
-  const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&spaces=drive`, { headers: { 'Authorization': `Bearer ${token}` } });
+  const searchRes = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&spaces=drive`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
   const searchData = await searchRes.json();
-  
+
   if (searchData.files && searchData.files.length > 0) return searchData.files[0].id;
-  
-  const metadata = { name: folderName, mimeType: 'application/vnd.google-apps.folder', ...(parentId ? { parents: [parentId] } : {}) };
-  const createRes = await fetch('https://www.googleapis.com/drive/v3/files', { method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(metadata) });
+
+  const metadata = {
+    name: folderName,
+    mimeType: 'application/vnd.google-apps.folder',
+    ...(parentId ? { parents: [parentId] } : {}),
+  };
+  const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(metadata),
+  });
   const createData = await createRes.json();
   return createData.id;
 };
 
-const uploadImageToDrive = async (token: string, base64Data: string, fileName: string, folderId: string) => {
+const uploadImageToDrive = async (
+  token: string,
+  base64Data: string,
+  fileName: string,
+  folderId: string
+) => {
   const boundary = '-------314159265358979323846';
-  const delimiter = "\r\n--" + boundary + "\r\n";
-  const close_delim = "\r\n--" + boundary + "--";
-  const multipartRequestBody = delimiter + 'Content-Type: application/json\r\n\r\n' + JSON.stringify({ name: fileName, parents: [folderId] }) + delimiter + 'Content-Type: image/jpeg\r\n' + 'Content-Transfer-Encoding: base64\r\n\r\n' + base64Data + close_delim;
+  const delimiter = '\r\n--' + boundary + '\r\n';
+  const close_delim = '\r\n--' + boundary + '--';
+  const multipartRequestBody =
+    delimiter +
+    'Content-Type: application/json\r\n\r\n' +
+    JSON.stringify({ name: fileName, parents: [folderId] }) +
+    delimiter +
+    'Content-Type: image/jpeg\r\n' +
+    'Content-Transfer-Encoding: base64\r\n\r\n' +
+    base64Data +
+    close_delim;
 
   const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${boundary}` },
-    body: multipartRequestBody
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': `multipart/related; boundary=${boundary}`,
+    },
+    body: multipartRequestBody,
   });
-  
+
   if (!res.ok) {
     const err = await res.json();
     throw new Error(`Drive Upload Error: ${err.error?.message}`);
@@ -448,7 +563,10 @@ function buildLessonPlanHtmlDocument(f: LessonPlanExportFields, generatedAtIso: 
 
   const bodyInner = [
     `<header class="doc-header"><h1>${escapeHtml(lessonTitle)}</h1><p class="sub">${escapeHtml(f.educatorName || 'Educator')} · ${escapeHtml(
-      new Date(generatedAtIso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }),
+      new Date(generatedAtIso).toLocaleString(undefined, {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      })
     )}</p></header>`,
     metaTable,
     section('Learning objective (I can…)', pre(f.planObjective)),
@@ -463,7 +581,7 @@ function buildLessonPlanHtmlDocument(f: LessonPlanExportFields, generatedAtIso: 
     section('Checks for understanding (CFU)', pre(f.cfuIdeas)),
     section(
       'Assessment — exit ticket',
-      `<p><strong>Prompt:</strong> ${escapeHtml(f.exitTicketPrompt.trim() || 'N/A')}</p><h3>Questions</h3>${exitQs}<h3>Success criteria</h3>${successList}`,
+      `<p><strong>Prompt:</strong> ${escapeHtml(f.exitTicketPrompt.trim() || 'N/A')}</p><h3>Questions</h3>${exitQs}<h3>Success criteria</h3>${successList}`
     ),
     section('Vocabulary', `<p>${vocab}</p>`),
     section('Discussion questions (AI draft)', aiQs || '<p class="muted">—</p>'),
@@ -517,7 +635,7 @@ const uploadTextFileToDrive = async (
   textContent: string,
   fileName: string,
   folderId: string,
-  mimeType: 'text/html' | 'text/plain' = 'text/html',
+  mimeType: 'text/html' | 'text/plain' = 'text/html'
 ) => {
   const boundary = '-------314159265358979323847';
   const delimiter = `\r\n--${boundary}\r\n`;
@@ -527,8 +645,7 @@ const uploadTextFileToDrive = async (
     parents: [folderId],
     mimeType,
   });
-  const multipartRequestBody =
-    `${delimiter}Content-Type: application/json; charset=UTF-8\r\n\r\n${metadata}${delimiter}Content-Type: ${mimeType}; charset=UTF-8\r\n\r\n${textContent}${closeDelim}`;
+  const multipartRequestBody = `${delimiter}Content-Type: application/json; charset=UTF-8\r\n\r\n${metadata}${delimiter}Content-Type: ${mimeType}; charset=UTF-8\r\n\r\n${textContent}${closeDelim}`;
 
   const res = await fetch(
     'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink,mimeType',
@@ -539,12 +656,14 @@ const uploadTextFileToDrive = async (
         'Content-Type': `multipart/related; boundary=${boundary}`,
       },
       body: multipartRequestBody,
-    },
+    }
   );
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(`Drive Upload Error: ${(err as { error?: { message?: string } }).error?.message || res.statusText}`);
+    throw new Error(
+      `Drive Upload Error: ${(err as { error?: { message?: string } }).error?.message || res.statusText}`
+    );
   }
   return res.json() as Promise<{ id?: string; webViewLink?: string }>;
 };
@@ -552,7 +671,7 @@ const uploadTextFileToDrive = async (
 // --- MAIN APP COMPONENT ---
 
 const App: React.FC = () => {
-  const [phase, setPhase] = useState<AppPhase | 'COURSE_CREATION'>(AppPhase.AUTHENTICATION);
+  const [phase, setPhase] = useState<AppPhase>(AppPhase.AUTHENTICATION);
   const [showOnboarding, setShowOnboarding] = useState(() => !hasCompletedOnboarding());
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [classroom, setClassroom] = useState<ClassroomService | null>(null);
@@ -564,23 +683,105 @@ const App: React.FC = () => {
     const dark = safeParseJson<boolean | null>(localStorage.getItem('dg_dark_mode'), null);
     return dark ?? window.matchMedia('(prefers-color-scheme: dark)').matches;
   });
-  
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [globalSearchQuery] = useState('');
   const [assignmentSearchQuery, setAssignmentSearchQuery] = useState('');
-  
-  const [educatorName, setEducatorName] = useState<string>(() => localStorage.getItem('dg_educator_name') || "");
 
-  // Subscription state (stubbed; wire to Firebase/Stripe later)
-  const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus>('trialing');
+  const [educatorName, setEducatorName] = useState<string>(
+    () => localStorage.getItem('dg_educator_name') || ''
+  );
+
+  // Subscription: persisted locally; production default is unpaid until Stripe checkout succeeds.
+  const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus>(() => {
+    const stored = safeParseJson<SubscriptionStatus | null>(
+      localStorage.getItem('dg_subscription_status'),
+      null
+    );
+    if (
+      stored &&
+      (stored === 'none' ||
+        stored === 'trialing' ||
+        stored === 'active' ||
+        stored === 'past_due' ||
+        stored === 'canceled')
+    ) {
+      return stored;
+    }
+    return import.meta.env.DEV ? 'trialing' : 'none';
+  });
   const isPaid = subscriptionStatus === 'trialing' || subscriptionStatus === 'active';
+  const [paywallCheckoutLoading, setPaywallCheckoutLoading] = useState(false);
+  const [paywallCheckoutError, setPaywallCheckoutError] = useState<string | null>(null);
+  const billingApiBase = useMemo(
+    () => (import.meta.env.VITE_BILLING_API_BASE ?? '').replace(/\/$/, ''),
+    []
+  );
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('dg_subscription_status', JSON.stringify(subscriptionStatus));
+    } catch {
+      /* ignore */
+    }
+  }, [subscriptionStatus]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('billing_success') !== '1') return;
+    const sessionId = params.get('session_id');
+    if (!sessionId) return;
+
+    const cleanUrl = () => {
+      window.history.replaceState({}, '', window.location.pathname);
+    };
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const url = `${billingApiBase}/api/billing/checkout-session?session_id=${encodeURIComponent(sessionId)}`;
+        const r = await fetch(url);
+        const data = (await r.json()) as { status?: string; error?: string };
+        if (cancelled) return;
+        if (!r.ok) {
+          console.error('checkout-session', data);
+          cleanUrl();
+          return;
+        }
+        const st = data.status;
+        if (
+          st === 'none' ||
+          st === 'trialing' ||
+          st === 'active' ||
+          st === 'past_due' ||
+          st === 'canceled'
+        ) {
+          setSubscriptionStatus(st);
+          setPhase(AppPhase.DASHBOARD);
+        }
+        cleanUrl();
+      } catch (e) {
+        console.error(e);
+        if (!cancelled) cleanUrl();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [billingApiBase]);
+
   const [showMoreAuthOptions, setShowMoreAuthOptions] = useState(false);
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
 
-  const [dashboardSort, setDashboardSort] = useState<SortMode>(() => safeParseJson<SortMode>(localStorage.getItem('dg_dash_sort'), 'recent'));
-  const [assignmentSort, setAssignmentSort] = useState<SortMode>(() => safeParseJson<SortMode>(localStorage.getItem('dg_asn_sort'), 'recent'));
+  const [dashboardSort, setDashboardSort] = useState<SortMode>(() =>
+    safeParseJson<SortMode>(localStorage.getItem('dg_dash_sort'), 'recent')
+  );
+  const [assignmentSort, setAssignmentSort] = useState<SortMode>(() =>
+    safeParseJson<SortMode>(localStorage.getItem('dg_asn_sort'), 'recent')
+  );
   void setDashboardSort;
 
   const todayLabel = useMemo(() => {
@@ -596,7 +797,6 @@ const App: React.FC = () => {
     }
   }, []);
 
- 
   // Google OAuth Client ID – production client for app.donegrading.com; fix bad/truncated env values
   const PRODUCTION_GOOGLE_CLIENT_ID =
     '705695813275-roaepb7an7bkq4gn9b7fr5c73vp26303.apps.googleusercontent.com';
@@ -606,16 +806,22 @@ const App: React.FC = () => {
   const isInvalid =
     raw !== PRODUCTION_GOOGLE_CLIENT_ID &&
     (raw === '137273476022-4il1dq3mj28v0g1c2t59mt3l341evlbl.apps.googleusercontent.com' ||
-     !/^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$/i.test(String(raw).trim()));
+      !/^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$/i.test(String(raw).trim()));
   const effectiveGoogleClientId = isInvalid ? PRODUCTION_GOOGLE_CLIENT_ID : String(raw).trim();
-  
+
   const [authError, setAuthError] = useState<string | null>(null);
   const [authSuccessMessage, setAuthSuccessMessage] = useState<string | null>(null);
   const [creationError, setCreationError] = useState<string | null>(null);
 
-  const [courses, setCourses] = useState<Course[]>(() => safeParseJson<Course[]>(localStorage.getItem('dg_cache_courses'), []));
-  const [assignments, setAssignments] = useState<Assignment[]>(() => safeParseJson<Assignment[]>(localStorage.getItem('dg_cache_assignments'), []));
-  const [students, setStudents] = useState<Student[]>(() => safeParseJson<Student[]>(localStorage.getItem('dg_cache_students'), []));
+  const [courses, setCourses] = useState<Course[]>(() =>
+    safeParseJson<Course[]>(localStorage.getItem('dg_cache_courses'), [])
+  );
+  const [assignments, setAssignments] = useState<Assignment[]>(() =>
+    safeParseJson<Assignment[]>(localStorage.getItem('dg_cache_assignments'), [])
+  );
+  const [students, setStudents] = useState<Student[]>(() =>
+    safeParseJson<Student[]>(localStorage.getItem('dg_cache_students'), [])
+  );
 
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
@@ -624,9 +830,13 @@ const App: React.FC = () => {
   const [firebaseUser, setFirebaseUser] = useState<import('firebase/auth').User | null>(null);
 
   const isSignedIn = useMemo(() => !!accessToken || !!firebaseUser, [accessToken, firebaseUser]);
-  
-  const [gradedWorks, setGradedWorks] = useState<GradedWork[]>(() => safeParseJson<GradedWork[]>(localStorage.getItem('dg_pending_sync'), []));
-  const [history, setHistory] = useState<GradedWork[]>(() => safeParseJson<GradedWork[]>(localStorage.getItem('dg_history'), []));
+
+  const [gradedWorks, setGradedWorks] = useState<GradedWork[]>(() =>
+    safeParseJson<GradedWork[]>(localStorage.getItem('dg_pending_sync'), [])
+  );
+  const [history, setHistory] = useState<GradedWork[]>(() =>
+    safeParseJson<GradedWork[]>(localStorage.getItem('dg_history'), [])
+  );
 
   const SCHEDULE_KEY = 'dg_schedule_items_v1';
   const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>(() =>
@@ -635,14 +845,26 @@ const App: React.FC = () => {
   const [scheduleView, setScheduleView] = useState<ScheduleViewMode>(() => {
     try {
       const raw = localStorage.getItem('dg_schedule_view_v1');
-      return raw === 'agenda' || raw === 'daily' || raw === 'weekly' || raw === 'monthly' ? raw : 'agenda';
+      return raw === 'agenda' || raw === 'daily' || raw === 'weekly' || raw === 'monthly'
+        ? raw
+        : 'agenda';
     } catch {
       return 'agenda';
     }
   });
+  const [scheduleCursor, setScheduleCursor] = useState<string>(() =>
+    new Date().toISOString().slice(0, 10)
+  );
+  /** Jump + scroll highlight in Agenda (deep link from Home / Grade hub Today card). */
+  const [scheduleFocusRequest, setScheduleFocusRequest] = useState<{
+    itemId: string;
+    dateISO: string;
+  } | null>(null);
   const [scheduleSearch, setScheduleSearch] = useState('');
   const [scheduleFilterOpen, setScheduleFilterOpen] = useState(false);
-  const [scheduleFilterKinds, setScheduleFilterKinds] = useState<Set<NonNullable<ScheduleItem['kind']>>>(new Set());
+  const [scheduleFilterKinds, setScheduleFilterKinds] = useState<
+    Set<NonNullable<ScheduleItem['kind']>>
+  >(new Set());
   const [scheduleFilterCourseId, setScheduleFilterCourseId] = useState<string>('');
   const [scheduleFilterOverdueOnly, setScheduleFilterOverdueOnly] = useState(false);
   const [scheduleFilterRecurringOnly, setScheduleFilterRecurringOnly] = useState(false);
@@ -652,13 +874,17 @@ const App: React.FC = () => {
     expiresAt: number;
   } | null>(null);
   const [scheduleTitle, setScheduleTitle] = useState('');
-  const [scheduleKind, setScheduleKind] = useState<'event' | 'reminder' | 'teacherBlock' | 'appointment' | 'meeting'>('reminder');
+  const [scheduleKind, setScheduleKind] = useState<
+    'event' | 'reminder' | 'teacherBlock' | 'appointment' | 'meeting'
+  >('reminder');
   const [scheduleDate, setScheduleDate] = useState('');
   const [scheduleNotes, setScheduleNotes] = useState('');
   const [scheduleCourseId, setScheduleCourseId] = useState('');
   const [scheduleAssignmentId, setScheduleAssignmentId] = useState('');
   const [scheduleTime, setScheduleTime] = useState('');
-  const [scheduleRecurrence, setScheduleRecurrence] = useState<'once' | 'daily' | 'weekly' | 'monthly'>('once');
+  const [scheduleRecurrence, setScheduleRecurrence] = useState<
+    'once' | 'daily' | 'weekly' | 'monthly'
+  >('once');
   const [scheduleFormOpen, setScheduleFormOpen] = useState(false);
   const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
   const [activeScheduleHour, setActiveScheduleHour] = useState<number | null>(null);
@@ -666,7 +892,9 @@ const App: React.FC = () => {
   const [optionsTab, setOptionsTab] = useState<'cockpit' | 'account' | 'data' | 'legal'>(() => {
     try {
       const raw = localStorage.getItem('dg_options_tab_v1');
-      return raw === 'cockpit' || raw === 'account' || raw === 'data' || raw === 'legal' ? raw : 'cockpit';
+      return raw === 'cockpit' || raw === 'account' || raw === 'data' || raw === 'legal'
+        ? raw
+        : 'cockpit';
     } catch {
       return 'cockpit';
     }
@@ -705,19 +933,21 @@ const App: React.FC = () => {
   const [newAsnDesc, setNewAsnDesc] = useState('');
   const [newAsnMaxScore, setNewAsnMaxScore] = useState<number>(100);
   const [isCreatingAssignment, setIsCreatingAssignment] = useState(false);
-  
+
   const [_isAutoMode, _setIsAutoMode] = useState(true);
   void _isAutoMode;
   void _setIsAutoMode;
   const [isFlashOn, setIsFlashOn] = useState(false);
   const [showQuickPick, setShowQuickPick] = useState(false);
-  const [pendingWork, setPendingWork] = useState<Partial<GradingResponse> & { imageUrls: string[] } | null>(null);
+  const [pendingWork, setPendingWork] = useState<
+    (Partial<GradingResponse> & { imageUrls: string[] }) | null
+  >(null);
   const [activeGeometry, setActiveGeometry] = useState<GeometricData | null>(null);
   const [scanHealth, setScanHealth] = useState<number>(0);
   const [_oneWordCommand, setOneWordCommand] = useState<string | null>(null);
   void _oneWordCommand;
   const [cameraError, setCameraError] = useState<string | null>(null);
-  
+
   // Student targeting mode for scan attribution.
   // - single: match each scan to one student (manual or OCR match)
   // - batch: teacher selects multiple students once; scans map sequentially
@@ -730,18 +960,18 @@ const App: React.FC = () => {
     }
   });
   const [batchSelectedStudentIds, setBatchSelectedStudentIds] = useState<Set<string>>(new Set());
-  const [batchRosterFilter, setBatchRosterFilter] = useState<'all' | 'not_graded' | 'at_risk' | 'missing_email' | 'recently_graded'>('all');
+  const [batchRosterFilter, setBatchRosterFilter] = useState<
+    'all' | 'not_graded' | 'at_risk' | 'missing_email' | 'recently_graded'
+  >('all');
   const [batchRosterQuery, setBatchRosterQuery] = useState('');
-  const [batchRosterSort, setBatchRosterSort] = useState<'manual' | 'last_name'>(
-    () => {
-      try {
-        const raw = localStorage.getItem('dg_batch_roster_sort_v1');
-        return raw === 'manual' || raw === 'last_name' ? raw : 'last_name';
-      } catch {
-        return 'last_name';
-      }
+  const [batchRosterSort, setBatchRosterSort] = useState<'manual' | 'last_name'>(() => {
+    try {
+      const raw = localStorage.getItem('dg_batch_roster_sort_v1');
+      return raw === 'manual' || raw === 'last_name' ? raw : 'last_name';
+    } catch {
+      return 'last_name';
     }
-  );
+  });
   const [batchRosterOrderIds, setBatchRosterOrderIds] = useState<string[]>([]);
   const batchStudentOrderRef = useRef<string[]>([]);
   const batchNextIndexRef = useRef<number>(0);
@@ -768,21 +998,23 @@ const App: React.FC = () => {
   const [scanQueueCount, setScanQueueCount] = useState(0);
   const [scanReviewQueueCount, setScanReviewQueueCount] = useState(0);
   const [scanQueueHint, setScanQueueHint] = useState<string | null>(null);
-  const scanQueueRef = useRef<{
-    id: string;
-    base64: string;
-    dataUrl: string;
-    createdAt: number;
-    scanHealth?: number;
-    corners?: GeometricData | null;
-    transcription?: string;
-  }[]>([]);
+  const scanQueueRef = useRef<
+    {
+      id: string;
+      base64: string;
+      dataUrl: string;
+      createdAt: number;
+      scanHealth?: number;
+      corners?: GeometricData | null;
+      transcription?: string;
+    }[]
+  >([]);
   const scanReviewRef = useRef<{ id: string; result: GradingResponse; dataUrl: string }[]>([]);
   const frameAssessInFlightRef = useRef<boolean>(false);
-  
+
   const [manualScore, setManualScore] = useState<string>('');
   const [manualFeedback, setManualFeedback] = useState<string>('');
-  
+
   const cooldownRef = useRef<boolean>(false);
   const multiPageCaptureInFlightRef = useRef<boolean>(false);
   const multiPageLastHashRef = useRef<string | null>(null);
@@ -815,11 +1047,21 @@ const App: React.FC = () => {
   // Phase 2: Voice-to-task (local)
   const GRADE_FOLLOWUPS_KEY = 'dg_grade_followups_v1';
   const QUICK_TODOS_KEY = 'dg_quick_todos_v1';
-  const [gradeFollowUps, setGradeFollowUps] = useState<{ id: string; text: string; createdAt: number; done?: boolean }[]>(() =>
-    safeParseJson(localStorage.getItem(GRADE_FOLLOWUPS_KEY), [] as { id: string; text: string; createdAt: number; done?: boolean }[])
+  const [gradeFollowUps, setGradeFollowUps] = useState<
+    { id: string; text: string; createdAt: number; done?: boolean }[]
+  >(() =>
+    safeParseJson(
+      localStorage.getItem(GRADE_FOLLOWUPS_KEY),
+      [] as { id: string; text: string; createdAt: number; done?: boolean }[]
+    )
   );
-  const [quickTodos, setQuickTodos] = useState<{ id: string; text: string; createdAt: number; done?: boolean }[]>(() =>
-    safeParseJson(localStorage.getItem(QUICK_TODOS_KEY), [] as { id: string; text: string; createdAt: number; done?: boolean }[])
+  const [quickTodos, setQuickTodos] = useState<
+    { id: string; text: string; createdAt: number; done?: boolean }[]
+  >(() =>
+    safeParseJson(
+      localStorage.getItem(QUICK_TODOS_KEY),
+      [] as { id: string; text: string; createdAt: number; done?: boolean }[]
+    )
   );
   void setGradeFollowUps;
   void setQuickTodos;
@@ -832,9 +1074,7 @@ const App: React.FC = () => {
 
     const isEditable = (el: HTMLElement | null) =>
       !!el &&
-      (el instanceof HTMLTextAreaElement ||
-        el instanceof HTMLInputElement ||
-        el.isContentEditable);
+      (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement || el.isContentEditable);
 
     const activeEl = document.activeElement as HTMLElement | null;
     const el = isEditable(activeEl)
@@ -886,7 +1126,8 @@ const App: React.FC = () => {
     const onPointerDown = (event: PointerEvent) => {
       const t = event.target as HTMLElement | null;
       if (!t) return;
-      const closest = (t.closest('textarea,input,[contenteditable="true"]') as HTMLElement | null) ?? null;
+      const closest =
+        (t.closest('textarea,input,[contenteditable="true"]') as HTMLElement | null) ?? null;
       if (closest) lastFocusedFieldRef.current = closest;
     };
     window.addEventListener('focusin', onFocusIn);
@@ -898,7 +1139,12 @@ const App: React.FC = () => {
     isListening: isNavListening,
     toggleListening: toggleNavListening,
     hasSupport: navHasSupport,
-  } = useSpeechToText(insertTextIntoFocusedField, { continuous: true, interimResults: false, autoRestart: true, lang: 'en-US' });
+  } = useSpeechToText(insertTextIntoFocusedField, {
+    continuous: true,
+    interimResults: false,
+    autoRestart: true,
+    lang: 'en-US',
+  });
   useEffect(() => {
     if (!isNavListening) {
       if (voiceTargetRef.current) {
@@ -907,21 +1153,65 @@ const App: React.FC = () => {
       }
     }
   }, [isNavListening]);
+
+  /** One-time coach mark for bottom-nav mic (UX #5). */
+  const VOICE_MIC_COACH_KEY = 'dg_voice_mic_coach_dismissed_v1';
+  const [voiceMicCoachDismissed, setVoiceMicCoachDismissed] = useState(() => {
+    try {
+      return localStorage.getItem(VOICE_MIC_COACH_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const dismissVoiceMicCoach = useCallback(() => {
+    setVoiceMicCoachDismissed(true);
+    try {
+      localStorage.setItem(VOICE_MIC_COACH_KEY, '1');
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const voiceCoachVisible = isSignedIn && navHasSupport && !voiceMicCoachDismissed;
+
+  useEffect(() => {
+    if (!voiceCoachVisible) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') dismissVoiceMicCoach();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [voiceCoachVisible, dismissVoiceMicCoach]);
+
   const NAV_USAGE_KEY = 'dg_nav_usage_v1';
-  const [navUsage, setNavUsage] = useState<Record<string, number>>(() => safeParseJson(localStorage.getItem(NAV_USAGE_KEY), {} as Record<string, number>));
+  const [navUsage, setNavUsage] = useState<Record<string, number>>(() =>
+    safeParseJson(localStorage.getItem(NAV_USAGE_KEY), {} as Record<string, number>)
+  );
   const [dragCourseId, setDragCourseId] = useState<string | null>(null);
   void dragCourseId;
   void setDragCourseId;
   const [dragAssignmentId, setDragAssignmentId] = useState<string | null>(null);
 
   useEffect(() => {
-    try { localStorage.setItem(GRADE_FOLLOWUPS_KEY, JSON.stringify(gradeFollowUps)); } catch { /* ignore */ }
+    try {
+      localStorage.setItem(GRADE_FOLLOWUPS_KEY, JSON.stringify(gradeFollowUps));
+    } catch {
+      /* ignore */
+    }
   }, [gradeFollowUps]);
   useEffect(() => {
-    try { localStorage.setItem(QUICK_TODOS_KEY, JSON.stringify(quickTodos)); } catch { /* ignore */ }
+    try {
+      localStorage.setItem(QUICK_TODOS_KEY, JSON.stringify(quickTodos));
+    } catch {
+      /* ignore */
+    }
   }, [quickTodos]);
   useEffect(() => {
-    try { localStorage.setItem(NAV_USAGE_KEY, JSON.stringify(navUsage)); } catch { /* ignore */ }
+    try {
+      localStorage.setItem(NAV_USAGE_KEY, JSON.stringify(navUsage));
+    } catch {
+      /* ignore */
+    }
   }, [navUsage]);
 
   // Plan tab (The Architect)
@@ -932,7 +1222,10 @@ const App: React.FC = () => {
 
   const persistedPlan = (() => {
     try {
-      return safeParseJson<Record<string, unknown> | null>(localStorage.getItem(PLAN_STATE_KEY), null);
+      return safeParseJson<Record<string, unknown> | null>(
+        localStorage.getItem(PLAN_STATE_KEY),
+        null
+      );
     } catch {
       return null;
     }
@@ -942,7 +1235,9 @@ const App: React.FC = () => {
   const [lessonResult, setLessonResult] = useState<LessonScriptResult | null>(null);
   const [lessonLoading, setLessonLoading] = useState(false);
   const [planAiError, setPlanAiError] = useState<string | null>(null);
-  const [planActionLoading, setPlanActionLoading] = useState<'share' | 'drive' | 'email' | null>(null);
+  const [planActionLoading, setPlanActionLoading] = useState<'share' | 'drive' | 'email' | null>(
+    null
+  );
   const [planActionMessage, setPlanActionMessage] = useState<string | null>(null);
   const [planAdminEmail, setPlanAdminEmail] = useState<string>(() => {
     try {
@@ -954,15 +1249,23 @@ const App: React.FC = () => {
   const [, setDiffLevel] = useState<'simplified' | 'advanced' | null>(null);
   const [differentiationText, setDifferentiationText] = useState('');
   const [diffLoading, setDiffLoading] = useState(false);
-  const [fileVaultLinks, setFileVaultLinks] = useState<{ label: string; url: string }[]>(() => safeParseJson(localStorage.getItem(FILE_VAULT_KEY), [] as { label: string; url: string }[]));
+  const [fileVaultLinks, setFileVaultLinks] = useState<{ label: string; url: string }[]>(() =>
+    safeParseJson(localStorage.getItem(FILE_VAULT_KEY), [] as { label: string; url: string }[])
+  );
 
-  const [planLessonTitle, setPlanLessonTitle] = useState(() => (persistedPlan?.lessonTitle as string) || '');
-  const [planUnit, setPlanUnit] = useState(() => (persistedPlan?.unit as string) || 'Unit 4: Ecosystems');
+  const [planLessonTitle, setPlanLessonTitle] = useState(
+    () => (persistedPlan?.lessonTitle as string) || ''
+  );
+  const [planUnit, setPlanUnit] = useState(
+    () => (persistedPlan?.unit as string) || 'Unit 4: Ecosystems'
+  );
   const [planVersion] = useState<PlanVersion>(() => {
     const v = persistedPlan?.version as PlanVersion | undefined;
     return v === 'Standard' || v === 'Sub Plan' || v === 'Period 2 (Advanced)' ? v : 'Standard';
   });
-  const [planTab, setPlanTab] = useState<'setup' | 'doNow' | 'iDo' | 'weDo' | 'youDo' | 'exit'>('setup');
+  const [planTab, setPlanTab] = useState<'setup' | 'doNow' | 'iDo' | 'weDo' | 'youDo' | 'exit'>(
+    'setup'
+  );
   const [planContextOpen, setPlanContextOpen] = useState(false);
   const [planBlockTab, setPlanBlockTab] = useState<'A' | 'B' | 'C' | 'D'>('A');
   const [planBlockLocks, setPlanBlockLocks] = useState<Record<'A' | 'B' | 'C' | 'D', boolean>>({
@@ -985,19 +1288,35 @@ const App: React.FC = () => {
     }
   });
   const [planGrade, setPlanGrade] = useState<string>(() => (persistedPlan?.grade as string) || '6');
-  const [planSubject, setPlanSubject] = useState<string>(() => (persistedPlan?.subject as string) || 'Science');
+  const [planSubject, setPlanSubject] = useState<string>(
+    () => (persistedPlan?.subject as string) || 'Science'
+  );
   const [planDuration, setPlanDuration] = useState<number>(() => {
     const v = persistedPlan?.duration;
     return typeof v === 'number' && Number.isFinite(v) ? v : 55;
   });
-  const [planObjective, setPlanObjective] = useState<string>(() => (persistedPlan?.planObjective as string) || '');
-  const [planPrepMaterials, setPlanPrepMaterials] = useState<string>(() => (persistedPlan?.planPrepMaterials as string) || '');
-  const [planStudentSuccessCriteria, setPlanStudentSuccessCriteria] = useState<string>(() => (persistedPlan?.planStudentSuccessCriteria as string) || '');
-  const [standardsQuery, setStandardsQuery] = useState<string>(() => (persistedPlan?.standardsQuery as string) || '');
+  const [planObjective, setPlanObjective] = useState<string>(
+    () => (persistedPlan?.planObjective as string) || ''
+  );
+  const [planPrepMaterials, setPlanPrepMaterials] = useState<string>(
+    () => (persistedPlan?.planPrepMaterials as string) || ''
+  );
+  const [planStudentSuccessCriteria, setPlanStudentSuccessCriteria] = useState<string>(
+    () => (persistedPlan?.planStudentSuccessCriteria as string) || ''
+  );
+  const [standardsQuery, setStandardsQuery] = useState<string>(
+    () => (persistedPlan?.standardsQuery as string) || ''
+  );
   const [standardsSuggestions, setStandardsSuggestions] = useState<StandardItem[]>([]);
-  const [pinnedStandards, setPinnedStandards] = useState<StandardItem[]>(() => (persistedPlan?.pinnedStandards as StandardItem[]) || []);
-  const [classProfile, setClassProfile] = useState<string>(() => (persistedPlan?.classProfile as string) || '');
-  const [objectiveGenLoadingPart, setObjectiveGenLoadingPart] = useState<LessonPartKey | null>(null);
+  const [pinnedStandards, setPinnedStandards] = useState<StandardItem[]>(
+    () => (persistedPlan?.pinnedStandards as StandardItem[]) || []
+  );
+  const [classProfile, setClassProfile] = useState<string>(
+    () => (persistedPlan?.classProfile as string) || ''
+  );
+  const [objectiveGenLoadingPart, setObjectiveGenLoadingPart] = useState<LessonPartKey | null>(
+    null
+  );
   const [objectiveGenError, setObjectiveGenError] = useState<string | null>(null);
   const [learningTargetAiLoading, setLearningTargetAiLoading] = useState(false);
   const [learningTargetAiError, setLearningTargetAiError] = useState<string | null>(null);
@@ -1016,25 +1335,49 @@ const App: React.FC = () => {
     const v = persistedPlan?.hookType;
     return v === 'video' || v === 'question' || v === 'mystery' ? v : 'question';
   });
-  const [hookContent, setHookContent] = useState<string>(() => (persistedPlan?.hookContent as string) || '');
-  const [directPoints, setDirectPoints] = useState<string>(() => (persistedPlan?.directPoints as string) || '');
+  const [hookContent, setHookContent] = useState<string>(
+    () => (persistedPlan?.hookContent as string) || ''
+  );
+  const [directPoints, setDirectPoints] = useState<string>(
+    () => (persistedPlan?.directPoints as string) || ''
+  );
   const [cfuIdeas, setCfuIdeas] = useState<string>(() => (persistedPlan?.cfuIdeas as string) || '');
-  const [guidedTemplate, setGuidedTemplate] = useState<'Socratic Seminar' | 'Jigsaw' | 'Lab' | 'Think-Pair-Share'>(() => {
+  const [guidedTemplate, setGuidedTemplate] = useState<
+    'Socratic Seminar' | 'Jigsaw' | 'Lab' | 'Think-Pair-Share'
+  >(() => {
     const v = persistedPlan?.guidedTemplate;
-    return v === 'Socratic Seminar' || v === 'Jigsaw' || v === 'Lab' || v === 'Think-Pair-Share' ? v : 'Think-Pair-Share';
+    return v === 'Socratic Seminar' || v === 'Jigsaw' || v === 'Lab' || v === 'Think-Pair-Share'
+      ? v
+      : 'Think-Pair-Share';
   });
-  const [guidedNotes, setGuidedNotes] = useState<string>(() => (persistedPlan?.guidedNotes as string) || '');
-  const [independentNotes, setIndependentNotes] = useState<string>(() => (persistedPlan?.independentNotes as string) || '');
+  const [guidedNotes, setGuidedNotes] = useState<string>(
+    () => (persistedPlan?.guidedNotes as string) || ''
+  );
+  const [independentNotes, setIndependentNotes] = useState<string>(
+    () => (persistedPlan?.independentNotes as string) || ''
+  );
   const [attachmentName, setAttachmentName] = useState<string | null>(null);
 
-  const [resourceQuery, setResourceQuery] = useState<string>(() => (persistedPlan?.resourceQuery as string) || '');
-  const [resourceCards, setResourceCards] = useState<ResourceCard[]>(() => (persistedPlan?.resourceCards as ResourceCard[]) || []);
+  const [resourceQuery, setResourceQuery] = useState<string>(
+    () => (persistedPlan?.resourceQuery as string) || ''
+  );
+  const [resourceCards, setResourceCards] = useState<ResourceCard[]>(
+    () => (persistedPlan?.resourceCards as ResourceCard[]) || []
+  );
   const [levelerValue, setLevelerValue] = useState(8);
 
-  const [exitTicketPrompt, setExitTicketPrompt] = useState<string>(() => (persistedPlan?.exitTicketPrompt as string) || '');
-  const [exitTicketQuestions, setExitTicketQuestions] = useState<string[]>(() => (persistedPlan?.exitTicketQuestions as string[]) || []);
-  const [successCriteria, setSuccessCriteria] = useState<string[]>(() => (persistedPlan?.successCriteria as string[]) || []);
-  const [reflectionNote, setReflectionNote] = useState<string>(() => (persistedPlan?.reflectionNote as string) || '');
+  const [exitTicketPrompt, setExitTicketPrompt] = useState<string>(
+    () => (persistedPlan?.exitTicketPrompt as string) || ''
+  );
+  const [exitTicketQuestions, setExitTicketQuestions] = useState<string[]>(
+    () => (persistedPlan?.exitTicketQuestions as string[]) || []
+  );
+  const [successCriteria, setSuccessCriteria] = useState<string[]>(
+    () => (persistedPlan?.successCriteria as string[]) || []
+  );
+  const [reflectionNote, setReflectionNote] = useState<string>(
+    () => (persistedPlan?.reflectionNote as string) || ''
+  );
 
   // Objective-based generation choices are tracked per part below.
 
@@ -1042,17 +1385,25 @@ const App: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  const sortItems = <T extends { name?: string, title?: string, lastUsed?: number }>(items: T[], mode: SortMode): T[] => {
+  const sortItems = <T extends { name?: string; title?: string; lastUsed?: number }>(
+    items: T[],
+    mode: SortMode
+  ): T[] => {
     const result = [...items];
     if (mode === 'recent') return result.sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0));
-    if (mode === 'alphabetical') return result.sort((a, b) => (a.name || a.title || '').localeCompare(b.name || b.title || ''));
-    return result; 
+    if (mode === 'alphabetical')
+      return result.sort((a, b) =>
+        (a.name || a.title || '').localeCompare(b.name || b.title || '')
+      );
+    return result;
   };
 
   const [showCourses, setShowCourses] = useState(true);
   const [rosterCourseOpenId, setRosterCourseOpenId] = useState<string | null>(null);
   const [rosterCourseStudents, setRosterCourseStudents] = useState<Record<string, Student[]>>({});
-  const [rosterCourseAssignments, setRosterCourseAssignments] = useState<Record<string, Assignment[]>>({});
+  const [rosterCourseAssignments, setRosterCourseAssignments] = useState<
+    Record<string, Assignment[]>
+  >({});
   const [rosterSelectedStudentIds, setRosterSelectedStudentIds] = useState<Set<string>>(new Set());
   const [rosterSelectedAssignmentId, setRosterSelectedAssignmentId] = useState<string>('');
   const [rosterLoadingCourseId, setRosterLoadingCourseId] = useState<string | null>(null);
@@ -1070,6 +1421,10 @@ const App: React.FC = () => {
   void attentionExpanded;
   void setAttentionExpanded;
   const [courseSearch, setCourseSearch] = useState('');
+  const deferredAssignmentSearch = useDeferredValue(assignmentSearchQuery);
+  const deferredCourseSearch = useDeferredValue(courseSearch);
+  const deferredScheduleSearch = useDeferredValue(scheduleSearch);
+  const deferredBatchRosterQuery = useDeferredValue(batchRosterQuery);
   const [showLast7Details, setShowLast7Details] = useState(false);
   void showLast7Details;
   void setShowLast7Details;
@@ -1145,23 +1500,27 @@ const App: React.FC = () => {
     const query = globalSearchQuery.toLowerCase().trim();
     let filteredCourses = sortItems([...courses], dashboardSort);
     let filteredAssignments = sortItems([...assignments], assignmentSort);
-    
+
     if (query) {
-      filteredCourses = filteredCourses.filter(c => c.name.toLowerCase().includes(query) || c.period.toLowerCase().includes(query));
-      filteredAssignments = filteredAssignments.filter(a => a.title.toLowerCase().includes(query));
+      filteredCourses = filteredCourses.filter(
+        (c) => c.name.toLowerCase().includes(query) || c.period.toLowerCase().includes(query)
+      );
+      filteredAssignments = filteredAssignments.filter((a) =>
+        a.title.toLowerCase().includes(query)
+      );
     }
-    
+
     return { courses: filteredCourses, assignments: filteredAssignments };
   }, [courses, assignments, globalSearchQuery, dashboardSort, assignmentSort]);
 
   const filteredAssignmentsList = useMemo(() => {
     let result = sortItems([...assignments], assignmentSort);
-    if (assignmentSearchQuery.trim()) {
-      const query = assignmentSearchQuery.toLowerCase();
-      result = result.filter(assignment => assignment.title.toLowerCase().includes(query));
+    if (deferredAssignmentSearch.trim()) {
+      const query = deferredAssignmentSearch.toLowerCase();
+      result = result.filter((assignment) => assignment.title.toLowerCase().includes(query));
     }
     return result;
-  }, [assignments, assignmentSearchQuery, assignmentSort]);
+  }, [assignments, deferredAssignmentSearch, assignmentSort]);
 
   // Viewport setup to absolutely prevent zooming when typing on mobile
   useEffect(() => {
@@ -1171,15 +1530,25 @@ const App: React.FC = () => {
       metaViewport.setAttribute('name', 'viewport');
       document.head.appendChild(metaViewport);
     }
-    metaViewport.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0');
+    metaViewport.setAttribute(
+      'content',
+      'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0'
+    );
   }, []);
 
   useEffect(() => {
-    const handleOnline = () => { setIsOnline(true); setShowOnlineRestore(true); setTimeout(() => setShowOnlineRestore(false), 4000); };
+    const handleOnline = () => {
+      setIsOnline(true);
+      setShowOnlineRestore(true);
+      setTimeout(() => setShowOnlineRestore(false), 4000);
+    };
     const handleOffline = () => setIsOnline(false);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-    return () => { window.removeEventListener('online', handleOnline); window.removeEventListener('offline', handleOffline); };
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
   }, []);
 
   useEffect(() => {
@@ -1187,7 +1556,10 @@ const App: React.FC = () => {
     localStorage.setItem('dg_dark_mode', JSON.stringify(isDarkMode));
   }, [isDarkMode]);
 
-  useEffect(() => localStorage.setItem('dg_pending_sync', JSON.stringify(gradedWorks)), [gradedWorks]);
+  useEffect(
+    () => localStorage.setItem('dg_pending_sync', JSON.stringify(gradedWorks)),
+    [gradedWorks]
+  );
   useEffect(() => {
     try {
       localStorage.setItem(SCHEDULE_KEY, JSON.stringify(scheduleItems));
@@ -1209,7 +1581,13 @@ const App: React.FC = () => {
       // ignore
     }
   }, [scheduleView]);
-  useEffect(() => { try { localStorage.setItem(FILE_VAULT_KEY, JSON.stringify(fileVaultLinks)); } catch { /* ignore */ } }, [fileVaultLinks, FILE_VAULT_KEY]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(FILE_VAULT_KEY, JSON.stringify(fileVaultLinks));
+    } catch {
+      /* ignore */
+    }
+  }, [fileVaultLinks, FILE_VAULT_KEY]);
   useEffect(() => {
     try {
       localStorage.setItem(PLAN_ADMIN_EMAIL_KEY, planAdminEmail);
@@ -1288,7 +1666,10 @@ const App: React.FC = () => {
   ]);
   useEffect(() => localStorage.setItem('dg_history', JSON.stringify(history)), [history]);
   useEffect(() => localStorage.setItem('dg_cache_courses', JSON.stringify(courses)), [courses]);
-  useEffect(() => localStorage.setItem('dg_cache_assignments', JSON.stringify(assignments)), [assignments]);
+  useEffect(
+    () => localStorage.setItem('dg_cache_assignments', JSON.stringify(assignments)),
+    [assignments]
+  );
   useEffect(() => localStorage.setItem('dg_cache_students', JSON.stringify(students)), [students]);
 
   useEffect(() => {
@@ -1314,8 +1695,8 @@ const App: React.FC = () => {
       setCourses(courseData);
       setSyncStatus('ok');
     } catch (err) {
-      console.error("Failed to load courses:", err);
-      setAuthError("Could not sync courses from Classroom. Please check your connection.");
+      console.error('Failed to load courses:', err);
+      setAuthError('Could not sync courses from Classroom. Please check your connection.');
       setSyncStatus('error');
     } finally {
       setIsSyncingClassroom(false);
@@ -1334,17 +1715,21 @@ const App: React.FC = () => {
   // Attention items for dashboard (used for notification and UI)
   const dashboardAttention = useMemo(() => {
     const studentStats: Record<string, { name: string; totalScore: number; totalMax: number }> = {};
-    history.forEach(w => {
+    history.forEach((w) => {
       if (!w.studentId) return;
       if (!studentStats[w.studentId]) {
-        studentStats[w.studentId] = { name: w.studentName || 'Student', totalScore: 0, totalMax: 0 };
+        studentStats[w.studentId] = {
+          name: w.studentName || 'Student',
+          totalScore: 0,
+          totalMax: 0,
+        };
       }
       studentStats[w.studentId].totalScore += w.score;
       studentStats[w.studentId].totalMax += w.maxScore || 100;
     });
     const atRisk = Object.values(studentStats)
-      .map(s => ({ ...s, pct: s.totalMax > 0 ? (s.totalScore / s.totalMax) * 100 : 0 }))
-      .filter(s => s.pct < 70)
+      .map((s) => ({ ...s, pct: s.totalMax > 0 ? (s.totalScore / s.totalMax) * 100 : 0 }))
+      .filter((s) => s.pct < 70)
       .sort((a, b) => a.pct - b.pct)
       .slice(0, 3);
     return { pendingGrades: gradedWorks.length, atRiskStudents: atRisk };
@@ -1368,10 +1753,20 @@ const App: React.FC = () => {
       .filter((item) => (item.kind ?? 'reminder') === 'teacherBlock' && sameDay(item.date))
       .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
 
-    let lesson: { title: string; course?: string; timeLabel?: string } | undefined;
+    let lesson:
+      | {
+          title: string;
+          course?: string;
+          timeLabel?: string;
+          scheduleItemId?: string;
+          scheduleDate?: string;
+        }
+      | undefined;
     if (teacherBlocksToday.length > 0) {
       const item = teacherBlocksToday[0];
-      const courseName = item.courseId ? courses.find((c) => c.id === item.courseId)?.name : undefined;
+      const courseName = item.courseId
+        ? courses.find((c) => c.id === item.courseId)?.name
+        : undefined;
       let timeLabel: string | undefined;
       if (item.time) {
         const [hRaw, mRaw] = item.time.split(':');
@@ -1401,6 +1796,8 @@ const App: React.FC = () => {
         title: item.title,
         course: courseName,
         timeLabel,
+        scheduleItemId: item.id,
+        scheduleDate: formatLocalYMD(today),
       };
     }
 
@@ -1423,7 +1820,9 @@ const App: React.FC = () => {
         }
         return { item, when: d };
       })
-      .filter((x): x is { item: ScheduleItem; when: Date } => !!x && x.when.getTime() > now.getTime())
+      .filter(
+        (x): x is { item: ScheduleItem; when: Date } => !!x && x.when.getTime() > now.getTime()
+      )
       .sort((a, b) => a.when.getTime() - b.when.getTime());
 
     let upcoming: { title: string; whenLabel: string } | undefined;
@@ -1479,26 +1878,45 @@ const App: React.FC = () => {
     const { pendingGrades, atRiskStudents } = dashboardAttention;
     const hasAttention = pendingGrades > 0 || atRiskStudents.length > 0;
     if (!hasAttention) return;
-    if (dashboardNotifiedRef.current && dashboardNotifiedRef.current.pending === pendingGrades && dashboardNotifiedRef.current.atRisk === atRiskStudents.length) return;
+    if (
+      dashboardNotifiedRef.current &&
+      dashboardNotifiedRef.current.pending === pendingGrades &&
+      dashboardNotifiedRef.current.atRisk === atRiskStudents.length
+    )
+      return;
     dashboardNotifiedRef.current = { pending: pendingGrades, atRisk: atRiskStudents.length };
 
     if (typeof window === 'undefined' || !('Notification' in window)) return;
     const requestAndNotify = () => {
       if (Notification.permission === 'granted') {
         const parts: string[] = [];
-        if (pendingGrades > 0) parts.push(`${pendingGrades} grade${pendingGrades === 1 ? '' : 's'} ready to sync`);
-        if (atRiskStudents.length > 0) parts.push(`${atRiskStudents.length} student${atRiskStudents.length === 1 ? '' : 's'} to check in on`);
+        if (pendingGrades > 0)
+          parts.push(`${pendingGrades} grade${pendingGrades === 1 ? '' : 's'} ready to sync`);
+        if (atRiskStudents.length > 0)
+          parts.push(
+            `${atRiskStudents.length} student${atRiskStudents.length === 1 ? '' : 's'} to check in on`
+          );
         if (parts.length) {
-          new Notification('DoneGrading – What needs your attention', { body: parts.join(' · '), icon: '/DoneGradingLogo.png' });
+          new Notification('DoneGrading – What needs your attention', {
+            body: parts.join(' · '),
+            icon: '/DoneGradingLogo.png',
+          });
         }
       } else if (Notification.permission !== 'denied') {
-        Notification.requestPermission().then(p => {
+        Notification.requestPermission().then((p) => {
           if (p === 'granted') {
             const parts: string[] = [];
-            if (pendingGrades > 0) parts.push(`${pendingGrades} grade${pendingGrades === 1 ? '' : 's'} ready to sync`);
-            if (atRiskStudents.length > 0) parts.push(`${atRiskStudents.length} student${atRiskStudents.length === 1 ? '' : 's'} to check in on`);
+            if (pendingGrades > 0)
+              parts.push(`${pendingGrades} grade${pendingGrades === 1 ? '' : 's'} ready to sync`);
+            if (atRiskStudents.length > 0)
+              parts.push(
+                `${atRiskStudents.length} student${atRiskStudents.length === 1 ? '' : 's'} to check in on`
+              );
             if (parts.length) {
-              new Notification('DoneGrading – What needs your attention', { body: parts.join(' · '), icon: '/DoneGradingLogo.png' });
+              new Notification('DoneGrading – What needs your attention', {
+                body: parts.join(' · '),
+                icon: '/DoneGradingLogo.png',
+              });
             }
           }
         });
@@ -1573,7 +1991,10 @@ const App: React.FC = () => {
       } else if (code === 'auth/weak-password') {
         setAuthError('Password should be at least 6 characters.');
       } else {
-        setAuthError(getUnknownErr(err).message.replace('Firebase: ', '') || 'Sign in failed. Please try again.');
+        setAuthError(
+          getUnknownErr(err).message.replace('Firebase: ', '') ||
+            'Sign in failed. Please try again.'
+        );
       }
     }
   };
@@ -1602,7 +2023,10 @@ const App: React.FC = () => {
       } else if (code === 'auth/too-many-requests') {
         setAuthError('Too many reset attempts. Try again later.');
       } else {
-        setAuthError(getUnknownErr(err).message.replace('Firebase: ', '') || 'Could not send reset email. Please try again.');
+        setAuthError(
+          getUnknownErr(err).message.replace('Firebase: ', '') ||
+            'Could not send reset email. Please try again.'
+        );
       }
     }
   };
@@ -1618,10 +2042,10 @@ const App: React.FC = () => {
     saveAuthSession(token, '');
 
     fetch('https://classroom.googleapis.com/v1/userProfiles/me', {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { Authorization: `Bearer ${token}` },
     })
-      .then(res => res.json())
-      .then(profileData => {
+      .then((res) => res.json())
+      .then((profileData) => {
         if (profileData.name?.fullName) {
           const name = profileData.name.fullName;
           setEducatorName(name);
@@ -1629,13 +2053,16 @@ const App: React.FC = () => {
           saveAuthSession(token, name);
         }
       })
-      .catch(e => console.error("Could not fetch educator profile name", e));
+      .catch((e) => console.error('Could not fetch educator profile name', e));
 
-    service.getCourses()
+    service
+      .getCourses()
       .then(setCourses)
-      .catch(e => {
-        console.error("Could not load courses", e);
-        setAuthError("Could not load courses. Check that Google Classroom API is enabled for your project.");
+      .catch((e) => {
+        console.error('Could not load courses', e);
+        setAuthError(
+          'Could not load courses. Check that Google Classroom API is enabled for your project.'
+        );
       });
   }, []);
 
@@ -1649,7 +2076,10 @@ const App: React.FC = () => {
       if (session.educatorName) {
         setEducatorName(session.educatorName);
       }
-      service.getCourses().then(setCourses).catch(() => {});
+      service
+        .getCourses()
+        .then(setCourses)
+        .catch(() => {});
     }
   }, []);
 
@@ -1708,13 +2138,15 @@ const App: React.FC = () => {
         error_callback?: (err: { type?: string }) => void;
         callback?: (response: { access_token?: string }) => void;
       };
-      const g = (window as Window & {
-        google?: {
-          accounts?: {
-            oauth2?: { initTokenClient: (opts: GoogleTokenOpts) => GoogleTokenClient };
+      const g = (
+        window as Window & {
+          google?: {
+            accounts?: {
+              oauth2?: { initTokenClient: (opts: GoogleTokenOpts) => GoogleTokenClient };
+            };
           };
-        };
-      }).google;
+        }
+      ).google;
       if (!g?.accounts?.oauth2?.initTokenClient) {
         setAuthError('Google sign-in SDK is still loading. Please wait a moment and try again.');
         return;
@@ -1724,7 +2156,8 @@ const App: React.FC = () => {
 
       const client = g.accounts.oauth2.initTokenClient({
         client_id: effectiveGoogleClientId,
-        scope: "https://www.googleapis.com/auth/classroom.courses https://www.googleapis.com/auth/classroom.courses.readonly https://www.googleapis.com/auth/classroom.coursework.me https://www.googleapis.com/auth/classroom.rosters.readonly https://www.googleapis.com/auth/classroom.coursework.students https://www.googleapis.com/auth/classroom.profile.emails https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets",
+        scope:
+          'https://www.googleapis.com/auth/classroom.courses https://www.googleapis.com/auth/classroom.courses.readonly https://www.googleapis.com/auth/classroom.coursework.me https://www.googleapis.com/auth/classroom.rosters.readonly https://www.googleapis.com/auth/classroom.coursework.students https://www.googleapis.com/auth/classroom.profile.emails https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets',
         prompt: 'consent',
         ux_mode: 'redirect',
         redirect_uri: redirectUri,
@@ -1748,8 +2181,13 @@ const App: React.FC = () => {
       return;
     }
     const clientId = import.meta.env.VITE_APPLE_CLIENT_ID;
-    const AppleIDAuth = (window as Window & { AppleID?: { auth?: { init: (opts: unknown) => Promise<void>; signIn: () => Promise<unknown> } } })
-      .AppleID?.auth;
+    const AppleIDAuth = (
+      window as Window & {
+        AppleID?: {
+          auth?: { init: (opts: unknown) => Promise<void>; signIn: () => Promise<unknown> };
+        };
+      }
+    ).AppleID?.auth;
     if (!clientId || !AppleIDAuth?.init) {
       setAuthError('Apple Sign-In is not yet configured. Please use Sign in with Google for now.');
       return;
@@ -1770,7 +2208,9 @@ const App: React.FC = () => {
               (res as { authorization?: { code?: string } }).authorization?.code;
             if (code) {
               // TODO: exchange code for tokens and complete sign-in
-              setAuthError('Apple Sign-In integration is in progress. Please use Sign in with Google.');
+              setAuthError(
+                'Apple Sign-In integration is in progress. Please use Sign in with Google.'
+              );
             }
           },
           () => setAuthError('Apple Sign-In was cancelled or failed.')
@@ -1782,10 +2222,10 @@ const App: React.FC = () => {
   };
 
   const selectCourse = async (course: Course) => {
-    setCourses(courses.map(c => c.id === course.id ? { ...c, lastUsed: Date.now() } : c));
+    setCourses(courses.map((c) => (c.id === course.id ? { ...c, lastUsed: Date.now() } : c)));
     setSelectedCourse(course);
     logEvent('course_select', { courseId: course.id, source: course.source || 'local' });
-    setAssignmentSearchQuery(''); 
+    setAssignmentSearchQuery('');
     setPhase(AppPhase.ASSIGNMENT_SELECT);
 
     // If this is a real Google Classroom course, load its assignments and students.
@@ -1793,13 +2233,13 @@ const App: React.FC = () => {
       try {
         const [assignmentData, studentData] = await Promise.all([
           classroom.getAssignments(course.id),
-          classroom.getStudents(course.id)
+          classroom.getStudents(course.id),
         ]);
         setAssignments(assignmentData);
         setStudents(studentData);
         setSyncStatus('ok');
       } catch (err) {
-        console.error("Failed to load assignments/students for course", course.id, err);
+        console.error('Failed to load assignments/students for course', course.id, err);
         // Make sure we don't accidentally show assignments from a different course
         setAssignments([]);
         setStudents([]);
@@ -1820,7 +2260,7 @@ const App: React.FC = () => {
       const ordered =
         batchStudentOrderRef.current.length > 0
           ? batchStudentOrderRef.current.filter((id) => selectedSet.has(id))
-          : students.filter(s => selectedSet.has(s.id)).map(s => s.id);
+          : students.filter((s) => selectedSet.has(s.id)).map((s) => s.id);
       batchStudentOrderRef.current = ordered;
       batchNextIndexRef.current = 0;
     } else {
@@ -1831,30 +2271,33 @@ const App: React.FC = () => {
   };
 
   // (Removed) old modal voice capture flow.
-  
-  const handleScanPaperRubric = () => { 
+
+  const handleScanPaperRubric = () => {
     setCameraError(null);
     setRubricAutoAttempts(0);
-    setIsScanningRubric(true); 
+    setIsScanningRubric(true);
   };
 
   // Periodic background sync for assignments/students for the currently selected Google Classroom course
   useEffect(() => {
-    if (!classroom || !isOnline || !selectedCourse || selectedCourse.source === 'local' || phase !== AppPhase.ASSIGNMENT_SELECT) {
+    if (
+      !classroom ||
+      !isOnline ||
+      !selectedCourse ||
+      selectedCourse.source === 'local' ||
+      phase !== AppPhase.ASSIGNMENT_SELECT
+    ) {
       return;
     }
     const courseId = selectedCourse.id;
     const id = window.setInterval(() => {
-      Promise.all([
-        classroom.getAssignments(courseId),
-        classroom.getStudents(courseId),
-      ])
+      Promise.all([classroom.getAssignments(courseId), classroom.getStudents(courseId)])
         .then(([assignmentData, studentData]) => {
           setAssignments(assignmentData);
           setStudents(studentData);
         })
         .catch((err) => {
-          console.error("Auto-sync assignments/students failed", err);
+          console.error('Auto-sync assignments/students failed', err);
         });
     }, 20000);
     return () => window.clearInterval(id);
@@ -1864,9 +2307,19 @@ const App: React.FC = () => {
     if (!selectedAssignment) return;
     setIsGeneratingRubric(true);
     try {
-      const text = await generateRubric(selectedAssignment.title, selectedAssignment.rubric, selectedAssignment.maxScore);
-      if (text) { setCustomRubric(text); }
-    } catch (err) { console.error(err); } finally { setIsGeneratingRubric(false); }
+      const text = await generateRubric(
+        selectedAssignment.title,
+        selectedAssignment.rubric,
+        selectedAssignment.maxScore
+      );
+      if (text) {
+        setCustomRubric(text);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsGeneratingRubric(false);
+    }
   };
 
   const handleOpenAsnCreation = (course: Course, e: React.MouseEvent) => {
@@ -1881,7 +2334,8 @@ const App: React.FC = () => {
 
   const handleShareApp = async () => {
     const shareUrl = window.location.origin;
-    const shareText = 'Checkout DoneGrading! An app made for educators to plan lessons, teach with timers, grade with AI, schedule classes, and communicate with students—all in one place.';
+    const shareText =
+      'Checkout DoneGrading! An app made for educators to plan lessons, teach with timers, grade with AI, schedule classes, and communicate with students—all in one place.';
     try {
       if (typeof navigator.share === 'function') {
         await navigator.share({
@@ -1940,14 +2394,14 @@ const App: React.FC = () => {
           name: newCourseName,
           period: 'New Course',
           source: 'local',
-          lastUsed: Date.now()
+          lastUsed: Date.now(),
         };
       }
       setCourses([newCourse, ...courses]);
       setPhase(AppPhase.DASHBOARD);
     } catch (err: unknown) {
-      console.error("Failed to create course", err);
-      setCreationError(getUnknownErr(err).message || "Failed to create course.");
+      console.error('Failed to create course', err);
+      setCreationError(getUnknownErr(err).message || 'Failed to create course.');
       setSyncStatus('error');
     } finally {
       setIsCreatingCourse(false);
@@ -1966,7 +2420,7 @@ const App: React.FC = () => {
       setSyncStatus('ok');
     } catch (err: unknown) {
       console.error(err);
-      setCreationError(getUnknownErr(err).message || "Failed to create assignment.");
+      setCreationError(getUnknownErr(err).message || 'Failed to create assignment.');
       setSyncStatus('error');
     } finally {
       setIsCreatingAssignment(false);
@@ -1974,7 +2428,7 @@ const App: React.FC = () => {
   };
 
   const handleDeleteScan = (index: number) => {
-    setGradedWorks(prev => prev.filter((_, i) => i !== index));
+    setGradedWorks((prev) => prev.filter((_, i) => i !== index));
     setAuditSelectedIndexes(new Set());
     setAuditEditSelectedOnly(false);
   };
@@ -2000,27 +2454,35 @@ const App: React.FC = () => {
     const setupCamera = async () => {
       if (phase !== AppPhase.GRADING_LOOP && !isScanningRubric) return;
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } });
-        currentStream = stream; 
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+        });
+        currentStream = stream;
         streamRef.current = stream;
-        if (videoRef.current) { 
-          videoRef.current.srcObject = stream; 
-          videoRef.current.onloadedmetadata = () => videoRef.current?.play().catch(e => console.error(e)); 
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.onloadedmetadata = () =>
+            videoRef.current?.play().catch((e) => console.error(e));
         }
-      } catch (err: unknown) { 
-        console.error("Camera access denied:", err);
-        setCameraError("Camera access denied or unavailable. Please check device settings.");
+      } catch (err: unknown) {
+        console.error('Camera access denied:', err);
+        setCameraError('Camera access denied or unavailable. Please check device settings.');
       }
     };
     setupCamera();
-    return () => { if (currentStream) currentStream.getTracks().forEach(track => track.stop()); streamRef.current = null; };
-  }, [phase, isScanningRubric]); 
+    return () => {
+      if (currentStream) currentStream.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    };
+  }, [phase, isScanningRubric]);
 
   const toggleFlash = async () => {
     if (streamRef.current) {
       const track = streamRef.current.getVideoTracks()[0];
       if (track && typeof track.getCapabilities === 'function') {
-        const capabilities = track.getCapabilities() as MediaTrackCapabilities & { torch?: boolean };
+        const capabilities = track.getCapabilities() as MediaTrackCapabilities & {
+          torch?: boolean;
+        };
         if (capabilities?.torch) {
           try {
             await track.applyConstraints({
@@ -2029,40 +2491,45 @@ const App: React.FC = () => {
             setIsFlashOn(!isFlashOn);
             return;
           } catch (e) {
-            console.warn("Torch apply failed", e);
+            console.warn('Torch apply failed', e);
           }
         }
       }
-      alert("Camera flash is not supported on this device/browser.");
+      alert('Camera flash is not supported on this device/browser.');
     }
   };
 
   const captureFrame = useCallback((quality: number = 0.8): string | null => {
     if (!videoRef.current || !canvasRef.current) return null;
-    const video = videoRef.current; if (video.readyState < 2) return null;
-    const canvas = canvasRef.current; canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true }); if (!ctx) return null;
-    ctx.drawImage(video, 0, 0); return canvas.toDataURL('image/jpeg', quality).split(',')[1];
+    const video = videoRef.current;
+    if (video.readyState < 2) return null;
+    const canvas = canvasRef.current;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0);
+    return canvas.toDataURL('image/jpeg', quality).split(',')[1];
   }, []);
 
   const handleRubricSnap = useCallback(async () => {
     if (isProcessing || !isScanningRubric || cameraError) return;
-    
+
     setRubricScanError(null);
-    
-    const base64 = captureFrame(0.5); 
+
+    const base64 = captureFrame(0.5);
     if (!base64) return;
 
     setIsProcessing(true);
     setRubricScanProgress(0);
-    
+
     const progressInterval = setInterval(() => {
       setRubricScanProgress((prev) => {
         if (prev >= 98) {
           clearInterval(progressInterval);
-          return 98; 
+          return 98;
         }
-        return prev + 2; 
+        return prev + 2;
       });
     }, 40);
 
@@ -2072,31 +2539,33 @@ const App: React.FC = () => {
       const upper = trimmed.toUpperCase();
       // Consider it a failure only if the model explicitly says NO RUBRIC or returns almost nothing
       const isFailure = !trimmed || trimmed.length < 5 || upper === 'NO RUBRIC';
-      
+
       if (!isFailure) {
         clearInterval(progressInterval);
         setRubricScanProgress(100);
-        
+
         setTimeout(() => {
-            setCustomRubric(trimmed);
-            setIsScanningRubric(false);
-            setIsProcessing(false);
-            setRubricSuccess(true);
-            setTimeout(() => setRubricSuccess(false), 5000);
-        }, 600); 
+          setCustomRubric(trimmed);
+          setIsScanningRubric(false);
+          setIsProcessing(false);
+          setRubricSuccess(true);
+          setTimeout(() => setRubricSuccess(false), 5000);
+        }, 600);
       } else {
-         clearInterval(progressInterval);
-         setRubricScanProgress(0);
-         setIsProcessing(false);
-         setRubricScanError("Could not clearly read the document. Please ensure it is well-lit and try again.");
-         setTimeout(() => setRubricScanError(null), 4000);
+        clearInterval(progressInterval);
+        setRubricScanProgress(0);
+        setIsProcessing(false);
+        setRubricScanError(
+          'Could not clearly read the document. Please ensure it is well-lit and try again.'
+        );
+        setTimeout(() => setRubricScanError(null), 4000);
       }
     } catch (err) {
-      console.error("Rubric scan error", err);
+      console.error('Rubric scan error', err);
       clearInterval(progressInterval);
       setRubricScanProgress(0);
       setIsProcessing(false);
-      setRubricScanError("Network error occurred. Please try again.");
+      setRubricScanError('Network error occurred. Please try again.');
       setTimeout(() => setRubricScanError(null), 4000);
     }
   }, [isProcessing, isScanningRubric, cameraError, captureFrame]);
@@ -2122,7 +2591,7 @@ const App: React.FC = () => {
               grays.push(0.299 * r + 0.587 * g + 0.114 * b);
             }
             const avg = grays.reduce((a, v) => a + v, 0) / grays.length;
-            const bits = grays.map(v => (v >= avg ? '1' : '0')).join('');
+            const bits = grays.map((v) => (v >= avg ? '1' : '0')).join('');
             resolve(bits);
           } catch {
             resolve(null);
@@ -2160,10 +2629,10 @@ const App: React.FC = () => {
   const handleAutoSnap = useCallback(async () => {
     if (cooldownRef.current || showQuickPick || cameraError) return;
     if (gradingMode === GradingMode.MULTI_PAGE && multiPageCaptureInFlightRef.current) return;
-    
+
     const optimalHighResBase64 = captureFrame(0.9);
     const apiBase64 = captureFrame(0.4);
-    
+
     if (!optimalHighResBase64 || !apiBase64 || !selectedAssignment) return;
 
     if (frameAssessInFlightRef.current) return;
@@ -2175,7 +2644,7 @@ const App: React.FC = () => {
         setScanHealth(assess.scanHealth || 0);
         setActiveGeometry(assess.corners ?? null);
       }
-      
+
       const captureThreshold = gradingMode === GradingMode.MULTI_PAGE ? 88 : 80;
       const assessHealth = assess?.scanHealth ?? 0;
       if (!assess || assessHealth < captureThreshold) return;
@@ -2196,15 +2665,20 @@ const App: React.FC = () => {
           setMultiPageHint('Same page detected — turn the page or move to the next page.');
           window.setTimeout(() => setMultiPageHint(null), 1400);
           cooldownRef.current = true;
-          setTimeout(() => { cooldownRef.current = false; }, 900);
+          setTimeout(() => {
+            cooldownRef.current = false;
+          }, 900);
           multiPageCaptureInFlightRef.current = false;
           return;
         }
 
         if (hash) multiPageLastHashRef.current = hash;
 
-        setMultiPageCapture(prev => {
-          const nextUrls = [...prev.croppedDataUrls, `data:image/jpeg;base64,${croppedBase64}`].slice(0, 10);
+        setMultiPageCapture((prev) => {
+          const nextUrls = [
+            ...prev.croppedDataUrls,
+            `data:image/jpeg;base64,${croppedBase64}`,
+          ].slice(0, 10);
           const nextApi = [...prev.apiBase64s, apiBase64].slice(0, 10);
           return {
             croppedDataUrls: nextUrls,
@@ -2215,7 +2689,9 @@ const App: React.FC = () => {
         setMultiPageHint('Captured. Turn the page, then keep scanning.');
         window.setTimeout(() => setMultiPageHint(null), 1200);
         cooldownRef.current = true;
-        setTimeout(() => { cooldownRef.current = false; }, 2500);
+        setTimeout(() => {
+          cooldownRef.current = false;
+        }, 2500);
         multiPageCaptureInFlightRef.current = false;
         return;
       }
@@ -2236,20 +2712,38 @@ const App: React.FC = () => {
       setScanQueueHint(`Queued (${scanQueueRef.current.length}). Keep scanning.`);
       window.setTimeout(() => setScanQueueHint(null), 1200);
       cooldownRef.current = true;
-      setTimeout(() => { cooldownRef.current = false; }, 1200);
-    } catch (err) { 
-      console.error(err); 
-    } finally { 
+      setTimeout(() => {
+        cooldownRef.current = false;
+      }, 1200);
+    } catch (err) {
+      console.error(err);
+    } finally {
       frameAssessInFlightRef.current = false;
     }
-  }, [cameraError, captureFrame, selectedAssignment, showQuickPick, gradingMode, computeAHash, hammingDistance]);
+  }, [
+    cameraError,
+    captureFrame,
+    selectedAssignment,
+    showQuickPick,
+    gradingMode,
+    computeAHash,
+    hammingDistance,
+  ]);
 
   useEffect(() => {
     let interval: number | null = null;
-    if (phase === AppPhase.GRADING_LOOP && isOnline && !showQuickPick && !isProcessing && !cameraError) {
-      interval = window.setInterval(() => handleAutoSnap(), 500); 
+    if (
+      phase === AppPhase.GRADING_LOOP &&
+      isOnline &&
+      !showQuickPick &&
+      !isProcessing &&
+      !cameraError
+    ) {
+      interval = window.setInterval(() => handleAutoSnap(), 500);
     }
-    return () => { if (interval) clearInterval(interval); };
+    return () => {
+      if (interval) clearInterval(interval);
+    };
   }, [phase, isOnline, showQuickPick, isProcessing, cameraError, handleAutoSnap]);
 
   const openNextQueuedReview = useCallback(() => {
@@ -2265,13 +2759,13 @@ const App: React.FC = () => {
     const detectedIds = new Set<string>();
     const candidateStudents =
       scanStudentMode === 'batch' && batchSelectedStudentIds.size > 0
-        ? students.filter(s => batchSelectedStudentIds.has(s.id))
+        ? students.filter((s) => batchSelectedStudentIds.has(s.id))
         : students;
 
     if (next.result.studentName) {
       const lowerDetected = next.result.studentName.toLowerCase().replace(/[^a-z]/g, '');
       if (lowerDetected.length > 2) {
-        const match = candidateStudents.find(s => {
+        const match = candidateStudents.find((s) => {
           const sName = s.name.toLowerCase().replace(/[^a-z]/g, '');
           return sName.includes(lowerDetected) || lowerDetected.includes(sName);
         });
@@ -2310,19 +2804,20 @@ const App: React.FC = () => {
           job.base64,
           customRubric || selectedAssignment.rubric,
           selectedAssignment.maxScore,
-          students.map(s => s.name),
+          students.map((s) => s.name),
           false
         );
         const finalResult: GradingResponse =
           result ||
           ({
             detected: true,
-            studentName: "",
+            studentName: '',
             score: 0,
-            feedback: "AI unavailable right now. Your scan is saved in the review queue so you can match the student and fill in a score/feedback manually.",
+            feedback:
+              'AI unavailable right now. Your scan is saved in the review queue so you can match the student and fill in a score/feedback manually.',
             confidence: 0,
             scanHealth: job.scanHealth,
-            alignment: "IN_FRAME",
+            alignment: 'IN_FRAME',
             corners: job.corners || undefined,
             transcription: job.transcription,
           } as GradingResponse);
@@ -2330,15 +2825,16 @@ const App: React.FC = () => {
         scanReviewRef.current.push({ id: job.id, result: finalResult, dataUrl: job.dataUrl });
         setScanReviewQueueCount(scanReviewRef.current.length);
       } catch (e) {
-        console.error("Queued grading failed", e);
+        console.error('Queued grading failed', e);
         const fallback = {
           detected: true,
-          studentName: "",
+          studentName: '',
           score: 0,
-          feedback: "Grading failed due to a network/API error. Your scan is saved in the review queue so you can match the student and fill in a score/feedback manually.",
+          feedback:
+            'Grading failed due to a network/API error. Your scan is saved in the review queue so you can match the student and fill in a score/feedback manually.',
           confidence: 0,
           scanHealth: job.scanHealth,
-          alignment: "IN_FRAME",
+          alignment: 'IN_FRAME',
           corners: job.corners || undefined,
           transcription: job.transcription,
         } as GradingResponse;
@@ -2351,7 +2847,9 @@ const App: React.FC = () => {
       }
     };
 
-    const intervalId = window.setInterval(() => { void tick(); }, 450);
+    const intervalId = window.setInterval(() => {
+      void tick();
+    }, 450);
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
@@ -2360,21 +2858,27 @@ const App: React.FC = () => {
 
   const confirmQuickPickStudents = () => {
     if (!pendingWork || !selectedAssignment || selectedQuickPickIds.size === 0) return;
-    const selectedStudents = students.filter(s => selectedQuickPickIds.has(s.id));
-    selectedStudents.forEach(student => {
+    const selectedStudents = students.filter((s) => selectedQuickPickIds.has(s.id));
+    selectedStudents.forEach((student) => {
       const newWork: GradedWork = {
         studentId: student.id,
         studentName: student.name,
         studentEmail: student.email,
         score: parseFloat(manualScore) || (pendingWork.score ?? 0),
         maxScore: selectedAssignment.maxScore,
-        feedback: manualFeedback || (pendingWork.feedback || ''), 
-        imageUrls: pendingWork.imageUrls || [], 
-        status: 'draft', timestamp: Date.now(),
-        courseName: selectedCourse?.name || '', assignmentName: selectedAssignment.title, courseId: selectedCourse?.id || '',
-        assignmentId: selectedAssignment.id, scanHealth: pendingWork.scanHealth, transcription: pendingWork.transcription, geometry: pendingWork.corners
+        feedback: manualFeedback || pendingWork.feedback || '',
+        imageUrls: pendingWork.imageUrls || [],
+        status: 'draft',
+        timestamp: Date.now(),
+        courseName: selectedCourse?.name || '',
+        assignmentName: selectedAssignment.title,
+        courseId: selectedCourse?.id || '',
+        assignmentId: selectedAssignment.id,
+        scanHealth: pendingWork.scanHealth,
+        transcription: pendingWork.transcription,
+        geometry: pendingWork.corners,
       };
-      setGradedWorks(prev => [...prev, newWork]);
+      setGradedWorks((prev) => [...prev, newWork]);
     });
 
     // Advance batch pointer only after the teacher confirms which student this scan belongs to.
@@ -2386,9 +2890,18 @@ const App: React.FC = () => {
       else batchNextIndexRef.current = batchNextIndexRef.current + 1;
     }
 
-    setStudents(students.map(s => selectedQuickPickIds.has(s.id) ? { ...s, lastUsed: Date.now() } : s));
-    setShowQuickPick(false); setPendingWork(null); setActiveGeometry(null); setScanHealth(0); setOneWordCommand(null);
-    cooldownRef.current = true; setTimeout(() => { cooldownRef.current = false; }, 1000); 
+    setStudents(
+      students.map((s) => (selectedQuickPickIds.has(s.id) ? { ...s, lastUsed: Date.now() } : s))
+    );
+    setShowQuickPick(false);
+    setPendingWork(null);
+    setActiveGeometry(null);
+    setScanHealth(0);
+    setOneWordCommand(null);
+    cooldownRef.current = true;
+    setTimeout(() => {
+      cooldownRef.current = false;
+    }, 1000);
   };
 
   const handleManualCaptureSinglePage = useCallback(async () => {
@@ -2412,14 +2925,28 @@ const App: React.FC = () => {
         corners: activeGeometry || null,
       });
       setScanQueueCount(scanQueueRef.current.length);
-      setScanQueueHint(`Captured (${scanQueueRef.current.length}). ${isOnline ? 'Grading in background.' : 'Will grade when online.'}`);
+      setScanQueueHint(
+        `Captured (${scanQueueRef.current.length}). ${isOnline ? 'Grading in background.' : 'Will grade when online.'}`
+      );
       window.setTimeout(() => setScanQueueHint(null), 1200);
       cooldownRef.current = true;
-      setTimeout(() => { cooldownRef.current = false; }, 900);
+      setTimeout(() => {
+        cooldownRef.current = false;
+      }, 900);
     } catch (e) {
       console.error(e);
     }
-  }, [gradingMode, cooldownRef, showQuickPick, cameraError, selectedAssignment, captureFrame, activeGeometry, isOnline, scanHealth]);
+  }, [
+    gradingMode,
+    cooldownRef,
+    showQuickPick,
+    cameraError,
+    selectedAssignment,
+    captureFrame,
+    activeGeometry,
+    isOnline,
+    scanHealth,
+  ]);
 
   const finalizeMultiPage = async () => {
     if (isProcessing || showQuickPick) return;
@@ -2433,7 +2960,7 @@ const App: React.FC = () => {
         multiPageCapture.apiBase64s,
         customRubric || selectedAssignment.rubric,
         selectedAssignment.maxScore,
-        students.map(s => s.name)
+        students.map((s) => s.name)
       );
       if (!result) return;
 
@@ -2451,13 +2978,13 @@ const App: React.FC = () => {
       const detectedIds = new Set<string>();
       const candidateStudents =
         scanStudentMode === 'batch' && batchSelectedStudentIds.size > 0
-          ? students.filter(s => batchSelectedStudentIds.has(s.id))
+          ? students.filter((s) => batchSelectedStudentIds.has(s.id))
           : students;
 
       if (detectedName) {
         const lowerDetected = detectedName.toLowerCase().replace(/[^a-z]/g, '');
         if (lowerDetected.length > 2) {
-          const match = candidateStudents.find(s => {
+          const match = candidateStudents.find((s) => {
             const sName = s.name.toLowerCase().replace(/[^a-z]/g, '');
             return sName.includes(lowerDetected) || lowerDetected.includes(sName);
           });
@@ -2487,16 +3014,16 @@ const App: React.FC = () => {
     const currentWorks = [...gradedWorks];
     const indexSet = indexesToSync && indexesToSync.length > 0 ? new Set(indexesToSync) : null;
     const worksToSync = indexSet
-      ? (indexesToSync ?? []).map(i => currentWorks[i]).filter(Boolean)
+      ? (indexesToSync ?? []).map((i) => currentWorks[i]).filter(Boolean)
       : currentWorks;
     if (worksToSync.length === 0) return;
     if (!isPaid) {
       setPhase(AppPhase.PAYWALL);
       return;
     }
-    
+
     logEvent('sync_start', { count: worksToSync.length });
-    setPhase(AppPhase.SYNCING); 
+    setPhase(AppPhase.SYNCING);
     setSyncReceipts([]);
     setSyncFailedKeys(new Set());
     setSyncProgress({
@@ -2508,20 +3035,25 @@ const App: React.FC = () => {
       emailSuccesses: 0,
       emailFailures: 0,
     });
-    
+
     let targetFolderId: string | null = null;
-    
+
     try {
       const rootFolderId = await getOrCreateDriveFolder(accessToken, 'DoneGrading Scans');
       const safeAssignmentFolderName = worksToSync[0]?.assignmentName
-        ? worksToSync[0].assignmentName.replace(/[^a-zA-Z0-9 ]/g, "").trim()
+        ? worksToSync[0].assignmentName.replace(/[^a-zA-Z0-9 ]/g, '').trim()
         : 'Misc Scans';
-      targetFolderId = await getOrCreateDriveFolder(accessToken, safeAssignmentFolderName, rootFolderId);
+      targetFolderId = await getOrCreateDriveFolder(
+        accessToken,
+        safeAssignmentFolderName,
+        rootFolderId
+      );
     } catch (e) {
-      console.error("Could not set up Drive folders. We will skip Drive upload for this sync.", e);
+      console.error('Could not set up Drive folders. We will skip Drive upload for this sync.', e);
     }
 
-    const workKey = (w: GradedWork) => `${w.courseId}::${w.assignmentId}::${w.studentId}::${w.timestamp}`;
+    const workKey = (w: GradedWork) =>
+      `${w.courseId}::${w.assignmentId}::${w.studentId}::${w.timestamp}`;
     const receiptList: Array<{
       key: string;
       studentName: string;
@@ -2534,14 +3066,25 @@ const App: React.FC = () => {
     const failedKeys = new Set<string>();
 
     // Important: worksToSync is derived from either selected indexes or the full pending list.
-    let successes = 0, failures = 0;
-    
+    let successes = 0,
+      failures = 0;
+
     for (let i = 0; i < worksToSync.length; i++) {
-      const work = worksToSync[i]; 
-      setSyncProgress(prev => ({ ...prev, current: i + 1, message: `Syncing grade for ${work.studentName}...` }));
-      
-      try { 
-        await classroom.postGrade(work.courseId, work.assignmentId, work.studentId, work.score, work.feedback); 
+      const work = worksToSync[i];
+      setSyncProgress((prev) => ({
+        ...prev,
+        current: i + 1,
+        message: `Syncing grade for ${work.studentName}...`,
+      }));
+
+      try {
+        await classroom.postGrade(
+          work.courseId,
+          work.assignmentId,
+          work.studentId,
+          work.score,
+          work.feedback
+        );
 
         const base64Images =
           work.imageUrls && work.imageUrls.length > 0
@@ -2556,7 +3099,10 @@ const App: React.FC = () => {
 
         let driveSaved = 0;
         if (targetFolderId && base64Images.length > 0) {
-          setSyncProgress(prev => ({ ...prev, message: `Saving scan${base64Images.length > 1 ? 's' : ''} to Drive for ${work.studentName}...` }));
+          setSyncProgress((prev) => ({
+            ...prev,
+            message: `Saving scan${base64Images.length > 1 ? 's' : ''} to Drive for ${work.studentName}...`,
+          }));
           for (let p = 0; p < base64Images.length; p++) {
             const b64 = base64Images[p];
             await uploadImageToDrive(
@@ -2580,7 +3126,9 @@ const App: React.FC = () => {
           const normalizedFeedback = shortFeedback.replace(/\s+/g, ' ');
           const feedbackSentence = normalizedFeedback
             ? // ensure it ends with a period
-              (normalizedFeedback.endsWith('.') ? normalizedFeedback : `${normalizedFeedback}.`)
+              normalizedFeedback.endsWith('.')
+              ? normalizedFeedback
+              : `${normalizedFeedback}.`
             : '';
 
           // Example: "In Photosynthesis Lab in Biology you scored 18/20. You explained ... A scan of your work is attached."
@@ -2592,41 +3140,58 @@ const App: React.FC = () => {
             bodyParts.push(feedbackSentence);
           }
           if (base64Images.length > 0) {
-            bodyParts.push(base64Images.length === 1 ? 'A scan of your work is attached.' : 'Scans of your work are attached.');
+            bodyParts.push(
+              base64Images.length === 1
+                ? 'A scan of your work is attached.'
+                : 'Scans of your work are attached.'
+            );
           } else {
             bodyParts.push('Your grade and feedback have been updated in Google Classroom.');
           }
 
           const body = bodyParts.join(' ');
 
-            try {
-              await classroom.sendGradeEmail(
-                work.studentEmail,
-                subject,
-                body,
-                base64Images.length > 0 ? base64Images : undefined
-              );
-              setSyncProgress(prev => ({
-                ...prev,
-                emailSuccesses: prev.emailSuccesses + 1,
-              }));
-              emailOk = true;
-              logEvent('sync_email_success', { studentEmail: work.studentEmail, assignmentId: work.assignmentId });
-            } catch (e) {
-              console.warn(`Grade posted but email to ${work.studentEmail} failed:`, e);
-              setSyncProgress(prev => ({
-                ...prev,
-                emailFailures: prev.emailFailures + 1,
-              }));
-              emailOk = false;
-              logEvent('sync_email_error', { studentEmail: work.studentEmail, assignmentId: work.assignmentId, error: String(e) });
-            }
+          try {
+            await classroom.sendGradeEmail(
+              work.studentEmail,
+              subject,
+              body,
+              base64Images.length > 0 ? base64Images : undefined
+            );
+            setSyncProgress((prev) => ({
+              ...prev,
+              emailSuccesses: prev.emailSuccesses + 1,
+            }));
+            emailOk = true;
+            logEvent('sync_email_success', {
+              studentEmail: work.studentEmail,
+              assignmentId: work.assignmentId,
+            });
+          } catch (e) {
+            console.warn(`Grade posted but email to ${work.studentEmail} failed:`, e);
+            setSyncProgress((prev) => ({
+              ...prev,
+              emailFailures: prev.emailFailures + 1,
+            }));
+            emailOk = false;
+            logEvent('sync_email_error', {
+              studentEmail: work.studentEmail,
+              assignmentId: work.assignmentId,
+              error: String(e),
+            });
+          }
         }
 
         successes++;
         const key = workKey(work);
         successKeys.add(key);
-        receiptList.push({ key, studentName: work.studentName, ok: true, emailOk, drivePagesSaved: driveSaved });
+        receiptList.push({
+          key,
+          studentName: work.studentName,
+          ok: true,
+          emailOk,
+          drivePagesSaved: driveSaved,
+        });
       } catch (err) {
         console.error(err);
         failures++;
@@ -2640,15 +3205,15 @@ const App: React.FC = () => {
         });
       }
     }
-    
-    setSyncProgress(prev => ({ ...prev, message: 'Finalizing...', successes, failures }));
+
+    setSyncProgress((prev) => ({ ...prev, message: 'Finalizing...', successes, failures }));
     if (failures === 0) {
       logEvent('sync_success', { total: worksToSync.length });
     } else {
       logEvent('sync_error', { total: worksToSync.length, successes, failures });
     }
     const successesToArchive = worksToSync.filter((w) => successKeys.has(workKey(w)));
-    setHistory(prev => [...successesToArchive, ...prev]);
+    setHistory((prev) => [...successesToArchive, ...prev]);
     setGradedWorks(() => {
       // Remove only successful items from the local queue; keep failures for retry.
       if (indexSet) {
@@ -2665,8 +3230,60 @@ const App: React.FC = () => {
   };
 
   const bumpNavUsage = useCallback((key: 'plan' | 'grade' | 'teach' | 'communicate') => {
-    setNavUsage(prev => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
+    setNavUsage((prev) => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
   }, []);
+
+  const openScheduleToItem = useCallback(
+    (itemId: string, dateISO: string) => {
+      bumpNavUsage('teach');
+      setScheduleCursor(dateISO);
+      setScheduleView('agenda');
+      setScheduleFocusRequest({ itemId, dateISO });
+      setPhase(AppPhase.SCHEDULE);
+    },
+    [bumpNavUsage]
+  );
+
+  useEffect(() => {
+    if (phase !== AppPhase.SCHEDULE || !scheduleFocusRequest) return;
+    const { itemId, dateISO } = scheduleFocusRequest;
+    const esc =
+      typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+        ? CSS.escape
+        : (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const run = () => {
+      let el = document.querySelector(
+        `[data-schedule-focus-id="${esc(itemId)}"][data-schedule-focus-date="${esc(dateISO)}"]`
+      ) as HTMLElement | null;
+      if (!el) {
+        el = document.querySelector(
+          `[data-schedule-focus-id="${esc(itemId)}"]`
+        ) as HTMLElement | null;
+      }
+      if (el) {
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        el.classList.add(
+          'ring-2',
+          'ring-indigo-400',
+          'ring-offset-2',
+          'ring-offset-white',
+          'dark:ring-offset-slate-900'
+        );
+        window.setTimeout(() => {
+          el.classList.remove(
+            'ring-2',
+            'ring-indigo-400',
+            'ring-offset-2',
+            'ring-offset-white',
+            'dark:ring-offset-slate-900'
+          );
+        }, 2200);
+      }
+      setScheduleFocusRequest(null);
+    };
+    const t = window.setTimeout(run, 450);
+    return () => window.clearTimeout(t);
+  }, [phase, scheduleFocusRequest]);
 
   const appContextValue: import('./context/AppContext').AppContextValue = {
     phase,
@@ -2681,6 +3298,7 @@ const App: React.FC = () => {
     syncStatus,
     navUsage,
     bumpNavUsage,
+    openScheduleToItem,
     homeSummary,
     handleShareApp,
     handleSignOut,
@@ -2708,16 +3326,23 @@ const App: React.FC = () => {
 
     const now = Date.now();
     const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
-    const gradedLast7Works = history.filter(w => now - w.timestamp < sevenDaysMs);
-    const gradedLast7Pages = gradedLast7Works.reduce((sum, w) => sum + (w.imageUrls?.length || 1), 0);
+    const gradedLast7Works = history.filter((w) => now - w.timestamp < sevenDaysMs);
+    const gradedLast7Pages = gradedLast7Works.reduce(
+      (sum, w) => sum + (w.imageUrls?.length || 1),
+      0
+    );
     void gradedLast7Pages;
 
     const studentStats: Record<string, { name: string; totalScore: number; totalMax: number }> = {};
     const atRiskCourseIds = new Set<string>();
-    history.forEach(w => {
+    history.forEach((w) => {
       if (!w.studentId) return;
       if (!studentStats[w.studentId]) {
-        studentStats[w.studentId] = { name: w.studentName || 'Student', totalScore: 0, totalMax: 0 };
+        studentStats[w.studentId] = {
+          name: w.studentName || 'Student',
+          totalScore: 0,
+          totalMax: 0,
+        };
       }
       studentStats[w.studentId].totalScore += w.score;
       studentStats[w.studentId].totalMax += w.maxScore || 100;
@@ -2725,13 +3350,19 @@ const App: React.FC = () => {
       if (pct < 70 && w.courseId) atRiskCourseIds.add(w.courseId);
     });
     const atRiskStudents = Object.values(studentStats)
-      .map(s => ({ ...s, pct: s.totalMax > 0 ? (s.totalScore / s.totalMax) * 100 : 0 }))
-      .filter(s => s.pct < 70)
+      .map((s) => ({ ...s, pct: s.totalMax > 0 ? (s.totalScore / s.totalMax) * 100 : 0 }))
+      .filter((s) => s.pct < 70)
       .sort((a, b) => a.pct - b.pct)
       .slice(0, 3);
 
+    const atRiskCount = atRiskStudents.length;
+    const hasGradedHistoryForAtRisk = history.some((w) => !!w.studentId);
+    const atRiskEmptyHint = !hasGradedHistoryForAtRisk
+      ? 'No local grade history yet — grade & sync to see flags.'
+      : 'No students below ~70% in recent grades on this device.';
+
     const pendingByCourseId: Record<string, number> = {};
-    gradedWorks.forEach(w => {
+    gradedWorks.forEach((w) => {
       if (!w.courseId) return;
       pendingByCourseId[w.courseId] = (pendingByCourseId[w.courseId] || 0) + 1;
     });
@@ -2740,7 +3371,6 @@ const App: React.FC = () => {
     // - Recent: first 3 after sorting + local search filter
     // - Other: remaining courses (toggleable)
     void dashboardResults;
-    void courseSearch;
     const hasSyncError = syncStatus === 'error';
 
     const getResumePhase = (): AppPhase => {
@@ -2760,63 +3390,112 @@ const App: React.FC = () => {
             ? 'Review & sync'
             : 'Scan setup';
 
+    const resumeCourseName = selectedCourse?.name?.trim() || '';
+    const resumeAssignmentTitle = selectedAssignment?.title?.trim() || '';
+    /** One-line hint so “Resume” isn’t opaque (UX #2). */
+    const resumeDestinationLine =
+      resumePhase === AppPhase.GRADE_COURSE_PICKER
+        ? 'Pick a class to continue grading'
+        : resumePhase === AppPhase.ASSIGNMENT_SELECT
+          ? resumeCourseName
+            ? `${resumeCourseName} → choose assignment`
+            : 'Choose a class, then an assignment'
+          : resumeCourseName && resumeAssignmentTitle
+            ? `${resumeCourseName} · ${resumeAssignmentTitle} → ${resumeLabel.toLowerCase()}`
+            : resumeCourseName
+              ? `${resumeCourseName} → ${resumeLabel.toLowerCase()}`
+              : resumeLabel;
+
+    const retryDashboardSync = () => {
+      if (!classroom || !isOnline) return;
+      void (async () => {
+        try {
+          await loadCourses();
+          if (selectedCourse && selectedCourse.source !== 'local') {
+            const [assignmentData, studentData] = await Promise.all([
+              classroom.getAssignments(selectedCourse.id),
+              classroom.getStudents(selectedCourse.id),
+            ]);
+            setAssignments(assignmentData);
+            setStudents(studentData);
+          }
+          setSyncStatus('ok');
+        } catch (err) {
+          console.error('Manual sync failed', err);
+          setSyncStatus('error');
+        }
+      })();
+    };
+
     return (
       <PageWrapper
-        headerTitle={educatorName || 'Dashboard'}
+        headerTitle={educatorName || 'Grade'}
         headerSubtitle={homeSummary?.todayShortLabel || todayLabel || undefined}
         isOnline={isOnline}
         isDarkMode={isDarkMode}
         setIsDarkMode={setIsDarkMode}
         syncStatus={syncStatus}
-        onSyncClick={() => {
-          if (!classroom || !isOnline) return;
-          void (async () => {
-            try {
-              await loadCourses();
-              if (selectedCourse && selectedCourse.source !== 'local') {
-                const [assignmentData, studentData] = await Promise.all([
-                  classroom.getAssignments(selectedCourse.id),
-                  classroom.getStudents(selectedCourse.id),
-                ]);
-                setAssignments(assignmentData);
-                setStudents(studentData);
-              }
-              setSyncStatus('ok');
-            } catch (err) {
-              console.error('Manual sync failed', err);
-              setSyncStatus('error');
-            }
-          })();
-        }}
+        onSyncClick={retryDashboardSync}
       >
-        <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-hidden pb-24 pt-1">
+        <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-hidden pb-3 pt-1">
           {/* TODAY CARD */}
           <div className="p-4 rounded-2xl bg-slate-900 text-white border border-white/10 shadow-sm overflow-hidden">
             <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-[10px] font-black uppercase tracking-widest text-slate-300">Today</div>
-                <div className="mt-1 text-base font-black truncate">
-                  {homeSummary.lesson ? homeSummary.lesson.title : 'No lesson block scheduled'}
+              {homeSummary.lesson?.scheduleItemId && homeSummary.lesson.scheduleDate ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    openScheduleToItem(
+                      homeSummary.lesson!.scheduleItemId!,
+                      homeSummary.lesson!.scheduleDate!
+                    )
+                  }
+                  className="min-w-0 text-left rounded-xl -m-1 p-1 hover:bg-white/10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
+                >
+                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-300">
+                    Today
+                  </div>
+                  <div className="mt-1 text-base font-black truncate">
+                    {homeSummary.lesson.title}
+                  </div>
+                  <div className="mt-1 text-[12px] text-slate-200">
+                    {homeSummary.lesson.course ? `${homeSummary.lesson.course} · ` : ''}
+                    {homeSummary.lesson.timeLabel || 'Plan when ready'}
+                  </div>
+                  <div className="mt-1 text-[9px] font-semibold text-indigo-200/90">
+                    Tap to open in Schedule →
+                  </div>
+                </button>
+              ) : (
+                <div className="min-w-0">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-300">
+                    Today
+                  </div>
+                  <div className="mt-1 text-base font-black truncate">
+                    {homeSummary.lesson ? homeSummary.lesson.title : 'No lesson block scheduled'}
+                  </div>
+                  <div className="mt-1 text-[12px] text-slate-200">
+                    {homeSummary.lesson?.course ? `${homeSummary.lesson.course} · ` : ''}
+                    {homeSummary.lesson?.timeLabel || 'Plan when ready'}
+                  </div>
                 </div>
-                <div className="mt-1 text-[12px] text-slate-200">
-                  {homeSummary.lesson?.course ? `${homeSummary.lesson.course} · ` : ''}
-                  {homeSummary.lesson?.timeLabel || 'Plan when ready'}
-                </div>
-              </div>
+              )}
               <button
                 type="button"
                 onClick={() => {
                   bumpNavUsage('teach');
                   setPhase(AppPhase.SCHEDULE);
                 }}
-                className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-[10px] font-black uppercase tracking-widest"
+                className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-[10px] font-black uppercase tracking-widest shrink-0"
               >
                 Open schedule
               </button>
             </div>
             {homeSummary.upcoming && (
               <div className="mt-3 px-3 py-2 rounded-xl bg-white/10 border border-white/10">
-                <div className="text-[10px] font-black uppercase tracking-widest text-slate-300">Next up</div>
+                <div className="text-[10px] font-black uppercase tracking-widest text-slate-300">
+                  Next up
+                </div>
                 <div className="mt-1 text-sm font-black truncate">{homeSummary.upcoming.title}</div>
                 <div className="text-[11px] text-slate-200">{homeSummary.upcoming.whenLabel}</div>
               </div>
@@ -2833,8 +3512,12 @@ const App: React.FC = () => {
               }}
               className="p-4 rounded-2xl bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 text-left shadow-sm hover:opacity-90 transition-opacity"
             >
-              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Plan</div>
-              <div className="mt-1 text-base font-black text-slate-900 dark:text-white">90‑second draft</div>
+              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                Plan
+              </div>
+              <div className="mt-1 text-base font-black text-slate-900 dark:text-white">
+                90‑second draft
+              </div>
               <div className="text-sm text-slate-600 dark:text-slate-300 mt-0.5">
                 QuickStart → blocks → checks → export
               </div>
@@ -2848,58 +3531,105 @@ const App: React.FC = () => {
               }}
               className="p-4 rounded-2xl bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 text-left shadow-sm hover:opacity-90 transition-opacity"
             >
-              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Teach</div>
-              <div className="mt-1 text-base font-black text-slate-900 dark:text-white">Run class</div>
+              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                Teach
+              </div>
+              <div className="mt-1 text-base font-black text-slate-900 dark:text-white">
+                Run class
+              </div>
               <div className="text-sm text-slate-600 dark:text-slate-300 mt-0.5">
                 Timers, agenda, and teacher blocks
               </div>
             </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                bumpNavUsage('grade');
-                setPhase(resumePhase);
-              }}
-              className="p-4 rounded-2xl bg-emerald-500 text-white text-left shadow-sm hover:bg-emerald-600 transition-colors"
+            <div
+              className={`rounded-2xl bg-emerald-500 text-white shadow-sm overflow-hidden flex flex-col ${
+                hasSyncError ? 'ring-2 ring-rose-400/50 dark:ring-rose-500/40' : ''
+              }`}
             >
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-[10px] font-black uppercase tracking-widest text-emerald-100">Grade</div>
-                <div className="flex items-center gap-2">
-                  <div className="px-2.5 py-1 rounded-full bg-black/15 border border-white/20 text-[10px] font-black uppercase tracking-widest text-emerald-50">
-                    Queue · {pendingGrades}
+              <button
+                type="button"
+                onClick={() => {
+                  bumpNavUsage('grade');
+                  setPhase(resumePhase);
+                }}
+                className="p-4 text-left hover:bg-emerald-600 transition-colors w-full"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-emerald-100">
+                    Grade
                   </div>
-                  {hasSyncError && (
-                    <div className="px-2.5 py-1 rounded-full bg-rose-500/20 border border-rose-500/30 text-[10px] font-black uppercase tracking-widest text-rose-50">
-                      Error
+                  <div className="flex items-center gap-2">
+                    <div className="px-2.5 py-1 rounded-full bg-black/15 border border-white/20 text-[10px] font-black uppercase tracking-widest text-emerald-50">
+                      Queue · {pendingGrades}
                     </div>
-                  )}
+                    {hasSyncError && (
+                      <div className="px-2.5 py-1 rounded-full bg-rose-500/20 border border-rose-500/30 text-[10px] font-black uppercase tracking-widest text-rose-50">
+                        Error
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-              <div className="mt-1 text-base font-black">Resume · {resumeLabel}</div>
-              <div className="text-sm text-emerald-50/90 mt-0.5">
-                Batch scan by default for bulletproof attribution
-              </div>
-            </button>
+                <div className="mt-1 text-base font-black">Resume</div>
+                <div
+                  className="mt-1 text-[12px] sm:text-[13px] font-semibold text-emerald-50/95 leading-snug line-clamp-2 text-balance"
+                  title={resumeDestinationLine}
+                >
+                  {resumeDestinationLine}
+                </div>
+                <div className="text-sm text-emerald-50/90 mt-0.5">
+                  Batch scan by default for bulletproof attribution
+                </div>
+                {hasSyncError && (
+                  <p className="mt-2 text-[11px] font-semibold text-rose-50 leading-snug">
+                    Classroom data didn’t sync. Tap{' '}
+                    <span className="underline decoration-rose-200/80">Retry sync</span> below or
+                    the red status in the header.
+                  </p>
+                )}
+              </button>
+              {hasSyncError && (
+                <button
+                  type="button"
+                  onClick={() => retryDashboardSync()}
+                  disabled={!classroom || !isOnline}
+                  className="w-full py-2.5 px-4 bg-black/25 hover:bg-black/35 disabled:opacity-50 disabled:cursor-not-allowed border-t border-white/15 text-[10px] font-black uppercase tracking-widest text-white"
+                >
+                  {!isOnline ? 'Offline — can’t retry' : 'Retry sync'}
+                </button>
+              )}
+            </div>
 
             <button
               type="button"
+              disabled={!isOnline}
+              title={!isOnline ? NEEDS_INTERNET_COMMUNICATE : undefined}
+              aria-label={
+                !isOnline
+                  ? `${NEEDS_INTERNET_COMMUNICATE} (offline)`
+                  : 'Communicate: inbox, parent messages, and summaries'
+              }
               onClick={() => {
+                if (!isOnline) return;
                 bumpNavUsage('communicate');
                 setPhase(AppPhase.RECORDS);
               }}
-              className="p-4 rounded-2xl bg-indigo-600 text-white text-left shadow-sm hover:bg-indigo-700 transition-colors"
+              className={`p-4 rounded-2xl bg-indigo-600 text-white text-left shadow-sm transition-colors ${
+                !isOnline
+                  ? 'opacity-45 cursor-not-allowed hover:bg-indigo-600'
+                  : 'hover:bg-indigo-700'
+              }`}
             >
               <div className="flex items-center justify-between gap-2">
-                <div className="text-[10px] font-black uppercase tracking-widest text-indigo-100">Communicate</div>
+                <div className="text-[10px] font-black uppercase tracking-widest text-indigo-100">
+                  Communicate
+                </div>
                 <div className="px-2.5 py-1 rounded-full bg-black/15 border border-white/20 text-[10px] font-black uppercase tracking-widest text-indigo-50">
                   Follow‑ups · {homeSummary.parentsToContact || 0}
                 </div>
               </div>
               <div className="mt-1 text-base font-black">Inbox & summaries</div>
-              <div className="text-sm text-indigo-50/90 mt-0.5">
-                Send updates and keep records
-              </div>
+              <div className="text-sm text-indigo-50/90 mt-0.5">Send updates and keep records</div>
             </button>
           </div>
 
@@ -2908,19 +3638,85 @@ const App: React.FC = () => {
             <button
               type="button"
               onClick={() => setPhase(AppPhase.ROSTER_VIEW)}
+              aria-label={
+                totalStudents > 0
+                  ? `${totalStudents} student${totalStudents === 1 ? '' : 's'} on the active class roster. Open roster to add students to the review queue.`
+                  : 'Open roster: pick a class, then add students to the review queue for manual grading.'
+              }
               className="p-3 rounded-2xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 text-left hover:opacity-90 transition-opacity"
             >
-              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Students</div>
-              <div className="text-lg font-black text-slate-900 dark:text-white">{totalStudents}</div>
+              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                Students
+              </div>
+              <div className="text-lg font-black text-slate-900 dark:text-white">
+                {totalStudents}
+              </div>
+              <p className="mt-1 text-[10px] font-medium leading-snug text-slate-500 dark:text-slate-400 line-clamp-3">
+                {totalStudents > 0 ? (
+                  <>
+                    Roster &amp; add to{' '}
+                    <span className="text-emerald-600 dark:text-emerald-300 font-semibold">
+                      review queue
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    Pick a class in{' '}
+                    <span className="text-emerald-600 dark:text-emerald-300 font-semibold">
+                      Grade
+                    </span>{' '}
+                    to load names, then open roster here.
+                  </>
+                )}
+              </p>
             </button>
             <button
               type="button"
-              onClick={() => setPhase(AppPhase.RECORDS)}
-              disabled={atRiskStudents.length === 0}
-              className="p-3 rounded-2xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 text-left hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={!isOnline}
+              title={!isOnline ? NEEDS_INTERNET_COMMUNICATE : undefined}
+              onClick={() => {
+                if (!isOnline) return;
+                setPhase(AppPhase.RECORDS);
+              }}
+              aria-label={
+                !isOnline
+                  ? `${NEEDS_INTERNET_COMMUNICATE} At-risk tile opens Communicate when online.`
+                  : atRiskCount > 0
+                    ? `${atRiskCount} at-risk spotlight${atRiskCount === 1 ? '' : 's'} from local grades. Open Communicate.`
+                    : `${atRiskEmptyHint} Open Communicate for templates and follow-ups.`
+              }
+              className={`p-3 rounded-2xl bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 text-left transition-opacity ${
+                !isOnline ? 'opacity-45 cursor-not-allowed' : 'hover:opacity-90'
+              }`}
             >
-              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">At‑risk</div>
-              <div className="text-lg font-black text-slate-900 dark:text-white">{atRiskStudents.length}</div>
+              <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                At‑risk
+              </div>
+              <div className="text-lg font-black text-slate-900 dark:text-white">{atRiskCount}</div>
+              {atRiskCount === 0 ? (
+                <p className="mt-1 text-[10px] font-medium leading-snug text-slate-500 dark:text-slate-400 line-clamp-3">
+                  {atRiskEmptyHint}{' '}
+                  <span className="text-indigo-600 dark:text-indigo-300 font-semibold">
+                    {isOnline ? 'Communicate →' : 'Communicate (online) →'}
+                  </span>
+                </p>
+              ) : (
+                <p className="mt-1 text-[10px] font-medium leading-snug text-slate-500 dark:text-slate-400">
+                  {isOnline ? (
+                    <>
+                      Open{' '}
+                      <span className="text-indigo-600 dark:text-indigo-300 font-semibold">
+                        Communicate
+                      </span>{' '}
+                      for follow-ups
+                    </>
+                  ) : (
+                    <span className="text-slate-400 dark:text-slate-500">
+                      Go online to open Communicate.
+                    </span>
+                  )}
+                </p>
+              )}
             </button>
           </div>
         </div>
@@ -2936,18 +3732,18 @@ const App: React.FC = () => {
     });
 
     const pendingByCourseId: Record<string, number> = {};
-    gradedWorks.forEach(w => {
+    gradedWorks.forEach((w) => {
       if (!w.courseId) return;
       pendingByCourseId[w.courseId] = (pendingByCourseId[w.courseId] || 0) + 1;
     });
 
     const coursesFilteredForUI = dashboardResults.courses.filter((course) =>
-      courseSearch.trim()
-        ? course.name.toLowerCase().includes(courseSearch.toLowerCase())
+      deferredCourseSearch.trim()
+        ? course.name.toLowerCase().includes(deferredCourseSearch.toLowerCase())
         : true
     );
     const pinnedSet = new Set(pinnedCourseIds);
-    const isSearching = !!courseSearch.trim();
+    const isSearching = !!deferredCourseSearch.trim();
     const pinned = coursesFilteredForUI.filter((c) => pinnedSet.has(c.id));
     const recent = coursesFilteredForUI
       .filter((c) => !pinnedSet.has(c.id))
@@ -2955,7 +3751,9 @@ const App: React.FC = () => {
     const flat = showCourses ? coursesFilteredForUI : coursesFilteredForUI.slice(0, 8);
 
     const togglePin = (courseId: string) => {
-      setPinnedCourseIds((prev) => (prev.includes(courseId) ? prev.filter((id) => id !== courseId) : [courseId, ...prev]));
+      setPinnedCourseIds((prev) =>
+        prev.includes(courseId) ? prev.filter((id) => id !== courseId) : [courseId, ...prev]
+      );
     };
 
     const renderCourseRow = (course: Course) => {
@@ -2977,7 +3775,9 @@ const App: React.FC = () => {
         >
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 min-w-0">
-              <div className="font-black text-sm truncate text-slate-900 dark:text-white">{course.name}</div>
+              <div className="font-black text-sm truncate text-slate-900 dark:text-white">
+                {course.name}
+              </div>
               {isPinned && (
                 <span className="px-2 py-0.5 rounded-full bg-indigo-600/10 border border-indigo-500/20 text-indigo-700 dark:text-indigo-300 text-[9px] font-black uppercase tracking-widest shrink-0">
                   Pinned
@@ -2998,7 +3798,9 @@ const App: React.FC = () => {
                   At‑risk
                 </span>
               )}
-              <span className="text-[11px] text-slate-500 dark:text-slate-300 truncate">{course.period}</span>
+              <span className="text-[11px] text-slate-500 dark:text-slate-300 truncate">
+                {course.period}
+              </span>
             </div>
           </div>
           <button
@@ -3030,7 +3832,7 @@ const App: React.FC = () => {
         syncStatus={syncStatus}
         onBack={() => setPhase(AppPhase.DASHBOARD)}
       >
-        <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-hidden pb-24 pt-1">
+        <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-hidden pb-3 pt-1">
           <div className="bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl p-4 shadow-sm">
             <input
               type="search"
@@ -3039,24 +3841,35 @@ const App: React.FC = () => {
               placeholder="Search courses…"
               className="w-full px-4 py-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-700/60 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 outline-none"
             />
-            <div className="mt-3 flex items-center justify-between">
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
               <div className="text-xs font-black uppercase tracking-widest text-slate-500">
                 {coursesFilteredForUI.length} course{coursesFilteredForUI.length === 1 ? '' : 's'}
               </div>
-              <button
-                type="button"
-                className="text-[11px] font-semibold uppercase tracking-widest text-slate-600 dark:text-slate-300 hover:opacity-90"
-                onClick={() => setShowCourses(prev => !prev)}
-              >
-                {showCourses ? 'Show less' : 'Show all'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="text-[11px] font-semibold uppercase tracking-widest text-indigo-600 dark:text-indigo-400 hover:opacity-90"
+                  onClick={() => setPhase(AppPhase.COURSE_CREATION)}
+                >
+                  New course
+                </button>
+                <button
+                  type="button"
+                  className="text-[11px] font-semibold uppercase tracking-widest text-slate-600 dark:text-slate-300 hover:opacity-90"
+                  onClick={() => setShowCourses((prev) => !prev)}
+                >
+                  {showCourses ? 'Show less' : 'Show all'}
+                </button>
+              </div>
             </div>
           </div>
 
           <div className="flex-1 min-h-0 bg-white/60 dark:bg-slate-800/40 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl shadow-sm overflow-hidden">
             <div className="h-full overflow-y-auto custom-scrollbar p-2">
               {coursesFilteredForUI.length === 0 && (
-                <div className="py-10 text-center text-slate-500 text-sm font-bold">No courses match.</div>
+                <div className="py-10 text-center text-slate-500 text-sm font-bold">
+                  No courses match.
+                </div>
               )}
               {isSearching ? (
                 flat.map(renderCourseRow)
@@ -3073,7 +3886,9 @@ const App: React.FC = () => {
                       Recent
                     </div>
                   )}
-                  {(showCourses ? recent : recent.slice(0, Math.max(0, 8 - pinned.length))).map(renderCourseRow)}
+                  {(showCourses ? recent : recent.slice(0, Math.max(0, 8 - pinned.length))).map(
+                    renderCourseRow
+                  )}
                 </>
               )}
             </div>
@@ -3087,8 +3902,12 @@ const App: React.FC = () => {
     setRosterError(null);
     if (rosterCourseStudents[course.id] && rosterCourseAssignments[course.id]) return;
     if (!classroom || !isOnline || course.source === 'local') {
-      setRosterCourseStudents(prev => (prev[course.id] ? prev : { ...prev, [course.id]: prev[course.id] ?? [] }));
-      setRosterCourseAssignments(prev => (prev[course.id] ? prev : { ...prev, [course.id]: prev[course.id] ?? [] }));
+      setRosterCourseStudents((prev) =>
+        prev[course.id] ? prev : { ...prev, [course.id]: prev[course.id] ?? [] }
+      );
+      setRosterCourseAssignments((prev) =>
+        prev[course.id] ? prev : { ...prev, [course.id]: prev[course.id] ?? [] }
+      );
       return;
     }
     try {
@@ -3097,8 +3916,8 @@ const App: React.FC = () => {
         classroom.getStudents(course.id),
         classroom.getAssignments(course.id),
       ]);
-      setRosterCourseStudents(prev => ({ ...prev, [course.id]: studentsData }));
-      setRosterCourseAssignments(prev => ({ ...prev, [course.id]: assignmentsData }));
+      setRosterCourseStudents((prev) => ({ ...prev, [course.id]: studentsData }));
+      setRosterCourseAssignments((prev) => ({ ...prev, [course.id]: assignmentsData }));
     } catch (e) {
       console.error('Failed to load roster data', e);
       setRosterError('Could not load students/assignments for this course.');
@@ -3108,10 +3927,11 @@ const App: React.FC = () => {
   };
 
   const renderRosterView = () => {
-    const openCourse = rosterCourseOpenId ? courses.find(c => c.id === rosterCourseOpenId) : null;
+    const openCourse = rosterCourseOpenId ? courses.find((c) => c.id === rosterCourseOpenId) : null;
     const openStudents = openCourse ? (rosterCourseStudents[openCourse.id] ?? []) : [];
     const openAssignments = openCourse ? (rosterCourseAssignments[openCourse.id] ?? []) : [];
-    const selectedAssignment = openAssignments.find(a => a.id === rosterSelectedAssignmentId) ?? null;
+    const selectedAssignment =
+      openAssignments.find((a) => a.id === rosterSelectedAssignmentId) ?? null;
     const canAdd = !!openCourse && !!selectedAssignment && rosterSelectedStudentIds.size > 0;
 
     return (
@@ -3124,9 +3944,10 @@ const App: React.FC = () => {
         setIsDarkMode={setIsDarkMode}
         syncStatus={syncStatus}
       >
-        <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-y-auto pb-24 custom-scrollbar">
+        <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-y-auto pb-3 custom-scrollbar">
           <div className="text-sm text-slate-600 dark:text-slate-300">
-            Select a course, choose an assignment, then pick one or more students to add to <span className="font-semibold">Review Grades</span> for manual grading.
+            Select a course, choose an assignment, then pick one or more students to add to{' '}
+            <span className="font-semibold">Review Grades</span> for manual grading.
           </div>
 
           {rosterError && (
@@ -3141,7 +3962,10 @@ const App: React.FC = () => {
               const isLoading = rosterLoadingCourseId === course.id;
               const count = rosterCourseStudents[course.id]?.length;
               return (
-                <div key={course.id} className="border border-slate-200/60 dark:border-slate-700/60 rounded-xl overflow-hidden">
+                <div
+                  key={course.id}
+                  className="border border-slate-200/60 dark:border-slate-700/60 rounded-xl overflow-hidden"
+                >
                   <button
                     type="button"
                     onClick={() => {
@@ -3154,9 +3978,12 @@ const App: React.FC = () => {
                     className="w-full flex items-center justify-between px-3 py-3 bg-white/40 dark:bg-slate-900/40 hover:bg-white/60 dark:hover:bg-slate-900/60 transition-colors"
                   >
                     <div className="min-w-0 text-left">
-                      <div className="text-base font-semibold text-slate-900 dark:text-slate-100 truncate">{course.name}</div>
+                      <div className="text-base font-semibold text-slate-900 dark:text-slate-100 truncate">
+                        {course.name}
+                      </div>
                       <div className="text-xs text-slate-500 dark:text-slate-400">
-                        {course.period}{typeof count === 'number' ? ` · ${count} students` : ''}
+                        {course.period}
+                        {typeof count === 'number' ? ` · ${count} students` : ''}
                       </div>
                     </div>
                     <div className="text-xs text-slate-500 dark:text-slate-400 shrink-0">
@@ -3176,7 +4003,7 @@ const App: React.FC = () => {
                           className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none"
                         >
                           <option value="">Select an assignment…</option>
-                          {openAssignments.map(a => (
+                          {openAssignments.map((a) => (
                             <option key={a.id} value={a.id}>
                               {a.title} ({a.maxScore})
                             </option>
@@ -3194,11 +4021,17 @@ const App: React.FC = () => {
                             onClick={() => {
                               if (openStudents.length === 0) return;
                               const all = rosterSelectedStudentIds.size !== openStudents.length;
-                              setRosterSelectedStudentIds(all ? new Set(openStudents.map(s => s.id)) : new Set());
+                              setRosterSelectedStudentIds(
+                                all ? new Set(openStudents.map((s) => s.id)) : new Set()
+                              );
                             }}
                             className="text-xs font-semibold text-slate-500 dark:text-slate-400 underline underline-offset-2"
                           >
-                            {openStudents.length === 0 ? '' : rosterSelectedStudentIds.size === openStudents.length ? 'Clear' : 'Select all'}
+                            {openStudents.length === 0
+                              ? ''
+                              : rosterSelectedStudentIds.size === openStudents.length
+                                ? 'Clear'
+                                : 'Select all'}
                           </button>
                         </div>
 
@@ -3219,7 +4052,7 @@ const App: React.FC = () => {
                                   key={s.id}
                                   type="button"
                                   onClick={() => {
-                                    setRosterSelectedStudentIds(prev => {
+                                    setRosterSelectedStudentIds((prev) => {
                                       const next = new Set(prev);
                                       if (next.has(s.id)) next.delete(s.id);
                                       else next.add(s.id);
@@ -3229,10 +4062,18 @@ const App: React.FC = () => {
                                   className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-white/60 dark:hover:bg-slate-900/60 transition-colors"
                                 >
                                   <div className="min-w-0">
-                                    <div className="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">{s.name}</div>
-                                    {s.email && <div className="text-xs text-slate-500 dark:text-slate-400 truncate">{s.email}</div>}
+                                    <div className="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">
+                                      {s.name}
+                                    </div>
+                                    {s.email && (
+                                      <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                                        {s.email}
+                                      </div>
+                                    )}
                                   </div>
-                                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${checked ? 'border-indigo-500 bg-indigo-500' : 'border-slate-300 dark:border-slate-600'}`}>
+                                  <div
+                                    className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${checked ? 'border-indigo-500 bg-indigo-500' : 'border-slate-300 dark:border-slate-600'}`}
+                                  >
                                     {checked && <Check className="w-3 h-3 text-white" />}
                                   </div>
                                 </button>
@@ -3246,7 +4087,9 @@ const App: React.FC = () => {
                           disabled={!canAdd}
                           onClick={() => {
                             if (!openCourse || !selectedAssignment) return;
-                            const picked = openStudents.filter(s => rosterSelectedStudentIds.has(s.id));
+                            const picked = openStudents.filter((s) =>
+                              rosterSelectedStudentIds.has(s.id)
+                            );
                             if (picked.length === 0) return;
                             const nowTs = Date.now();
                             const newWorks: GradedWork[] = picked.map((student) => ({
@@ -3264,7 +4107,7 @@ const App: React.FC = () => {
                               courseId: openCourse.id,
                               assignmentId: selectedAssignment.id,
                             }));
-                            setGradedWorks(prev => [...prev, ...newWorks]);
+                            setGradedWorks((prev) => [...prev, ...newWorks]);
                             setSelectedCourse(openCourse);
                             setSelectedAssignment(selectedAssignment);
                             setAssignments(openAssignments);
@@ -3403,8 +4246,12 @@ const App: React.FC = () => {
                 <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300">
                   Confirm
                 </p>
-                <p className="mt-1 text-sm font-black text-slate-900 dark:text-white">{confirmCopy.title}</p>
-                <p className="mt-1 text-[11px] text-slate-600 dark:text-slate-300">{confirmCopy.body}</p>
+                <p className="mt-1 text-sm font-black text-slate-900 dark:text-white">
+                  {confirmCopy.title}
+                </p>
+                <p className="mt-1 text-[11px] text-slate-600 dark:text-slate-300">
+                  {confirmCopy.body}
+                </p>
               </div>
               <div className="p-4 flex items-center gap-2">
                 <button
@@ -3437,7 +4284,9 @@ const App: React.FC = () => {
                     type="button"
                     onClick={() => setOptionsTab(t)}
                     className={`px-3 py-1 rounded-full font-semibold capitalize ${
-                      optionsTab === t ? 'bg-indigo-600 text-white' : 'text-slate-700 dark:text-slate-300'
+                      optionsTab === t
+                        ? 'bg-indigo-600 text-white'
+                        : 'text-slate-700 dark:text-slate-300'
                     }`}
                   >
                     {t === 'cockpit' ? 'Quick' : t}
@@ -3447,7 +4296,15 @@ const App: React.FC = () => {
               <button
                 type="button"
                 onClick={handleShareApp}
-                className="px-3 py-2 rounded-xl bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 text-white text-[10px] font-black uppercase tracking-widest shadow-sm active:scale-[0.98] transition-all inline-flex items-center gap-2"
+                title={
+                  !isOnline
+                    ? 'Offline: system share may be unavailable; we still try to copy a link when possible.'
+                    : 'Share DoneGrading with colleagues'
+                }
+                aria-label={!isOnline ? 'Share (limited while offline)' : 'Share DoneGrading'}
+                className={`px-3 py-2 rounded-xl bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 text-white text-[10px] font-black uppercase tracking-widest shadow-sm active:scale-[0.98] transition-all inline-flex items-center gap-2 ${
+                  !isOnline ? 'opacity-70' : ''
+                }`}
               >
                 <Share2 className="w-4 h-4 shrink-0" />
                 Share
@@ -3481,20 +4338,25 @@ const App: React.FC = () => {
                 <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">
                   Clear caches & queues
                 </p>
-                <p className="text-[10px] text-slate-500 dark:text-slate-400">Fix odd sync issues fast</p>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                  Fix odd sync issues fast
+                </p>
               </button>
             </div>
           </div>
 
           {/* Content (scroll) */}
-          <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pb-24 space-y-2">
+          <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pb-3 space-y-2">
             {optionsTab === 'cockpit' && (
               <>
                 <div className="rounded-2xl bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 p-3">
                   <p className="text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
-                    Quick settings for the stuff teachers touch weekly: appearance, sign-in, and “fix it” tools.
+                    Quick settings for the stuff teachers touch weekly: appearance, sign-in, and
+                    “fix it” tools.
                   </p>
                 </div>
+
+                <HelpLink />
 
                 <div className="bg-white/90 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-2xl p-3">
                   <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
@@ -3529,16 +4391,24 @@ const App: React.FC = () => {
                       onClick={() => setOptionsConfirm({ open: true, kind: 'clear_classroom' })}
                       className="w-full text-left px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/70"
                     >
-                      <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">Clear Classroom cache</p>
-                      <p className="text-[10px] text-slate-500 dark:text-slate-400">Courses · Assignments · Students</p>
+                      <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">
+                        Clear Classroom cache
+                      </p>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                        Courses · Assignments · Students
+                      </p>
                     </button>
                     <button
                       type="button"
                       onClick={() => setOptionsConfirm({ open: true, kind: 'clear_grades' })}
                       className="w-full text-left px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/70"
                     >
-                      <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">Clear grade queue + history</p>
-                      <p className="text-[10px] text-slate-500 dark:text-slate-400">Pending sync · Local receipts</p>
+                      <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">
+                        Clear grade queue + history
+                      </p>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                        Pending sync · Local receipts
+                      </p>
                     </button>
                   </div>
                 </div>
@@ -3574,7 +4444,8 @@ const App: React.FC = () => {
               <div className="space-y-2">
                 <div className="rounded-2xl bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 p-3">
                   <p className="text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
-                    Use these when something looks “stuck” (sync, roster, schedule). Safe: you can re-sync later.
+                    Use these when something looks “stuck” (sync, roster, schedule). Safe: you can
+                    re-sync later.
                   </p>
                 </div>
 
@@ -3587,24 +4458,36 @@ const App: React.FC = () => {
                     onClick={() => setOptionsConfirm({ open: true, kind: 'clear_classroom' })}
                     className="w-full text-left px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/70"
                   >
-                    <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">Classroom cache</p>
-                    <p className="text-[10px] text-slate-500 dark:text-slate-400">Courses · Assignments · Students</p>
+                    <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">
+                      Classroom cache
+                    </p>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                      Courses · Assignments · Students
+                    </p>
                   </button>
                   <button
                     type="button"
                     onClick={() => setOptionsConfirm({ open: true, kind: 'clear_grades' })}
                     className="w-full text-left px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/70"
                   >
-                    <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">Grades</p>
-                    <p className="text-[10px] text-slate-500 dark:text-slate-400">Queue · Sync receipts</p>
+                    <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">
+                      Grades
+                    </p>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                      Queue · Sync receipts
+                    </p>
                   </button>
                   <button
                     type="button"
                     onClick={() => setOptionsConfirm({ open: true, kind: 'clear_schedule' })}
                     className="w-full text-left px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/70"
                   >
-                    <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">Schedule</p>
-                    <p className="text-[10px] text-slate-500 dark:text-slate-400">All schedule items on this device</p>
+                    <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100">
+                      Schedule
+                    </p>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                      All schedule items on this device
+                    </p>
                   </button>
                 </div>
 
@@ -3693,136 +4576,161 @@ const App: React.FC = () => {
         })();
       }}
     >
-       <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4 custom-scrollbar pb-24 pt-1">
-         <div className="bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl p-4 shadow-sm">
-           <input
-             type="search"
-             value={assignmentSearchQuery}
-             onChange={(e) => setAssignmentSearchQuery(e.target.value)}
-             placeholder="Search assignments…"
-             className="w-full px-4 py-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-700/60 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 outline-none"
-           />
-           <button
-             type="button"
-             onClick={(e) => selectedCourse && handleOpenAsnCreation(selectedCourse, e)}
-             disabled={!classroom || !isOnline || !selectedCourse || selectedCourse.source === 'local'}
-             className="mt-3 w-full py-3 rounded-xl bg-emerald-500 text-white font-black uppercase tracking-widest text-[12px] shadow-sm hover:bg-emerald-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-           >
-             Create in Google Classroom
-           </button>
-           {(!classroom || !isOnline || selectedCourse?.source === 'local') && (
-             <div className="mt-2 text-[11px] text-slate-500 dark:text-slate-300">
-               Connect to Google Classroom to create assignments.
-             </div>
-           )}
-         </div>
+      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4 custom-scrollbar pb-3 pt-1">
+        <div className="bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl p-4 shadow-sm">
+          <input
+            type="search"
+            value={assignmentSearchQuery}
+            onChange={(e) => setAssignmentSearchQuery(e.target.value)}
+            placeholder="Search assignments…"
+            className="w-full px-4 py-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-700/60 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 outline-none"
+          />
+          <button
+            type="button"
+            onClick={(e) => selectedCourse && handleOpenAsnCreation(selectedCourse, e)}
+            disabled={
+              !classroom || !isOnline || !selectedCourse || selectedCourse.source === 'local'
+            }
+            className="mt-3 w-full py-3 rounded-xl bg-emerald-500 text-white font-black uppercase tracking-widest text-[12px] shadow-sm hover:bg-emerald-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Create in Google Classroom
+          </button>
+          {(!classroom || !isOnline || selectedCourse?.source === 'local') && (
+            <div className="mt-2 text-[11px] text-slate-500 dark:text-slate-300">
+              Connect to Google Classroom to create assignments.
+            </div>
+          )}
+        </div>
 
-         <div className="px-1">
-           <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 px-2">
-             {classroom && isOnline && selectedCourse?.source !== 'local' ? 'Google Classroom assignments' : 'Local / draft assignments'}
-           </div>
-         </div>
+        <div className="px-1">
+          <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 px-2">
+            {classroom && isOnline && selectedCourse?.source !== 'local'
+              ? 'Google Classroom assignments'
+              : 'Local / draft assignments'}
+          </div>
+        </div>
 
-         {filteredAssignmentsList.map((assignment) => (
-           <div
-             key={assignment.id}
-             draggable
-             onDragStart={() => setDragAssignmentId(assignment.id)}
-             onDragOver={(e) => e.preventDefault()}
-             onDrop={(e) => {
-               e.preventDefault();
-               if (!dragAssignmentId || dragAssignmentId === assignment.id) return;
-               setAssignmentSort('manual');
-               setAssignments(prev => {
-                 const next = [...prev];
-                 const from = next.findIndex(a => a.id === dragAssignmentId);
-                 const to = next.findIndex(a => a.id === assignment.id);
-                 if (from === -1 || to === -1) return prev;
-                 const [item] = next.splice(from, 1);
-                 next.splice(to, 0, item);
-                 return next;
-               });
-               setDragAssignmentId(null);
-             }}
-             className={`p-4 bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl border rounded-xl flex items-center justify-between shadow-sm hover:-translate-y-0.5 transition-all ${
-               dragAssignmentId === assignment.id ? 'border-emerald-400 ring-2 ring-emerald-300' : 'border-slate-200 dark:border-slate-700 hover:border-emerald-400'
-             }`}
-           >
-             <button
-               type="button"
-               onClick={() => {
-                 setAssignments(prev => prev.map(a => a.id === assignment.id ? { ...a, lastUsed: Date.now() } : a));
-                 setSelectedAssignment({ ...assignment, lastUsed: Date.now() });
-                 setPhase(AppPhase.GRADE_SCAN_SETUP);
-               }}
-               onDoubleClick={(e) => {
-                 e.stopPropagation();
-                 if (!selectedCourse) return;
-                 const title = window.prompt('Rename assignment', assignment.title);
-                 if (!title || !title.trim()) return;
-                 if (classroom && isOnline && selectedCourse.source !== 'local') {
-                   classroom.updateAssignment(selectedCourse.id, assignment.id, title.trim())
-                     .then((updated) => {
-                       setAssignments(prev => prev.map(a => a.id === assignment.id ? { ...a, ...updated } : a));
-                     })
-                     .catch(err => {
-                       console.error('Failed to rename assignment', err);
-                       setAuthError('Could not rename assignment in Google Classroom.');
-                     });
-                 } else {
-                   setAssignments(prev => prev.map(a => a.id === assignment.id ? { ...a, title: title.trim() } : a));
-                 }
-               }}
-               className="flex items-center gap-4 flex-1 text-left"
-             >
-               <div className="w-10 h-10 bg-slate-100 dark:bg-slate-700 rounded-xl flex items-center justify-center text-slate-500 dark:text-slate-400">
-                 <Layers className="w-5 h-5" />
-               </div>
-               <div className="min-w-0">
-                 <h4 className="text-sm font-black text-slate-800 dark:text-slate-100 truncate">{assignment.title}</h4>
-                 <p className="text-slate-500 text-[9px] font-black uppercase tracking-[0.15em]">{assignment.maxScore} Points</p>
-               </div>
-             </button>
+        {filteredAssignmentsList.map((assignment) => (
+          <div
+            key={assignment.id}
+            draggable
+            onDragStart={() => setDragAssignmentId(assignment.id)}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              if (!dragAssignmentId || dragAssignmentId === assignment.id) return;
+              setAssignmentSort('manual');
+              setAssignments((prev) => {
+                const next = [...prev];
+                const from = next.findIndex((a) => a.id === dragAssignmentId);
+                const to = next.findIndex((a) => a.id === assignment.id);
+                if (from === -1 || to === -1) return prev;
+                const [item] = next.splice(from, 1);
+                next.splice(to, 0, item);
+                return next;
+              });
+              setDragAssignmentId(null);
+            }}
+            className={`p-4 bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl border rounded-xl flex items-center justify-between shadow-sm hover:-translate-y-0.5 transition-all ${
+              dragAssignmentId === assignment.id
+                ? 'border-emerald-400 ring-2 ring-emerald-300'
+                : 'border-slate-200 dark:border-slate-700 hover:border-emerald-400'
+            }`}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setAssignments((prev) =>
+                  prev.map((a) => (a.id === assignment.id ? { ...a, lastUsed: Date.now() } : a))
+                );
+                setSelectedAssignment({ ...assignment, lastUsed: Date.now() });
+                setPhase(AppPhase.GRADE_SCAN_SETUP);
+              }}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                if (!selectedCourse) return;
+                const title = window.prompt('Rename assignment', assignment.title);
+                if (!title || !title.trim()) return;
+                if (classroom && isOnline && selectedCourse.source !== 'local') {
+                  classroom
+                    .updateAssignment(selectedCourse.id, assignment.id, title.trim())
+                    .then((updated) => {
+                      setAssignments((prev) =>
+                        prev.map((a) => (a.id === assignment.id ? { ...a, ...updated } : a))
+                      );
+                    })
+                    .catch((err) => {
+                      console.error('Failed to rename assignment', err);
+                      setAuthError('Could not rename assignment in Google Classroom.');
+                    });
+                } else {
+                  setAssignments((prev) =>
+                    prev.map((a) => (a.id === assignment.id ? { ...a, title: title.trim() } : a))
+                  );
+                }
+              }}
+              className="flex items-center gap-4 flex-1 text-left"
+            >
+              <div className="w-10 h-10 bg-slate-100 dark:bg-slate-700 rounded-xl flex items-center justify-center text-slate-500 dark:text-slate-400">
+                <Layers className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <h4 className="text-sm font-black text-slate-800 dark:text-slate-100 truncate">
+                  {assignment.title}
+                </h4>
+                <p className="text-slate-500 text-[9px] font-black uppercase tracking-[0.15em]">
+                  {assignment.maxScore} Points
+                </p>
+              </div>
+            </button>
 
-             <div className="flex items-center gap-1 ml-3">
-               <button
-                 type="button"
-                 onClick={(e) => {
-                   e.stopPropagation();
-                   if (!selectedCourse) return;
-                   if (!window.confirm('Delete this assignment? This will also remove it from Google Classroom if it is synced.')) return;
-                   if (classroom && isOnline && selectedCourse.source !== 'local') {
-                     classroom.deleteAssignment(selectedCourse.id, assignment.id)
-                       .then(() => {
-                         setAssignments(prev => prev.filter(a => a.id !== assignment.id));
-                         if (selectedAssignment?.id === assignment.id) {
-                           setSelectedAssignment(null);
-                         }
-                       })
-                       .catch(err => {
-                         console.error('Failed to delete assignment', err);
-                         setAuthError('Could not delete assignment in Google Classroom.');
-                       });
-                   } else {
-                     setAssignments(prev => prev.filter(a => a.id !== assignment.id));
-                     if (selectedAssignment?.id === assignment.id) {
-                       setSelectedAssignment(null);
-                     }
-                   }
-                 }}
-                 className="p-1.5 rounded-full bg-white/60 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-rose-500 hover:bg-rose-50 hover:text-rose-600 transition-colors"
-                 title="Delete assignment"
-               >
-                 <Trash2 className="w-4 h-4" />
-               </button>
-             </div>
-           </div>
-         ))}
+            <div className="flex items-center gap-1 ml-3">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!selectedCourse) return;
+                  if (
+                    !window.confirm(
+                      'Delete this assignment? This will also remove it from Google Classroom if it is synced.'
+                    )
+                  )
+                    return;
+                  if (classroom && isOnline && selectedCourse.source !== 'local') {
+                    classroom
+                      .deleteAssignment(selectedCourse.id, assignment.id)
+                      .then(() => {
+                        setAssignments((prev) => prev.filter((a) => a.id !== assignment.id));
+                        if (selectedAssignment?.id === assignment.id) {
+                          setSelectedAssignment(null);
+                        }
+                      })
+                      .catch((err) => {
+                        console.error('Failed to delete assignment', err);
+                        setAuthError('Could not delete assignment in Google Classroom.');
+                      });
+                  } else {
+                    setAssignments((prev) => prev.filter((a) => a.id !== assignment.id));
+                    if (selectedAssignment?.id === assignment.id) {
+                      setSelectedAssignment(null);
+                    }
+                  }
+                }}
+                className="p-1.5 rounded-full bg-white/60 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-rose-500 hover:bg-rose-50 hover:text-rose-600 transition-colors"
+                title="Delete assignment"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        ))}
 
-         {filteredAssignmentsList.length === 0 && (
-           <div className="py-10 text-center text-slate-500 text-sm font-bold">No assignments match.</div>
-         )}
-       </div>
+        {filteredAssignmentsList.length === 0 && (
+          <div className="py-10 text-center text-slate-500 text-sm font-bold">
+            No assignments match.
+          </div>
+        )}
+      </div>
     </PageWrapper>
   );
 
@@ -3836,16 +4744,47 @@ const App: React.FC = () => {
       setIsDarkMode={setIsDarkMode}
       syncStatus={syncStatus}
     >
-      <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-hidden pb-24 pt-1">
+      <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-hidden pb-3 pt-1">
         <div className="p-4 rounded-2xl bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 shadow-sm">
-          <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Current session</div>
+          <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+            Current session
+          </div>
           <div className="mt-1 text-base font-black text-slate-900 dark:text-white truncate">
-            {selectedCourse?.name || 'Select course'} · {selectedAssignment?.title || 'Select assignment'}
+            {selectedCourse?.name || 'Select course'} ·{' '}
+            {selectedAssignment?.title || 'Select assignment'}
           </div>
           <div className="text-sm text-slate-600 dark:text-slate-300 mt-0.5">
             Batch scan is recommended — it prevents mis-attribution.
           </div>
         </div>
+        {selectedCourse && selectedAssignment && !isPaid && (
+          <div
+            className="p-4 rounded-2xl bg-amber-500/15 dark:bg-amber-500/10 border border-amber-500/45 dark:border-amber-400/35 shadow-sm"
+            role="status"
+            aria-live="polite"
+          >
+            <div className="text-[10px] font-black uppercase tracking-widest text-amber-900 dark:text-amber-200">
+              Before you scan a big stack
+            </div>
+            <p className="mt-2 text-[12px] sm:text-[13px] font-semibold text-amber-950 dark:text-amber-50 leading-snug">
+              Syncing to <span className="font-black">Google Classroom</span>, emailing students,
+              and saving scans to <span className="font-black">Drive</span> need{' '}
+              <span className="font-black">DoneGrading Pro</span> (free trial available). You can
+              still scan and grade <span className="font-black">on this device</span>—you’ll upgrade
+              when you publish.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                logEvent('paywall_view', { surface: 'scan_setup' });
+                setPhase(AppPhase.PAYWALL);
+              }}
+              className="mt-3 w-full py-2.5 rounded-xl bg-amber-600 text-white text-[11px] font-black uppercase tracking-widest shadow-sm hover:bg-amber-700 transition-colors"
+            >
+              See Pro &amp; trial
+            </button>
+          </div>
+        )}
         {!selectedCourse || !selectedAssignment ? (
           <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-200 text-sm font-semibold">
             Select a course and assignment before scanning.
@@ -3864,21 +4803,29 @@ const App: React.FC = () => {
               >
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <div className={`text-[10px] font-black uppercase tracking-widest ${scanStudentMode === 'batch' ? 'text-emerald-100' : 'text-slate-500'}`}>
+                    <div
+                      className={`text-[10px] font-black uppercase tracking-widest ${scanStudentMode === 'batch' ? 'text-emerald-100' : 'text-slate-500'}`}
+                    >
                       Recommended
                     </div>
-                    <div className={`mt-1 text-base font-black ${scanStudentMode === 'batch' ? 'text-white' : 'text-slate-900 dark:text-white'}`}>
+                    <div
+                      className={`mt-1 text-base font-black ${scanStudentMode === 'batch' ? 'text-white' : 'text-slate-900 dark:text-white'}`}
+                    >
                       Batch scan
                     </div>
-                    <div className={`text-sm mt-0.5 ${scanStudentMode === 'batch' ? 'text-emerald-50/90' : 'text-slate-600 dark:text-slate-300'}`}>
+                    <div
+                      className={`text-sm mt-0.5 ${scanStudentMode === 'batch' ? 'text-emerald-50/90' : 'text-slate-600 dark:text-slate-300'}`}
+                    >
                       Choose students & order once. Each scan applies to the next student.
                     </div>
                   </div>
-                  <div className={`w-6 h-6 rounded-full border flex items-center justify-center shrink-0 ${
-                    scanStudentMode === 'batch'
-                      ? 'border-white/30 bg-white/15'
-                      : 'border-slate-300 dark:border-slate-600'
-                  }`}>
+                  <div
+                    className={`w-6 h-6 rounded-full border flex items-center justify-center shrink-0 ${
+                      scanStudentMode === 'batch'
+                        ? 'border-white/30 bg-white/15'
+                        : 'border-slate-300 dark:border-slate-600'
+                    }`}
+                  >
                     {scanStudentMode === 'batch' && <Check className="w-4 h-4 text-white" />}
                   </div>
                 </div>
@@ -3895,21 +4842,29 @@ const App: React.FC = () => {
               >
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <div className={`text-[10px] font-black uppercase tracking-widest ${scanStudentMode === 'single' ? 'text-indigo-100' : 'text-slate-500'}`}>
+                    <div
+                      className={`text-[10px] font-black uppercase tracking-widest ${scanStudentMode === 'single' ? 'text-indigo-100' : 'text-slate-500'}`}
+                    >
                       Quick start
                     </div>
-                    <div className={`mt-1 text-base font-black ${scanStudentMode === 'single' ? 'text-white' : 'text-slate-900 dark:text-white'}`}>
+                    <div
+                      className={`mt-1 text-base font-black ${scanStudentMode === 'single' ? 'text-white' : 'text-slate-900 dark:text-white'}`}
+                    >
                       Single student
                     </div>
-                    <div className={`text-sm mt-0.5 ${scanStudentMode === 'single' ? 'text-indigo-50/90' : 'text-slate-600 dark:text-slate-300'}`}>
+                    <div
+                      className={`text-sm mt-0.5 ${scanStudentMode === 'single' ? 'text-indigo-50/90' : 'text-slate-600 dark:text-slate-300'}`}
+                    >
                       You’ll confirm/match a student as you scan.
                     </div>
                   </div>
-                  <div className={`w-6 h-6 rounded-full border flex items-center justify-center shrink-0 ${
-                    scanStudentMode === 'single'
-                      ? 'border-white/30 bg-white/15'
-                      : 'border-slate-300 dark:border-slate-600'
-                  }`}>
+                  <div
+                    className={`w-6 h-6 rounded-full border flex items-center justify-center shrink-0 ${
+                      scanStudentMode === 'single'
+                        ? 'border-white/30 bg-white/15'
+                        : 'border-slate-300 dark:border-slate-600'
+                    }`}
+                  >
                     {scanStudentMode === 'single' && <Check className="w-4 h-4 text-white" />}
                   </div>
                 </div>
@@ -3951,7 +4906,7 @@ const App: React.FC = () => {
       setIsDarkMode={setIsDarkMode}
       syncStatus={syncStatus}
     >
-      <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-hidden pb-24 pt-1">
+      <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-hidden pb-3 pt-1">
         {!selectedCourse || !selectedAssignment ? (
           <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-200 text-sm font-semibold">
             Select a course and assignment before choosing a batch roster.
@@ -4028,16 +4983,24 @@ const App: React.FC = () => {
                 {(() => {
                   const selectedCourseId = selectedCourse.id;
                   const selectedAssignmentId = selectedAssignment.id;
-                  const query = batchRosterQuery.trim().toLowerCase();
+                  const query = deferredBatchRosterQuery.trim().toLowerCase();
 
                   const studentPctById: Record<string, number> = {};
                   const lastGradedById: Record<string, number> = {};
                   history.forEach((w) => {
-                    if (w.courseId !== selectedCourseId || w.assignmentId !== selectedAssignmentId || !w.studentId) return;
+                    if (
+                      w.courseId !== selectedCourseId ||
+                      w.assignmentId !== selectedAssignmentId ||
+                      !w.studentId
+                    )
+                      return;
                     if (!studentPctById[w.studentId]) studentPctById[w.studentId] = 0;
                     const pct = w.maxScore ? (w.score / w.maxScore) * 100 : 0;
                     studentPctById[w.studentId] = pct;
-                    lastGradedById[w.studentId] = Math.max(lastGradedById[w.studentId] || 0, w.timestamp || 0);
+                    lastGradedById[w.studentId] = Math.max(
+                      lastGradedById[w.studentId] || 0,
+                      w.timestamp || 0
+                    );
                   });
 
                   const now = Date.now();
@@ -4046,10 +5009,14 @@ const App: React.FC = () => {
                   let roster = [...students];
                   if (query) roster = roster.filter((s) => s.name.toLowerCase().includes(query));
 
-                  if (batchRosterFilter === 'missing_email') roster = roster.filter((s) => !s.email);
-                  if (batchRosterFilter === 'at_risk') roster = roster.filter((s) => (studentPctById[s.id] ?? 100) < 70);
-                  if (batchRosterFilter === 'recently_graded') roster = roster.filter((s) => (lastGradedById[s.id] ?? 0) >= now - sevenDaysMs);
-                  if (batchRosterFilter === 'not_graded') roster = roster.filter((s) => !lastGradedById[s.id]);
+                  if (batchRosterFilter === 'missing_email')
+                    roster = roster.filter((s) => !s.email);
+                  if (batchRosterFilter === 'at_risk')
+                    roster = roster.filter((s) => (studentPctById[s.id] ?? 100) < 70);
+                  if (batchRosterFilter === 'recently_graded')
+                    roster = roster.filter((s) => (lastGradedById[s.id] ?? 0) >= now - sevenDaysMs);
+                  if (batchRosterFilter === 'not_graded')
+                    roster = roster.filter((s) => !lastGradedById[s.id]);
 
                   if (batchRosterSort === 'last_name') {
                     roster.sort((a, b) => a.name.localeCompare(b.name));
@@ -4079,7 +5046,11 @@ const App: React.FC = () => {
                       : roster;
 
                   if (orderedRoster.length === 0) {
-                    return <div className="py-10 text-center text-slate-500 text-sm font-bold">No students match.</div>;
+                    return (
+                      <div className="py-10 text-center text-slate-500 text-sm font-bold">
+                        No students match.
+                      </div>
+                    );
                   }
 
                   return orderedRoster.map((s) => {
@@ -4116,13 +5087,19 @@ const App: React.FC = () => {
                           }}
                           className="flex items-center gap-3 flex-1 text-left min-w-0"
                         >
-                          <div className={`w-6 h-6 rounded-full border flex items-center justify-center shrink-0 ${
-                            checked ? 'border-indigo-500 bg-indigo-600' : 'border-slate-300 dark:border-slate-600'
-                          }`}>
+                          <div
+                            className={`w-6 h-6 rounded-full border flex items-center justify-center shrink-0 ${
+                              checked
+                                ? 'border-indigo-500 bg-indigo-600'
+                                : 'border-slate-300 dark:border-slate-600'
+                            }`}
+                          >
                             {checked && <Check className="w-4 h-4 text-white" />}
                           </div>
                           <div className="min-w-0">
-                            <div className="font-black text-sm truncate text-slate-900 dark:text-white">{s.name}</div>
+                            <div className="font-black text-sm truncate text-slate-900 dark:text-white">
+                              {s.name}
+                            </div>
                             <div className="mt-1 flex flex-wrap items-center gap-1.5">
                               {!s.email && (
                                 <span className="px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-[9px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-200">
@@ -4202,44 +5179,91 @@ const App: React.FC = () => {
       setIsDarkMode={setIsDarkMode}
       syncStatus={syncStatus}
     >
-      <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-hidden pb-24 pt-1">
+      <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-hidden pb-3 pt-1">
         {(() => {
-          const targetIndexes = syncPreflightIndexes && syncPreflightIndexes.length > 0 ? syncPreflightIndexes : gradedWorks.map((_, i) => i);
+          const targetIndexes =
+            syncPreflightIndexes && syncPreflightIndexes.length > 0
+              ? syncPreflightIndexes
+              : gradedWorks.map((_, i) => i);
           const works = targetIndexes.map((i) => gradedWorks[i]).filter(Boolean);
           const gradesCount = works.length;
           const emailCount = works.filter((w) => !!w.studentEmail).length;
           const drivePages = works.reduce((sum, w) => sum + (w.imageUrls?.length || 0), 0);
           const failedIndexes = gradedWorks
             .map((w, i) => ({ w, i }))
-            .filter(({ w }) => syncFailedKeys.has(`${w.courseId}::${w.assignmentId}::${w.studentId}::${w.timestamp}`))
+            .filter(({ w }) =>
+              syncFailedKeys.has(`${w.courseId}::${w.assignmentId}::${w.studentId}::${w.timestamp}`)
+            )
             .map(({ i }) => i);
 
           return (
             <>
+              {!isPaid && (
+                <div
+                  className="p-4 rounded-2xl bg-rose-500/10 dark:bg-rose-500/10 border border-rose-400/40 dark:border-rose-500/35"
+                  role="status"
+                >
+                  <p className="text-sm font-black text-rose-900 dark:text-rose-100">
+                    Sync needs DoneGrading Pro
+                  </p>
+                  <p className="mt-1 text-[12px] font-semibold text-rose-800/95 dark:text-rose-100/90 leading-snug">
+                    You can review everything below, but publishing to Classroom / email / Drive
+                    won’t run until you start a trial or subscribe. Your graded work stays on this
+                    device.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      logEvent('paywall_view', { surface: 'sync_preflight' });
+                      setPhase(AppPhase.PAYWALL);
+                    }}
+                    className="mt-3 w-full py-3 rounded-xl bg-rose-600 text-white text-[12px] font-black uppercase tracking-widest shadow-sm hover:bg-rose-700 transition-colors"
+                  >
+                    Unlock sync
+                  </button>
+                </div>
+              )}
               <div className="p-4 rounded-2xl bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 shadow-sm">
-                <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Summary</div>
+                <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                  Summary
+                </div>
                 <div className="mt-2 grid grid-cols-3 gap-2">
                   <div className="p-3 rounded-xl bg-white/60 dark:bg-slate-900/40 border border-slate-200/60 dark:border-slate-700/60">
-                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Grades</div>
-                    <div className="mt-1 text-lg font-black text-slate-900 dark:text-white">{gradesCount}</div>
+                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                      Grades
+                    </div>
+                    <div className="mt-1 text-lg font-black text-slate-900 dark:text-white">
+                      {gradesCount}
+                    </div>
                   </div>
                   <div className="p-3 rounded-xl bg-white/60 dark:bg-slate-900/40 border border-slate-200/60 dark:border-slate-700/60">
-                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Emails</div>
-                    <div className="mt-1 text-lg font-black text-slate-900 dark:text-white">{emailCount}</div>
+                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                      Emails
+                    </div>
+                    <div className="mt-1 text-lg font-black text-slate-900 dark:text-white">
+                      {emailCount}
+                    </div>
                   </div>
                   <div className="p-3 rounded-xl bg-white/60 dark:bg-slate-900/40 border border-slate-200/60 dark:border-slate-700/60">
-                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Drive pages</div>
-                    <div className="mt-1 text-lg font-black text-slate-900 dark:text-white">{drivePages}</div>
+                    <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                      Drive pages
+                    </div>
+                    <div className="mt-1 text-lg font-black text-slate-900 dark:text-white">
+                      {drivePages}
+                    </div>
                   </div>
                 </div>
                 <div className="mt-3 text-[11px] text-slate-600 dark:text-slate-300">
-                  Sync will post grades to Google Classroom, optionally email students, and save scans to Drive.
+                  Sync will post grades to Google Classroom, optionally email students, and save
+                  scans to Drive.
                 </div>
               </div>
 
               {syncReceipts.length > 0 && (
                 <div className="p-4 rounded-2xl bg-white/70 dark:bg-slate-800/55 border border-slate-200/70 dark:border-slate-700/60 shadow-sm overflow-hidden">
-                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Last sync receipt</div>
+                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                    Last sync receipt
+                  </div>
                   <div className="mt-3 max-h-[220px] overflow-y-auto custom-scrollbar space-y-2">
                     {syncReceipts.map((r) => (
                       <div
@@ -4251,21 +5275,28 @@ const App: React.FC = () => {
                         }`}
                       >
                         <div className="min-w-0">
-                          <div className="font-black text-sm text-slate-900 dark:text-white truncate">{r.studentName}</div>
+                          <div className="font-black text-sm text-slate-900 dark:text-white truncate">
+                            {r.studentName}
+                          </div>
                           {!r.ok && r.error && (
-                            <div className="text-[11px] text-rose-600 dark:text-rose-300 truncate">{r.error}</div>
+                            <div className="text-[11px] text-rose-600 dark:text-rose-300 truncate">
+                              {r.error}
+                            </div>
                           )}
                           {r.ok && (
                             <div className="text-[11px] text-slate-600 dark:text-slate-300">
-                              Drive: {r.drivePagesSaved ?? 0} · Email: {r.emailOk === undefined ? 'n/a' : r.emailOk ? 'sent' : 'failed'}
+                              Drive: {r.drivePagesSaved ?? 0} · Email:{' '}
+                              {r.emailOk === undefined ? 'n/a' : r.emailOk ? 'sent' : 'failed'}
                             </div>
                           )}
                         </div>
-                        <div className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border shrink-0 ${
-                          r.ok
-                            ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-700 dark:text-emerald-300'
-                            : 'bg-rose-500/10 border-rose-500/20 text-rose-600 dark:text-rose-300'
-                        }`}>
+                        <div
+                          className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border shrink-0 ${
+                            r.ok
+                              ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-700 dark:text-emerald-300'
+                              : 'bg-rose-500/10 border-rose-500/20 text-rose-600 dark:text-rose-300'
+                          }`}
+                        >
                           {r.ok ? 'OK' : 'Failed'}
                         </div>
                       </div>
@@ -4279,6 +5310,11 @@ const App: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => {
+                      if (!isPaid) {
+                        logEvent('paywall_view', { surface: 'sync_preflight_retry' });
+                        setPhase(AppPhase.PAYWALL);
+                        return;
+                      }
                       setSyncPreflightIndexes(failedIndexes);
                       void startSyncProcess(failedIndexes);
                     }}
@@ -4289,11 +5325,18 @@ const App: React.FC = () => {
                 )}
                 <button
                   type="button"
-                  onClick={() => void startSyncProcess(targetIndexes)}
+                  onClick={() => {
+                    if (!isPaid) {
+                      logEvent('paywall_view', { surface: 'sync_preflight_start_sync' });
+                      setPhase(AppPhase.PAYWALL);
+                      return;
+                    }
+                    void startSyncProcess(targetIndexes);
+                  }}
                   disabled={gradesCount === 0}
                   className="py-4 px-5 rounded-2xl bg-emerald-500 text-white font-black uppercase tracking-widest text-[14px] shadow-sm hover:bg-emerald-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Start sync
+                  {isPaid ? 'Start sync' : 'Start sync (needs Pro)'}
                 </button>
               </div>
             </>
@@ -4304,60 +5347,131 @@ const App: React.FC = () => {
   );
 
   const getScanStatusText = (progress: number) => {
-    if (progress === 100) return "Success!";
-    if (progress < 30) return "Detecting Document...";
-    if (progress < 70) return "Enhancing Text...";
-    return "Extracting Criteria...";
+    if (progress === 100) return 'Success!';
+    if (progress < 30) return 'Detecting Document...';
+    if (progress < 70) return 'Enhancing Text...';
+    return 'Extracting Criteria...';
   };
 
   const renderCourseCreation = () => (
-    <PageWrapper headerTitle="New Course" headerSubtitle="Google Classroom" onBack={() => setPhase(AppPhase.DASHBOARD)} isOnline={isOnline} isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode} syncStatus={syncStatus}>
-       <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
-       <form onSubmit={handleCreateCourseLocal} className="flex flex-col gap-4 max-w-sm mx-auto w-full pt-10 pb-8">
+    <PageWrapper
+      headerTitle="New Course"
+      headerSubtitle="Google Classroom"
+      onBack={() => setPhase(AppPhase.DASHBOARD)}
+      isOnline={isOnline}
+      isDarkMode={isDarkMode}
+      setIsDarkMode={setIsDarkMode}
+      syncStatus={syncStatus}
+    >
+      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+        <form
+          onSubmit={handleCreateCourseLocal}
+          className="flex flex-col gap-4 w-full min-w-0 max-w-full sm:max-w-md md:max-w-lg lg:max-w-xl mx-auto px-3 sm:px-5 pt-8 sm:pt-10 pb-8"
+        >
           <div className="text-center mb-6">
             <div className="w-16 h-16 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-xl flex items-center justify-center mx-auto shadow-sm mb-4">
               <BookOpen className="w-8 h-8" />
             </div>
-            <h2 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white drop-shadow-sm">Create Course</h2>
+            <h2 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white drop-shadow-sm">
+              Create Course
+            </h2>
           </div>
-          {creationError && <div className="p-3 bg-red-500/10 border border-red-500/50 rounded-xl text-red-500 text-xs font-bold w-full text-center">{creationError}</div>}
-          <input value={newCourseName} onChange={e => setNewCourseName(e.target.value)} placeholder="Course Name (e.g., Biology 101)" className="w-full p-4 bg-white/60 dark:bg-slate-800/60 backdrop-blur-xl border border-slate-200 dark:border-slate-700 rounded-xl text-[16px] font-bold outline-none shadow-sm" required />
-          <button type="submit" disabled={isCreatingCourse} className="w-full py-4 mt-4 bg-indigo-600 text-white rounded-xl font-black uppercase tracking-widest text-[16px] shadow-sm flex items-center justify-center gap-2">
+          {creationError && (
+            <div className="p-3 bg-red-500/10 border border-red-500/50 rounded-xl text-red-500 text-xs font-bold w-full text-center">
+              {creationError}
+            </div>
+          )}
+          <input
+            value={newCourseName}
+            onChange={(e) => setNewCourseName(e.target.value)}
+            placeholder="Course Name (e.g., Biology 101)"
+            className="w-full p-4 bg-white/60 dark:bg-slate-800/60 backdrop-blur-xl border border-slate-200 dark:border-slate-700 rounded-xl text-[16px] font-bold outline-none shadow-sm"
+            required
+          />
+          <button
+            type="submit"
+            disabled={isCreatingCourse}
+            className="w-full py-4 mt-4 bg-indigo-600 text-white rounded-xl font-black uppercase tracking-widest text-[16px] shadow-sm flex items-center justify-center gap-2"
+          >
             {isCreatingCourse ? <Loader2 className="animate-spin w-5 h-5" /> : 'Create Course'}
           </button>
-       </form>
-       </div>
+        </form>
+      </div>
     </PageWrapper>
   );
 
   const renderAssignmentCreation = () => (
-    <PageWrapper headerTitle="New Assignment" headerSubtitle={creationCourse?.name} onBack={() => setPhase(AppPhase.ASSIGNMENT_SELECT)} isOnline={isOnline} isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode} syncStatus={syncStatus}>
-       <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
-       <form onSubmit={handleCreateAssignment} className="flex flex-col gap-4 max-w-sm mx-auto w-full pt-10 pb-8">
+    <PageWrapper
+      headerTitle="New Assignment"
+      headerSubtitle={creationCourse?.name}
+      onBack={() => setPhase(AppPhase.ASSIGNMENT_SELECT)}
+      isOnline={isOnline}
+      isDarkMode={isDarkMode}
+      setIsDarkMode={setIsDarkMode}
+      syncStatus={syncStatus}
+    >
+      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+        <form
+          onSubmit={handleCreateAssignment}
+          className="flex flex-col gap-4 w-full min-w-0 max-w-full sm:max-w-md md:max-w-lg lg:max-w-xl mx-auto px-3 sm:px-5 pt-8 sm:pt-10 pb-8"
+        >
           <div className="text-center mb-6">
             <div className="w-16 h-16 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-xl flex items-center justify-center mx-auto shadow-sm mb-4">
               <Layers className="w-8 h-8" />
             </div>
-            <h2 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white drop-shadow-sm">Create Assignment</h2>
+            <h2 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white drop-shadow-sm">
+              Create Assignment
+            </h2>
           </div>
-          {creationError && <div className="p-3 bg-red-500/10 border border-red-500/50 rounded-xl text-red-500 text-xs font-bold w-full text-center">{creationError}</div>}
-          <input value={newAsnTitle} onChange={e => setNewAsnTitle(e.target.value)} placeholder="Assignment Title" className="w-full p-4 bg-white/60 dark:bg-slate-800/60 backdrop-blur-xl border border-slate-200 dark:border-slate-700 rounded-xl text-[16px] font-bold outline-none shadow-sm" required />
-          <textarea value={newAsnDesc} onChange={e => setNewAsnDesc(e.target.value)} placeholder="Description or Rubric details..." className="w-full p-4 bg-white/60 dark:bg-slate-800/60 backdrop-blur-xl border border-slate-200 dark:border-slate-700 rounded-xl text-[16px] font-bold outline-none shadow-sm resize-none" rows={3} />
-          <input type="number" value={newAsnMaxScore} onChange={e => setNewAsnMaxScore(Number(e.target.value))} placeholder="Max Score (e.g., 100)" className="w-full p-4 bg-white/60 dark:bg-slate-800/60 backdrop-blur-xl border border-slate-200 dark:border-slate-700 rounded-xl text-[16px] font-bold outline-none shadow-sm" required />
-          <button type="submit" disabled={isCreatingAssignment} className="w-full py-4 mt-4 bg-emerald-500 text-white rounded-xl font-black uppercase tracking-widest text-[16px] shadow-sm flex items-center justify-center gap-2">
-            {isCreatingAssignment ? <Loader2 className="animate-spin w-5 h-5" /> : 'Create Assignment'}
+          {creationError && (
+            <div className="p-3 bg-red-500/10 border border-red-500/50 rounded-xl text-red-500 text-xs font-bold w-full text-center">
+              {creationError}
+            </div>
+          )}
+          <input
+            value={newAsnTitle}
+            onChange={(e) => setNewAsnTitle(e.target.value)}
+            placeholder="Assignment Title"
+            className="w-full p-4 bg-white/60 dark:bg-slate-800/60 backdrop-blur-xl border border-slate-200 dark:border-slate-700 rounded-xl text-[16px] font-bold outline-none shadow-sm"
+            required
+          />
+          <textarea
+            value={newAsnDesc}
+            onChange={(e) => setNewAsnDesc(e.target.value)}
+            placeholder="Description or Rubric details..."
+            className="w-full p-4 bg-white/60 dark:bg-slate-800/60 backdrop-blur-xl border border-slate-200 dark:border-slate-700 rounded-xl text-[16px] font-bold outline-none shadow-sm resize-none"
+            rows={3}
+          />
+          <input
+            type="number"
+            value={newAsnMaxScore}
+            onChange={(e) => setNewAsnMaxScore(Number(e.target.value))}
+            placeholder="Max Score (e.g., 100)"
+            className="w-full p-4 bg-white/60 dark:bg-slate-800/60 backdrop-blur-xl border border-slate-200 dark:border-slate-700 rounded-xl text-[16px] font-bold outline-none shadow-sm"
+            required
+          />
+          <button
+            type="submit"
+            disabled={isCreatingAssignment}
+            className="w-full py-4 mt-4 bg-emerald-500 text-white rounded-xl font-black uppercase tracking-widest text-[16px] shadow-sm flex items-center justify-center gap-2"
+          >
+            {isCreatingAssignment ? (
+              <Loader2 className="animate-spin w-5 h-5" />
+            ) : (
+              'Create Assignment'
+            )}
           </button>
-       </form>
-       </div>
+        </form>
+      </div>
     </PageWrapper>
   );
 
   const renderRubricSetup = () => {
     return (
-      <PageWrapper 
-        headerTitle="Scan Rubric" 
-        headerSubtitle={selectedAssignment?.title || "Criteria Setup"} 
-        onBack={() => setPhase(AppPhase.GRADE_SCAN_SETUP)} 
+      <PageWrapper
+        headerTitle="Scan Rubric"
+        headerSubtitle={selectedAssignment?.title || 'Criteria Setup'}
+        onBack={() => setPhase(AppPhase.GRADE_SCAN_SETUP)}
         isOnline={isOnline}
         isDarkMode={isDarkMode}
         setIsDarkMode={setIsDarkMode}
@@ -4370,6 +5484,31 @@ const App: React.FC = () => {
             </div>
           )}
 
+          {!isPaid && (
+            <div
+              className="shrink-0 p-3 rounded-xl bg-indigo-500/10 dark:bg-indigo-500/15 border border-indigo-400/35 dark:border-indigo-400/25 text-[11px] text-indigo-950 dark:text-indigo-100 leading-snug"
+              role="status"
+            >
+              <span className="font-black uppercase tracking-wider text-[10px] text-indigo-800 dark:text-indigo-200">
+                Sync heads-up
+              </span>
+              <p className="mt-1.5 font-medium">
+                Classroom publish, student emails, and Drive saves need an active Pro plan or free
+                trial. You can still capture and edit grades on this device.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  logEvent('paywall_view', { surface: 'rubric_setup' });
+                  setPhase(AppPhase.PAYWALL);
+                }}
+                className="mt-2 text-[11px] font-black text-indigo-600 dark:text-indigo-300 underline underline-offset-2"
+              >
+                See Pro &amp; trial
+              </button>
+            </div>
+          )}
+
           <div className="flex-1 min-h-0 bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl rounded-3xl border border-white/60 dark:border-slate-700 overflow-hidden flex flex-col shadow-sm">
             {!isScanningRubric ? (
               <div className="flex-1 p-6 flex flex-col overflow-hidden">
@@ -4378,23 +5517,37 @@ const App: React.FC = () => {
                     <FileText className="w-3 h-3" /> Custom Criteria
                   </h3>
                   <div className="flex gap-2">
-                    <button onClick={handleGenerateRubric} disabled={isGeneratingRubric} className="px-3 py-1.5 bg-indigo-50 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-indigo-100 transition-colors disabled:opacity-50 flex items-center gap-1">
-                      {isGeneratingRubric ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                    <button
+                      onClick={handleGenerateRubric}
+                      disabled={isGeneratingRubric}
+                      className="px-3 py-1.5 bg-indigo-50 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-indigo-100 transition-colors disabled:opacity-50 flex items-center gap-1"
+                    >
+                      {isGeneratingRubric ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <Sparkles className="w-3 h-3" />
+                      )}
                       Auto-Generate
                     </button>
-                    <button onClick={handleScanPaperRubric} className="px-3 py-1.5 bg-emerald-50 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-emerald-100 transition-colors flex items-center gap-1">
+                    <button
+                      onClick={handleScanPaperRubric}
+                      className="px-3 py-1.5 bg-emerald-50 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-emerald-100 transition-colors flex items-center gap-1"
+                    >
                       <Camera className="w-3 h-3" /> Scan Paper
                     </button>
                   </div>
                 </div>
                 <div className="relative flex-1 min-h-0">
-                  <textarea 
-                    value={customRubric} 
-                    onChange={(e) => setCustomRubric(e.target.value)} 
-                    placeholder="Paste your rubric, tap 'Auto-Generate' to build from the assignment details, or 'Scan Paper' to use your camera..." 
-                className="w-full h-full p-4 pr-10 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md border border-slate-200 dark:border-slate-700 rounded-xl resize-none outline-none focus:border-indigo-400 text-[16px] italic shadow-inner custom-scrollbar" 
+                  <textarea
+                    value={customRubric}
+                    onChange={(e) => setCustomRubric(e.target.value)}
+                    placeholder="Paste your rubric, tap 'Auto-Generate' to build from the assignment details, or 'Scan Paper' to use your camera..."
+                    className="w-full h-full p-4 pr-10 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md border border-slate-200 dark:border-slate-700 rounded-xl resize-none outline-none focus:border-indigo-400 text-[16px] italic shadow-inner custom-scrollbar"
                   />
-                  <VoiceInputButton onResult={(text) => setCustomRubric(prev => prev + (prev ? '\n' : '') + text)} className="absolute right-3 top-3 p-1.5" />
+                  <VoiceInputButton
+                    onResult={(text) => setCustomRubric((prev) => prev + (prev ? '\n' : '') + text)}
+                    className="absolute right-3 top-3 p-1.5"
+                  />
                 </div>
               </div>
             ) : (
@@ -4426,69 +5579,110 @@ const App: React.FC = () => {
                   </div>
                 ) : (
                   <>
-                    <video ref={videoRef} autoPlay playsInline muted className={`absolute inset-0 w-full h-full object-cover transition-all duration-500 ${isProcessing ? 'opacity-20 blur-md scale-105' : 'opacity-90'}`} />
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className={`absolute inset-0 w-full h-full object-cover transition-all duration-500 ${isProcessing ? 'opacity-20 blur-md scale-105' : 'opacity-90'}`}
+                    />
                     <canvas ref={canvasRef} className="hidden" />
-                    
+
                     {/* ASPECT RATIO BOUNDING BOX FOR RUBRIC SCAN */}
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none p-6 pb-24 z-10">
-                      <div className={`relative w-full max-w-sm aspect-[3/4] border-2 transition-colors duration-500 rounded-xl ${isProcessing ? 'border-emerald-500/30' : 'border-white/10'}`}>
-                         <div className={`absolute top-0 left-0 w-10 h-10 border-t-4 border-l-4 rounded-tl-2xl transition-colors duration-300 ${isProcessing ? 'border-emerald-500' : 'border-indigo-500'}`} />
-                         <div className={`absolute top-0 right-0 w-10 h-10 border-t-4 border-r-4 rounded-tr-2xl transition-colors duration-300 ${isProcessing ? 'border-emerald-500' : 'border-indigo-500'}`} />
-                         <div className={`absolute bottom-0 left-0 w-10 h-10 border-b-4 border-l-4 rounded-bl-2xl transition-colors duration-300 ${isProcessing ? 'border-emerald-500' : 'border-indigo-500'}`} />
-                         <div className={`absolute bottom-0 right-0 w-10 h-10 border-b-4 border-r-4 rounded-br-2xl transition-colors duration-300 ${isProcessing ? 'border-emerald-500' : 'border-indigo-500'}`} />
-                         
-                         {!isProcessing && <div className="animate-scan-sweep" />}
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none p-6 pb-3 z-10">
+                      <div
+                        className={`relative w-full max-w-[min(100%,22rem)] sm:max-w-md md:max-w-lg aspect-[3/4] border-2 transition-colors duration-500 rounded-xl ${isProcessing ? 'border-emerald-500/30' : 'border-white/10'}`}
+                      >
+                        <div
+                          className={`absolute top-0 left-0 w-10 h-10 border-t-4 border-l-4 rounded-tl-2xl transition-colors duration-300 ${isProcessing ? 'border-emerald-500' : 'border-indigo-500'}`}
+                        />
+                        <div
+                          className={`absolute top-0 right-0 w-10 h-10 border-t-4 border-r-4 rounded-tr-2xl transition-colors duration-300 ${isProcessing ? 'border-emerald-500' : 'border-indigo-500'}`}
+                        />
+                        <div
+                          className={`absolute bottom-0 left-0 w-10 h-10 border-b-4 border-l-4 rounded-bl-2xl transition-colors duration-300 ${isProcessing ? 'border-emerald-500' : 'border-indigo-500'}`}
+                        />
+                        <div
+                          className={`absolute bottom-0 right-0 w-10 h-10 border-b-4 border-r-4 rounded-br-2xl transition-colors duration-300 ${isProcessing ? 'border-emerald-500' : 'border-indigo-500'}`}
+                        />
+
+                        {!isProcessing && <div className="animate-scan-sweep" />}
                       </div>
                     </div>
 
                     <div className="absolute inset-0 z-30 flex flex-col items-center justify-between p-6 pb-8 pointer-events-none">
-                       <div className="mt-4 px-5 py-2 bg-black/60 backdrop-blur-md rounded-full border border-white/10 shadow-lg pointer-events-auto">
-                          <span className="text-[10px] font-black uppercase tracking-widest text-white">
-                             {isProcessing ? "Processing Document..." : "Align Rubric & Tap Capture"}
-                          </span>
-                       </div>
+                      <div className="mt-4 px-5 py-2 bg-black/60 backdrop-blur-md rounded-full border border-white/10 shadow-lg pointer-events-auto">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-white">
+                          {isProcessing ? 'Processing Document...' : 'Align Rubric & Tap Capture'}
+                        </span>
+                      </div>
 
-                       {rubricScanError && (
-                         <div className="mt-4 px-4 py-3 bg-rose-500/90 backdrop-blur-md border border-rose-400 rounded-xl text-white text-[11px] font-bold text-center shadow-lg animate-in slide-in-from-top fade-in pointer-events-auto">
-                           {rubricScanError}
-                         </div>
-                       )}
+                      {rubricScanError && (
+                        <div className="mt-4 px-4 py-3 bg-rose-500/90 backdrop-blur-md border border-rose-400 rounded-xl text-white text-[11px] font-bold text-center shadow-lg animate-in slide-in-from-top fade-in pointer-events-auto">
+                          {rubricScanError}
+                        </div>
+                      )}
 
-                       {isProcessing && (
-                         <div className="flex flex-col items-center justify-center animate-in zoom-in duration-300 mb-10 pointer-events-auto">
-                             <div className="relative w-32 h-32 flex items-center justify-center bg-black/40 rounded-full shadow-[0_0_30px_rgba(16,185,129,0.2)] backdrop-blur-md">
-                                <svg className="w-full h-full transform -rotate-90">
-                                  <circle cx="64" cy="64" r="56" className="stroke-slate-800" strokeWidth="8" fill="none" />
-                                  <circle 
-                                    cx="64" cy="64" r="56" 
-                                    className="stroke-emerald-400 transition-all duration-[50ms] ease-linear" 
-                                    strokeWidth="8" strokeLinecap="round" fill="none" 
-                                    strokeDasharray="351.8" strokeDashoffset={351.8 - (351.8 * rubricScanProgress) / 100} 
-                                  />
-                                </svg>
-                                <div className="absolute flex flex-col items-center">
-                                   <span className="text-white font-black text-3xl">{rubricScanProgress}<span className="text-sm text-emerald-400">%</span></span>
-                                </div>
-                             </div>
-                             <div className="mt-6 px-6 py-3 bg-black/70 backdrop-blur-xl rounded-xl border border-emerald-500/30 flex items-center gap-3 shadow-lg">
-                                {rubricScanProgress < 100 ? <Loader2 className="w-4 h-4 animate-spin text-emerald-400" /> : <CheckCircle className="w-4 h-4 text-emerald-400" />}
-                                <span className="text-[11px] font-black uppercase tracking-widest text-emerald-400">
-                                   {getScanStatusText(rubricScanProgress)}
-                                </span>
-                             </div>
-                         </div>
-                       )}
+                      {isProcessing && (
+                        <div className="flex flex-col items-center justify-center animate-in zoom-in duration-300 mb-10 pointer-events-auto">
+                          <div className="relative w-32 h-32 flex items-center justify-center bg-black/40 rounded-full shadow-[0_0_30px_rgba(16,185,129,0.2)] backdrop-blur-md">
+                            <svg className="w-full h-full transform -rotate-90">
+                              <circle
+                                cx="64"
+                                cy="64"
+                                r="56"
+                                className="stroke-slate-800"
+                                strokeWidth="8"
+                                fill="none"
+                              />
+                              <circle
+                                cx="64"
+                                cy="64"
+                                r="56"
+                                className="stroke-emerald-400 transition-all duration-[50ms] ease-linear"
+                                strokeWidth="8"
+                                strokeLinecap="round"
+                                fill="none"
+                                strokeDasharray="351.8"
+                                strokeDashoffset={351.8 - (351.8 * rubricScanProgress) / 100}
+                              />
+                            </svg>
+                            <div className="absolute flex flex-col items-center">
+                              <span className="text-white font-black text-3xl">
+                                {rubricScanProgress}
+                                <span className="text-sm text-emerald-400">%</span>
+                              </span>
+                            </div>
+                          </div>
+                          <div className="mt-6 px-6 py-3 bg-black/70 backdrop-blur-xl rounded-xl border border-emerald-500/30 flex items-center gap-3 shadow-lg">
+                            {rubricScanProgress < 100 ? (
+                              <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+                            ) : (
+                              <CheckCircle className="w-4 h-4 text-emerald-400" />
+                            )}
+                            <span className="text-[11px] font-black uppercase tracking-widest text-emerald-400">
+                              {getScanStatusText(rubricScanProgress)}
+                            </span>
+                          </div>
+                        </div>
+                      )}
 
-                       <div className="flex flex-col items-center gap-6 mt-auto pointer-events-auto">
-                         {!isProcessing && (
-                           <button onClick={handleRubricSnap} className="w-20 h-20 rounded-full border-[4px] border-emerald-400 bg-emerald-500/20 active:scale-90 flex items-center justify-center transition-all shadow-[0_0_30px_rgba(52,211,153,0.3)] backdrop-blur-md">
-                             <Camera className="w-8 h-8 text-emerald-400" />
-                           </button>
-                         )}
-                         <button onClick={() => setIsScanningRubric(false)} className="px-8 py-3 bg-white/10 hover:bg-white/20 text-white backdrop-blur-md rounded-xl font-black uppercase text-[10px] tracking-widest border border-white/20 active:scale-95 transition-all">
-                           Cancel Scan
-                         </button>
-                       </div>
+                      <div className="flex flex-col items-center gap-6 mt-auto pointer-events-auto">
+                        {!isProcessing && (
+                          <button
+                            onClick={handleRubricSnap}
+                            className="w-20 h-20 rounded-full border-[4px] border-emerald-400 bg-emerald-500/20 active:scale-90 flex items-center justify-center transition-all shadow-[0_0_30px_rgba(52,211,153,0.3)] backdrop-blur-md"
+                          >
+                            <Camera className="w-8 h-8 text-emerald-400" />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setIsScanningRubric(false)}
+                          className="px-8 py-3 bg-white/10 hover:bg-white/20 text-white backdrop-blur-md rounded-xl font-black uppercase text-[10px] tracking-widest border border-white/20 active:scale-95 transition-all"
+                        >
+                          Cancel Scan
+                        </button>
+                      </div>
                     </div>
                   </>
                 )}
@@ -4496,9 +5690,9 @@ const App: React.FC = () => {
             )}
           </div>
 
-          <button 
-            onClick={() => setPhase(AppPhase.MODE_SELECTION)} 
-            disabled={!customRubric.trim()} 
+          <button
+            onClick={() => setPhase(AppPhase.MODE_SELECTION)}
+            disabled={!customRubric.trim()}
             className={`w-full py-4 rounded-xl font-black text-[16px] tracking-[0.1em] uppercase shadow-sm transition-all shrink-0 ${customRubric.trim() ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:-translate-y-0.5 active:scale-[0.98]' : 'bg-slate-200/50 dark:bg-slate-800/50 text-slate-400 cursor-not-allowed border border-white/50 dark:border-slate-700'}`}
           >
             Scan Student Work
@@ -4509,10 +5703,20 @@ const App: React.FC = () => {
   };
 
   const renderModeSelection = () => (
-    <PageWrapper headerTitle="Scan Student Work" headerSubtitle={educatorName} onBack={() => setPhase(AppPhase.RUBRIC_SETUP)} isOnline={isOnline} isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode} syncStatus={syncStatus}>
-      <div className="flex flex-col gap-4 max-w-sm mx-auto w-full pt-10 pb-6">
+    <PageWrapper
+      headerTitle="Scan Student Work"
+      headerSubtitle={educatorName}
+      onBack={() => setPhase(AppPhase.RUBRIC_SETUP)}
+      isOnline={isOnline}
+      isDarkMode={isDarkMode}
+      setIsDarkMode={setIsDarkMode}
+      syncStatus={syncStatus}
+    >
+      <div className="flex flex-col gap-4 w-full min-w-0 max-w-full sm:max-w-md md:max-w-lg lg:max-w-xl mx-auto px-3 sm:px-5 pt-8 sm:pt-10 pb-6">
         <div className="flex flex-col gap-3">
-          <div className="text-slate-500 text-[10px] font-black uppercase tracking-widest">Choose scan attribution</div>
+          <div className="text-slate-500 text-[10px] font-black uppercase tracking-widest">
+            Choose scan attribution
+          </div>
 
           <div className="flex flex-col gap-3">
             <button
@@ -4531,11 +5735,17 @@ const App: React.FC = () => {
                   <Camera className="w-6 h-6" />
                 </div>
                 <div className="text-left">
-                  <h3 className="text-base font-black text-slate-800 dark:text-slate-100">One student at a time</h3>
-                  <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mt-1">Match each scan to a student</p>
+                  <h3 className="text-base font-black text-slate-800 dark:text-slate-100">
+                    One student at a time
+                  </h3>
+                  <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mt-1">
+                    Match each scan to a student
+                  </p>
                 </div>
               </div>
-              <div className={`w-6 h-6 rounded-full border ${scanStudentMode === 'single' ? 'border-emerald-400 bg-emerald-500' : 'border-slate-300 dark:border-slate-600'} flex items-center justify-center`}>
+              <div
+                className={`w-6 h-6 rounded-full border ${scanStudentMode === 'single' ? 'border-emerald-400 bg-emerald-500' : 'border-slate-300 dark:border-slate-600'} flex items-center justify-center`}
+              >
                 {scanStudentMode === 'single' && <Check className="w-4 h-4 text-white" />}
               </div>
             </button>
@@ -4553,11 +5763,17 @@ const App: React.FC = () => {
                   <FileText className="w-6 h-6" />
                 </div>
                 <div className="text-left">
-                  <h3 className="text-base font-black text-slate-800 dark:text-slate-100">Batch scan multiple students</h3>
-                  <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mt-1">Select students once, then scan in order</p>
+                  <h3 className="text-base font-black text-slate-800 dark:text-slate-100">
+                    Batch scan multiple students
+                  </h3>
+                  <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mt-1">
+                    Select students once, then scan in order
+                  </p>
                 </div>
               </div>
-              <div className={`w-6 h-6 rounded-full border ${scanStudentMode === 'batch' ? 'border-indigo-400 bg-indigo-600' : 'border-slate-300 dark:border-slate-600'} flex items-center justify-center`}>
+              <div
+                className={`w-6 h-6 rounded-full border ${scanStudentMode === 'batch' ? 'border-indigo-400 bg-indigo-600' : 'border-slate-300 dark:border-slate-600'} flex items-center justify-center`}
+              >
                 {scanStudentMode === 'batch' && <Check className="w-4 h-4 text-white" />}
               </div>
             </button>
@@ -4567,7 +5783,9 @@ const App: React.FC = () => {
             <div className="p-4 rounded-xl bg-white/50 dark:bg-slate-800/40 backdrop-blur-xl border border-slate-200 dark:border-slate-700">
               <div className="flex items-center justify-between mb-3">
                 <div>
-                  <div className="text-sm font-black text-slate-800 dark:text-slate-100">Students in this batch</div>
+                  <div className="text-sm font-black text-slate-800 dark:text-slate-100">
+                    Students in this batch
+                  </div>
                   <div className="text-slate-500 text-[10px] font-black uppercase tracking-widest mt-1">
                     {batchSelectedStudentIds.size} selected
                   </div>
@@ -4575,7 +5793,7 @@ const App: React.FC = () => {
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={() => setBatchSelectedStudentIds(new Set(students.map(s => s.id)))}
+                    onClick={() => setBatchSelectedStudentIds(new Set(students.map((s) => s.id)))}
                     className="px-3 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-200 text-[10px] font-black uppercase tracking-widest border border-indigo-200/60"
                     disabled={students.length === 0}
                   >
@@ -4592,7 +5810,7 @@ const App: React.FC = () => {
               </div>
 
               <div className="max-h-44 overflow-y-auto pr-1 custom-scrollbar space-y-1">
-                {students.map(s => {
+                {students.map((s) => {
                   const checked = batchSelectedStudentIds.has(s.id);
                   return (
                     <label
@@ -4603,12 +5821,14 @@ const App: React.FC = () => {
                           : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700'
                       }`}
                     >
-                      <span className="text-[13px] font-bold text-slate-800 dark:text-slate-100 truncate">{s.name}</span>
+                      <span className="text-[13px] font-bold text-slate-800 dark:text-slate-100 truncate">
+                        {s.name}
+                      </span>
                       <input
                         type="checkbox"
                         checked={checked}
                         onChange={() => {
-                          setBatchSelectedStudentIds(prev => {
+                          setBatchSelectedStudentIds((prev) => {
                             const next = new Set(prev);
                             if (next.has(s.id)) next.delete(s.id);
                             else next.add(s.id);
@@ -4642,8 +5862,12 @@ const App: React.FC = () => {
                 <Camera className="w-6 h-6" />
               </div>
               <div className="text-left">
-                <h3 className="text-base font-black text-slate-800 dark:text-slate-100">Single Page Mode</h3>
-                <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mt-1">One scan = one student</p>
+                <h3 className="text-base font-black text-slate-800 dark:text-slate-100">
+                  Single Page Mode
+                </h3>
+                <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mt-1">
+                  One scan = one student
+                </p>
               </div>
             </div>
           </button>
@@ -4662,8 +5886,12 @@ const App: React.FC = () => {
                 <FileText className="w-6 h-6" />
               </div>
               <div className="text-left">
-                <h3 className="text-base font-black text-slate-800 dark:text-slate-100">Multi Page Mode</h3>
-                <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mt-1">Capture multiple pages per student</p>
+                <h3 className="text-base font-black text-slate-800 dark:text-slate-100">
+                  Multi Page Mode
+                </h3>
+                <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mt-1">
+                  Capture multiple pages per student
+                </p>
               </div>
             </div>
           </button>
@@ -4674,9 +5902,12 @@ const App: React.FC = () => {
 
   const renderGradingLoop = () => {
     // Dynamic derived states for the Review & Match modal
-    const selectedStudentId = selectedQuickPickIds.size > 0 ? Array.from(selectedQuickPickIds)[0] : null;
-    const selectedStudentObj = students.find(s => s.id === selectedStudentId);
-    const displayStudentName = selectedStudentObj ? selectedStudentObj.name : (pendingWork?.studentName || "Unknown Student");
+    const selectedStudentId =
+      selectedQuickPickIds.size > 0 ? Array.from(selectedQuickPickIds)[0] : null;
+    const selectedStudentObj = students.find((s) => s.id === selectedStudentId);
+    const displayStudentName = selectedStudentObj
+      ? selectedStudentObj.name
+      : pendingWork?.studentName || 'Unknown Student';
     const expectedBatchStudentId =
       scanStudentMode === 'batch' ? batchStudentOrderRef.current[batchNextIndexRef.current] : null;
     const expectedBatchStudent = expectedBatchStudentId
@@ -4684,9 +5915,17 @@ const App: React.FC = () => {
       : null;
 
     return (
-      <PageWrapper headerTitle={gradingMode === GradingMode.MULTI_PAGE ? 'Multi Page Mode' : 'Single Page Mode'} onBack={() => setPhase(AppPhase.MODE_SELECTION)} isOnline={isOnline} isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode}>
+      <PageWrapper
+        headerTitle={
+          gradingMode === GradingMode.MULTI_PAGE ? 'Multi Page Mode' : 'Single Page Mode'
+        }
+        onBack={() => setPhase(AppPhase.MODE_SELECTION)}
+        isOnline={isOnline}
+        isDarkMode={isDarkMode}
+        setIsDarkMode={setIsDarkMode}
+      >
         <div className="flex-1 relative bg-black rounded-3xl overflow-hidden shadow-2xl border border-white/20 flex flex-col">
-            <style>{`
+          <style>{`
               @keyframes scanSweepVertical {
                 0% { top: 0%; opacity: 0; }
                 10% { opacity: 1; }
@@ -4698,273 +5937,331 @@ const App: React.FC = () => {
               }
             `}</style>
 
-            <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 w-full h-full object-cover" />
-            <canvas ref={canvasRef} className="hidden" />
-            
-            {/* ASPECT RATIO BOUNDING BOX (Matches Letter 8.5x11 and A4 perfectly on mobile) */}
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none p-6 pb-24">
-              <div className={`relative w-full max-w-sm aspect-[3/4] border-[3px] border-dashed transition-all duration-500 rounded-3xl z-10 flex flex-col items-center justify-center overflow-hidden pointer-events-none ${isProcessing ? 'border-emerald-400 bg-emerald-400/20' : 'border-white/60 bg-black/10'}`}>
-                 {!isProcessing && (
-                     <div className="absolute left-0 w-full h-1 bg-emerald-400 shadow-[0_0_20px_4px_rgba(52,211,153,0.8)] animate-scan-sweep-vertical" />
-                 )}
-                 <span className="bg-black/70 text-white font-black uppercase tracking-widest text-[10px] px-5 py-2.5 rounded-full backdrop-blur-md shadow-lg">
-                     {isProcessing ? "Processing..." : "Align document within frame"}
-                 </span>
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+          <canvas ref={canvasRef} className="hidden" />
 
-                 {gradingMode === GradingMode.MULTI_PAGE && (
-                   <div className="absolute top-3 left-3 right-3 flex items-center justify-between gap-2">
-                     <div className="px-3 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-white text-[9px] font-black uppercase tracking-widest">
-                       Multi‑page · {multiPageCapture.croppedDataUrls.length} page{multiPageCapture.croppedDataUrls.length === 1 ? '' : 's'}
-                     </div>
-                     {multiPageHint && (
-                       <div className="px-3 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-white text-[9px] font-semibold truncate">
-                         {multiPageHint}
-                       </div>
-                     )}
-                   </div>
-                 )}
-              </div>
-            </div>
+          {/* ASPECT RATIO BOUNDING BOX (Matches Letter 8.5x11 and A4 perfectly on mobile) */}
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none p-6 pb-3">
+            <div
+              className={`relative w-full max-w-[min(100%,22rem)] sm:max-w-md md:max-w-lg aspect-[3/4] border-[3px] border-dashed transition-all duration-500 rounded-3xl z-10 flex flex-col items-center justify-center overflow-hidden pointer-events-none ${isProcessing ? 'border-emerald-400 bg-emerald-400/20' : 'border-white/60 bg-black/10'}`}
+            >
+              {!isProcessing && (
+                <div className="absolute left-0 w-full h-1 bg-emerald-400 shadow-[0_0_20px_4px_rgba(52,211,153,0.8)] animate-scan-sweep-vertical" />
+              )}
+              <span className="bg-black/70 text-white font-black uppercase tracking-widest text-[10px] px-5 py-2.5 rounded-full backdrop-blur-md shadow-lg">
+                {isProcessing ? 'Processing...' : 'Align document within frame'}
+              </span>
 
-            <div className="absolute top-4 left-4 z-40 flex flex-col gap-2 pointer-events-auto">
-              <div className="px-3 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-white text-[9px] font-black uppercase tracking-widest">
-                Health · {Math.max(0, Math.min(100, Math.round(scanHealth)))}%
-              </div>
-              {(scanQueueCount > 0 || scanReviewQueueCount > 0) && (
-                <div className="flex items-center gap-2">
-                  {scanQueueCount > 0 && (
-                    <div className="px-3 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-white text-[9px] font-black uppercase tracking-widest">
-                      Queue · {scanQueueCount}
+              {gradingMode === GradingMode.MULTI_PAGE && (
+                <div className="absolute top-3 left-3 right-3 flex items-center justify-between gap-2">
+                  <div className="px-3 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-white text-[9px] font-black uppercase tracking-widest">
+                    Multi‑page · {multiPageCapture.croppedDataUrls.length} page
+                    {multiPageCapture.croppedDataUrls.length === 1 ? '' : 's'}
+                  </div>
+                  {multiPageHint && (
+                    <div className="px-3 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-white text-[9px] font-semibold truncate">
+                      {multiPageHint}
                     </div>
                   )}
-                  {scanReviewQueueCount > 0 && (
-                    <button
-                      type="button"
-                      onClick={openNextQueuedReview}
-                      className="px-3 py-1.5 rounded-full bg-emerald-500/25 hover:bg-emerald-500/35 backdrop-blur-md border border-emerald-400/40 text-emerald-100 text-[9px] font-black uppercase tracking-widest transition-all"
-                      title="Review next graded scan"
-                    >
-                      Review · {scanReviewQueueCount}
-                    </button>
-                  )}
-                </div>
-              )}
-              {scanQueueHint && (
-                <div className="px-3 py-2 rounded-xl bg-black/70 backdrop-blur-md border border-white/20 text-white text-[10px] font-semibold shadow-lg max-w-[220px]">
-                  {scanQueueHint}
-                </div>
-              )}
-              {!isOnline && scanQueueCount > 0 && (
-                <div className="px-3 py-2 rounded-xl bg-amber-500/20 backdrop-blur-md border border-amber-400/30 text-amber-100 text-[10px] font-semibold shadow-lg max-w-[220px]">
-                  Offline — queued scans will grade when you’re back online (keep app open).
                 </div>
               )}
             </div>
+          </div>
 
-            {scanStudentMode === 'batch' && expectedBatchStudent && !showQuickPick && (
-              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 pointer-events-none">
-                <div className="px-4 py-2 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-white text-[10px] font-black uppercase tracking-widest shadow-lg max-w-[320px] truncate">
-                  Next student · {expectedBatchStudent.name}
-                </div>
+          <div className="absolute top-4 left-4 z-40 flex flex-col gap-2 pointer-events-auto">
+            <div className="px-3 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-white text-[9px] font-black uppercase tracking-widest">
+              Health · {Math.max(0, Math.min(100, Math.round(scanHealth)))}%
+            </div>
+            {(scanQueueCount > 0 || scanReviewQueueCount > 0) && (
+              <div className="flex items-center gap-2">
+                {scanQueueCount > 0 && (
+                  <div className="px-3 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-white text-[9px] font-black uppercase tracking-widest">
+                    Queue · {scanQueueCount}
+                  </div>
+                )}
+                {scanReviewQueueCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={openNextQueuedReview}
+                    className="px-3 py-1.5 rounded-full bg-emerald-500/25 hover:bg-emerald-500/35 backdrop-blur-md border border-emerald-400/40 text-emerald-100 text-[9px] font-black uppercase tracking-widest transition-all"
+                    title="Review next graded scan"
+                  >
+                    Review · {scanReviewQueueCount}
+                  </button>
+                )}
               </div>
             )}
+            {scanQueueHint && (
+              <div className="px-3 py-2 rounded-xl bg-black/70 backdrop-blur-md border border-white/20 text-white text-[10px] font-semibold shadow-lg max-w-[220px]">
+                {scanQueueHint}
+              </div>
+            )}
+            {!isOnline && scanQueueCount > 0 && (
+              <div className="px-3 py-2 rounded-xl bg-amber-500/20 backdrop-blur-md border border-amber-400/30 text-amber-100 text-[10px] font-semibold shadow-lg max-w-[220px]">
+                Offline — queued scans will grade when you’re back online (keep app open).
+              </div>
+            )}
+          </div>
 
-            <div className="relative z-40 flex items-center justify-center gap-6 mb-6 mt-auto pb-4">
-              <div className="bg-black/50 backdrop-blur-xl p-2 rounded-full flex gap-3 items-center shadow-lg border border-white/20">
-                 <button onClick={toggleFlash} className={`p-4 rounded-full border-2 transition-all ${isFlashOn ? 'bg-yellow-400 text-black border-transparent shadow-[0_0_20px_rgba(250,204,21,0.6)]' : 'bg-white/10 text-white border-white/30 hover:bg-white/20'}`} title="Toggle Flash">
-                   <Zap className="w-6 h-6" />
-                 </button>
-
-                 {gradingMode === GradingMode.SINGLE_PAGE && (
-                   <button
-                     type="button"
-                     onClick={() => void handleManualCaptureSinglePage()}
-                     className="w-16 h-16 rounded-full border-[4px] border-emerald-400 bg-emerald-500/20 hover:bg-emerald-500/30 active:scale-95 flex items-center justify-center transition-all shadow-[0_0_30px_rgba(52,211,153,0.25)] backdrop-blur-md"
-                     title="Capture now"
-                   >
-                     <Camera className="w-7 h-7 text-emerald-200" />
-                   </button>
-                 )}
-
-                 {gradingMode === GradingMode.MULTI_PAGE && (
-                   <>
-                     <button
-                       type="button"
-                       onClick={() => setMultiPageCapture({ croppedDataUrls: [], apiBase64s: [], detectedStudentName: undefined })}
-                       className="px-4 py-3 rounded-full bg-white/10 text-white border-2 border-white/30 hover:bg-white/20 transition-all text-[10px] font-black uppercase tracking-widest"
-                       title="Reset captured pages"
-                     >
-                       Reset
-                     </button>
-                     <button
-                       type="button"
-                       disabled={multiPageCapture.apiBase64s.length === 0 || isProcessing}
-                       onClick={() => void finalizeMultiPage()}
-                       className={`px-4 py-3 rounded-full border-2 transition-all text-[10px] font-black uppercase tracking-widest ${
-                         multiPageCapture.apiBase64s.length === 0 || isProcessing
-                           ? 'bg-white/5 text-white/40 border-white/10'
-                           : 'bg-emerald-500/20 text-emerald-200 border-emerald-400/60 hover:bg-emerald-500/30'
-                       }`}
-                       title="Finish scanning pages and grade"
-                     >
-                       Finish & Grade
-                     </button>
-                   </>
-                 )}
+          {scanStudentMode === 'batch' && expectedBatchStudent && !showQuickPick && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 pointer-events-none">
+              <div className="px-4 py-2 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-white text-[10px] font-black uppercase tracking-widest shadow-lg max-w-[320px] truncate">
+                Next student · {expectedBatchStudent.name}
               </div>
             </div>
+          )}
 
-            {showQuickPick && pendingWork && (
-               <div className="absolute inset-0 z-50 bg-slate-900/95 backdrop-blur-2xl flex flex-col p-4 animate-in fade-in zoom-in duration-300">
-                 <div className="flex-1 w-full max-w-md mx-auto bg-white dark:bg-slate-900 rounded-3xl p-5 shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden">
-                   
-                   <h3 className="font-black text-slate-800 dark:text-slate-100 text-center mb-4 text-[16px] uppercase tracking-widest border-b border-slate-100 dark:border-slate-700 pb-4">
-                     Review & Match
-                   </h3>
+          <div className="relative z-40 flex items-center justify-center gap-6 mb-6 mt-auto pb-4">
+            <div className="bg-black/50 backdrop-blur-xl p-2 rounded-full flex gap-3 items-center shadow-lg border border-white/20">
+              <button
+                onClick={toggleFlash}
+                className={`p-4 rounded-full border-2 transition-all ${isFlashOn ? 'bg-yellow-400 text-black border-transparent shadow-[0_0_20px_rgba(250,204,21,0.6)]' : 'bg-white/10 text-white border-white/30 hover:bg-white/20'}`}
+                title="Toggle Flash"
+              >
+                <Zap className="w-6 h-6" />
+              </button>
 
-                   {scanStudentMode === 'batch' && expectedBatchStudent && (() => {
-                     const candidateStudents =
-                       batchSelectedStudentIds.size > 0
-                         ? students.filter((s) => batchSelectedStudentIds.has(s.id))
-                         : students;
-                     const detectedName = (pendingWork.studentName || '').toLowerCase().replace(/[^a-z]/g, '');
-                     const detectedMatch =
-                       detectedName.length > 2
-                         ? candidateStudents.find((s) => {
-                             const sName = s.name.toLowerCase().replace(/[^a-z]/g, '');
-                             return sName.includes(detectedName) || detectedName.includes(sName);
-                           })
-                         : null;
-                     const detectedId = detectedMatch?.id || null;
-                     const conflict = !!detectedId && detectedId !== expectedBatchStudent.id;
-                     if (!conflict) return null;
-                     return (
-                       <div className="mb-4 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30">
-                         <div className="text-[10px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-200">
-                           Resolve attribution
-                         </div>
-                         <div className="mt-1 text-sm font-semibold text-slate-800 dark:text-slate-100">
-                           Detected <span className="font-black">{detectedMatch?.name}</span>, expected{' '}
-                           <span className="font-black">{expectedBatchStudent.name}</span>.
-                         </div>
-                         <div className="mt-3 grid grid-cols-2 gap-2">
-                           <button
-                             type="button"
-                             onClick={() => setSelectedQuickPickIds(new Set([expectedBatchStudent.id]))}
-                             className="py-2.5 rounded-xl bg-emerald-500 text-white font-black uppercase tracking-widest text-[10px]"
-                           >
-                             Use expected
-                           </button>
-                           <button
-                             type="button"
-                             onClick={() => detectedId && setSelectedQuickPickIds(new Set([detectedId]))}
-                             className="py-2.5 rounded-xl bg-indigo-600 text-white font-black uppercase tracking-widest text-[10px]"
-                           >
-                             Use detected
-                           </button>
-                         </div>
-                       </div>
-                     );
-                   })()}
+              {gradingMode === GradingMode.SINGLE_PAGE && (
+                <button
+                  type="button"
+                  onClick={() => void handleManualCaptureSinglePage()}
+                  className="w-16 h-16 rounded-full border-[4px] border-emerald-400 bg-emerald-500/20 hover:bg-emerald-500/30 active:scale-95 flex items-center justify-center transition-all shadow-[0_0_30px_rgba(52,211,153,0.25)] backdrop-blur-md"
+                  title="Capture now"
+                >
+                  <Camera className="w-7 h-7 text-emerald-200" />
+                </button>
+              )}
 
-                   {/* 1st Line: Student Name & Score */}
-                   <div className="flex gap-4 mb-4 shrink-0 h-20">
-                     <div className="flex flex-col flex-1">
-                       <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 text-center w-full block">Student</label>
-                       <div className="flex-1 flex items-center justify-center bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-500/30 rounded-xl px-4 shadow-inner overflow-hidden">
-                         <span className="text-emerald-600 dark:text-emerald-400 font-black text-lg text-center leading-tight truncate w-full">
-                           {displayStudentName}
-                         </span>
-                       </div>
-                     </div>
-                     <div className="flex flex-col w-28 shrink-0">
-                       <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 text-center w-full block">Score</label>
-                       <input 
-                         type="number" 
-                         value={manualScore} 
-                         onChange={e => setManualScore(e.target.value)} 
-                         className="flex-1 w-full text-center font-black text-3xl text-indigo-600 bg-indigo-50 dark:bg-indigo-900/30 rounded-xl outline-none border border-indigo-100 dark:border-indigo-500/30 shadow-inner" 
-                       />
-                     </div>
-                   </div>
+              {gradingMode === GradingMode.MULTI_PAGE && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setMultiPageCapture({
+                        croppedDataUrls: [],
+                        apiBase64s: [],
+                        detectedStudentName: undefined,
+                      })
+                    }
+                    className="px-4 py-3 rounded-full bg-white/10 text-white border-2 border-white/30 hover:bg-white/20 transition-all text-[10px] font-black uppercase tracking-widest"
+                    title="Reset captured pages"
+                  >
+                    Reset
+                  </button>
+                  <button
+                    type="button"
+                    disabled={multiPageCapture.apiBase64s.length === 0 || isProcessing}
+                    onClick={() => void finalizeMultiPage()}
+                    className={`px-4 py-3 rounded-full border-2 transition-all text-[10px] font-black uppercase tracking-widest ${
+                      multiPageCapture.apiBase64s.length === 0 || isProcessing
+                        ? 'bg-white/5 text-white/40 border-white/10'
+                        : 'bg-emerald-500/20 text-emerald-200 border-emerald-400/60 hover:bg-emerald-500/30'
+                    }`}
+                    title="Finish scanning pages and grade"
+                  >
+                    Finish & Grade
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
 
-                   {/* 2nd Line: Feedback (Larger & Scrollable) + Voice Button */}
-                   <div className="flex flex-col mb-4 shrink-0">
-                     <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 text-center w-full block">Feedback</label>
-                     <div className="relative">
-                       <textarea 
-                         value={manualFeedback} 
-                         onChange={e => setManualFeedback(e.target.value)} 
-                         rows={5} 
-                         className="w-full p-4 pr-14 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 outline-none resize-none text-[16px] text-slate-700 dark:text-slate-300 overflow-y-auto custom-scrollbar shadow-inner" 
-                         placeholder="Add or review feedback..." 
-                       />
-                       <VoiceInputButton 
-                         onResult={(text) => setManualFeedback(prev => prev + (prev ? ' ' : '') + text)} 
-                         className="absolute bottom-3 right-3 bg-white dark:bg-slate-700 shadow-md border-slate-200 dark:border-slate-600" 
-                       />
-                     </div>
-                   </div>
+          {showQuickPick && pendingWork && (
+            <div className="absolute inset-0 z-50 bg-slate-900/95 backdrop-blur-2xl flex flex-col p-4 animate-in fade-in zoom-in duration-300">
+              <div className="flex-1 w-full min-w-0 max-w-full sm:max-w-md md:max-w-lg lg:max-w-xl mx-auto bg-white dark:bg-slate-900 rounded-none sm:rounded-3xl p-4 sm:p-5 shadow-2xl border-0 sm:border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden">
+                <h3 className="font-black text-slate-800 dark:text-slate-100 text-center mb-4 text-[16px] uppercase tracking-widest border-b border-slate-100 dark:border-slate-700 pb-4">
+                  Review & Match
+                </h3>
 
-                   {/* Student List */}
-                   <div className="flex flex-col flex-1 min-h-0">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2 text-center w-full block">
-                        Select Student to Match
-                      </label>
-                      <div className="flex-1 overflow-y-auto custom-scrollbar bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 p-2 space-y-1 shadow-inner">
-                        {/* Dynamic Listing: Matches are always pushed to the top */}
-                        {(scanStudentMode === 'batch' && batchSelectedStudentIds.size > 0
-                          ? students.filter(s => batchSelectedStudentIds.has(s.id))
-                          : students
-                        ).sort((a, b) => {
-                             if (!pendingWork.studentName) return 0;
-                             const lowerDetected = pendingWork.studentName.toLowerCase().replace(/[^a-z]/g, '');
-                             if (lowerDetected.length <= 2) return 0;
-                             const aName = a.name.toLowerCase().replace(/[^a-z]/g, '');
-                             const bName = b.name.toLowerCase().replace(/[^a-z]/g, '');
-                             const aMatch = aName.includes(lowerDetected) || lowerDetected.includes(aName);
-                             const bMatch = bName.includes(lowerDetected) || lowerDetected.includes(bName);
-                             if (aMatch && !bMatch) return -1;
-                             if (!aMatch && bMatch) return 1;
-                             return a.name.localeCompare(b.name);
-                        }).map(student => (
-                           <div 
-                             key={student.id} 
-                             onClick={() => setSelectedQuickPickIds(new Set([student.id]))}
-                             className={`p-3 rounded-xl flex items-center justify-between cursor-pointer transition-all border ${selectedQuickPickIds.has(student.id) ? 'bg-indigo-50 dark:bg-indigo-900/30 border-indigo-400 dark:border-indigo-500 shadow-sm' : 'bg-white dark:bg-slate-800 border-transparent hover:border-slate-300 dark:hover:border-slate-600'}`}
-                           >
-                             <span className={`font-bold text-[16px] ${selectedQuickPickIds.has(student.id) ? 'text-indigo-700 dark:text-indigo-300' : 'text-slate-700 dark:text-slate-300'}`}>
-                               {student.name}
-                             </span>
-                             <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${selectedQuickPickIds.has(student.id) ? 'border-indigo-500 bg-indigo-500' : 'border-slate-300 dark:border-slate-600'}`}>
-                                {selectedQuickPickIds.has(student.id) && <Check className="w-3 h-3 text-white" />}
-                             </div>
-                           </div>
-                         ))}
+                {scanStudentMode === 'batch' &&
+                  expectedBatchStudent &&
+                  (() => {
+                    const candidateStudents =
+                      batchSelectedStudentIds.size > 0
+                        ? students.filter((s) => batchSelectedStudentIds.has(s.id))
+                        : students;
+                    const detectedName = (pendingWork.studentName || '')
+                      .toLowerCase()
+                      .replace(/[^a-z]/g, '');
+                    const detectedMatch =
+                      detectedName.length > 2
+                        ? candidateStudents.find((s) => {
+                            const sName = s.name.toLowerCase().replace(/[^a-z]/g, '');
+                            return sName.includes(detectedName) || detectedName.includes(sName);
+                          })
+                        : null;
+                    const detectedId = detectedMatch?.id || null;
+                    const conflict = !!detectedId && detectedId !== expectedBatchStudent.id;
+                    if (!conflict) return null;
+                    return (
+                      <div className="mb-4 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30">
+                        <div className="text-[10px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-200">
+                          Resolve attribution
+                        </div>
+                        <div className="mt-1 text-sm font-semibold text-slate-800 dark:text-slate-100">
+                          Detected <span className="font-black">{detectedMatch?.name}</span>,
+                          expected <span className="font-black">{expectedBatchStudent.name}</span>.
+                        </div>
+                        <div className="mt-3 grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSelectedQuickPickIds(new Set([expectedBatchStudent.id]))
+                            }
+                            className="py-2.5 rounded-xl bg-emerald-500 text-white font-black uppercase tracking-widest text-[10px]"
+                          >
+                            Use expected
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              detectedId && setSelectedQuickPickIds(new Set([detectedId]))
+                            }
+                            className="py-2.5 rounded-xl bg-indigo-600 text-white font-black uppercase tracking-widest text-[10px]"
+                          >
+                            Use detected
+                          </button>
+                        </div>
                       </div>
-                   </div>
+                    );
+                  })()}
 
-                   <div className="flex gap-3 mt-4 shrink-0">
-                     <button onClick={() => { setShowQuickPick(false); setPendingWork(null); }} className="flex-1 py-4 bg-slate-100 dark:bg-slate-800 rounded-xl font-black text-slate-600 dark:text-slate-300 uppercase text-[11px] tracking-widest hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors shadow-sm">Cancel</button>
-                     <button
-                       onClick={confirmQuickPickStudents}
-                       disabled={selectedQuickPickIds.size === 0}
-                       className="flex-1 py-4 bg-emerald-500 text-white rounded-xl font-black uppercase text-[11px] tracking-widest disabled:opacity-50 hover:bg-emerald-600 transition-colors shadow-md"
-                     >
-                       {scanStudentMode === 'batch' && selectedStudentObj ? `Apply to ${selectedStudentObj.name}` : 'Done'}
-                     </button>
-                   </div>
+                {/* 1st Line: Student Name & Score */}
+                <div className="flex gap-4 mb-4 shrink-0 h-20">
+                  <div className="flex flex-col flex-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 text-center w-full block">
+                      Student
+                    </label>
+                    <div className="flex-1 flex items-center justify-center bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-500/30 rounded-xl px-4 shadow-inner overflow-hidden">
+                      <span className="text-emerald-600 dark:text-emerald-400 font-black text-lg text-center leading-tight truncate w-full">
+                        {displayStudentName}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex flex-col w-28 shrink-0">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 text-center w-full block">
+                      Score
+                    </label>
+                    <input
+                      type="number"
+                      value={manualScore}
+                      onChange={(e) => setManualScore(e.target.value)}
+                      className="flex-1 w-full text-center font-black text-3xl text-indigo-600 bg-indigo-50 dark:bg-indigo-900/30 rounded-xl outline-none border border-indigo-100 dark:border-indigo-500/30 shadow-inner"
+                    />
+                  </div>
+                </div>
 
-                 </div>
-               </div>
-            )}
-         </div>
-         
-         {gradedWorks.length > 0 && (
-           <button onClick={() => setPhase(AppPhase.AUDIT)} className="mt-4 w-full py-4 bg-indigo-600 text-white rounded-xl font-black uppercase tracking-widest text-[16px] shadow-sm hover:-translate-y-0.5 transition-all">
-             Review {gradedWorks.length} Scans <ArrowRight className="inline ml-2 w-4 h-4" />
-           </button>
-         )}
+                {/* 2nd Line: Feedback (Larger & Scrollable) + Voice Button */}
+                <div className="flex flex-col mb-4 shrink-0">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 text-center w-full block">
+                    Feedback
+                  </label>
+                  <div className="relative">
+                    <textarea
+                      value={manualFeedback}
+                      onChange={(e) => setManualFeedback(e.target.value)}
+                      rows={5}
+                      className="w-full p-4 pr-14 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 outline-none resize-none text-[16px] text-slate-700 dark:text-slate-300 overflow-y-auto custom-scrollbar shadow-inner"
+                      placeholder="Add or review feedback..."
+                    />
+                    <VoiceInputButton
+                      onResult={(text) =>
+                        setManualFeedback((prev) => prev + (prev ? ' ' : '') + text)
+                      }
+                      className="absolute bottom-3 right-3 bg-white dark:bg-slate-700 shadow-md border-slate-200 dark:border-slate-600"
+                    />
+                  </div>
+                </div>
+
+                {/* Student List */}
+                <div className="flex flex-col flex-1 min-h-0">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2 text-center w-full block">
+                    Select Student to Match
+                  </label>
+                  <div className="flex-1 overflow-y-auto custom-scrollbar bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 p-2 space-y-1 shadow-inner">
+                    {/* Dynamic Listing: Matches are always pushed to the top */}
+                    {(scanStudentMode === 'batch' && batchSelectedStudentIds.size > 0
+                      ? students.filter((s) => batchSelectedStudentIds.has(s.id))
+                      : students
+                    )
+                      .sort((a, b) => {
+                        if (!pendingWork.studentName) return 0;
+                        const lowerDetected = pendingWork.studentName
+                          .toLowerCase()
+                          .replace(/[^a-z]/g, '');
+                        if (lowerDetected.length <= 2) return 0;
+                        const aName = a.name.toLowerCase().replace(/[^a-z]/g, '');
+                        const bName = b.name.toLowerCase().replace(/[^a-z]/g, '');
+                        const aMatch =
+                          aName.includes(lowerDetected) || lowerDetected.includes(aName);
+                        const bMatch =
+                          bName.includes(lowerDetected) || lowerDetected.includes(bName);
+                        if (aMatch && !bMatch) return -1;
+                        if (!aMatch && bMatch) return 1;
+                        return a.name.localeCompare(b.name);
+                      })
+                      .map((student) => (
+                        <div
+                          key={student.id}
+                          onClick={() => setSelectedQuickPickIds(new Set([student.id]))}
+                          className={`p-3 rounded-xl flex items-center justify-between cursor-pointer transition-all border ${selectedQuickPickIds.has(student.id) ? 'bg-indigo-50 dark:bg-indigo-900/30 border-indigo-400 dark:border-indigo-500 shadow-sm' : 'bg-white dark:bg-slate-800 border-transparent hover:border-slate-300 dark:hover:border-slate-600'}`}
+                        >
+                          <span
+                            className={`font-bold text-[16px] ${selectedQuickPickIds.has(student.id) ? 'text-indigo-700 dark:text-indigo-300' : 'text-slate-700 dark:text-slate-300'}`}
+                          >
+                            {student.name}
+                          </span>
+                          <div
+                            className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${selectedQuickPickIds.has(student.id) ? 'border-indigo-500 bg-indigo-500' : 'border-slate-300 dark:border-slate-600'}`}
+                          >
+                            {selectedQuickPickIds.has(student.id) && (
+                              <Check className="w-3 h-3 text-white" />
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+
+                <div className="flex gap-3 mt-4 shrink-0">
+                  <button
+                    onClick={() => {
+                      setShowQuickPick(false);
+                      setPendingWork(null);
+                    }}
+                    className="flex-1 py-4 bg-slate-100 dark:bg-slate-800 rounded-xl font-black text-slate-600 dark:text-slate-300 uppercase text-[11px] tracking-widest hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors shadow-sm"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmQuickPickStudents}
+                    disabled={selectedQuickPickIds.size === 0}
+                    className="flex-1 py-4 bg-emerald-500 text-white rounded-xl font-black uppercase text-[11px] tracking-widest disabled:opacity-50 hover:bg-emerald-600 transition-colors shadow-md"
+                  >
+                    {scanStudentMode === 'batch' && selectedStudentObj
+                      ? `Apply to ${selectedStudentObj.name}`
+                      : 'Done'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {gradedWorks.length > 0 && (
+          <button
+            onClick={() => setPhase(AppPhase.AUDIT)}
+            className="mt-4 w-full py-4 bg-indigo-600 text-white rounded-xl font-black uppercase tracking-widest text-[16px] shadow-sm hover:-translate-y-0.5 transition-all"
+          >
+            Review {gradedWorks.length} Scans <ArrowRight className="inline ml-2 w-4 h-4" />
+          </button>
+        )}
       </PageWrapper>
     );
   };
@@ -4988,7 +6285,8 @@ const App: React.FC = () => {
       });
 
     const selectedCount = auditSelectedIndexes.size;
-    const effectiveSelection = selectedCount > 0 ? Array.from(auditSelectedIndexes) : visible.map((v) => v.idx);
+    const effectiveSelection =
+      selectedCount > 0 ? Array.from(auditSelectedIndexes) : visible.map((v) => v.idx);
 
     return (
       <PageWrapper
@@ -5000,11 +6298,13 @@ const App: React.FC = () => {
         setIsDarkMode={setIsDarkMode}
         syncStatus={syncStatus}
       >
-        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar flex flex-col gap-3 pb-24 pt-1">
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar flex flex-col gap-3 pb-3 pt-1">
           <div className="sticky top-0 z-20 bg-white/70 dark:bg-slate-800/70 backdrop-blur-md border border-slate-200 dark:border-slate-700 rounded-2xl p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Queue control</div>
+                <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                  Queue control
+                </div>
                 <div className="mt-1 text-sm font-black text-slate-900 dark:text-white truncate">
                   {selectedCount > 0 ? `${selectedCount} selected` : `${visible.length} shown`}
                 </div>
@@ -5058,7 +6358,9 @@ const App: React.FC = () => {
                 type="button"
                 onClick={() => {
                   if (effectiveSelection.length === 0) return;
-                  setGradedWorks((prev) => prev.filter((_, i) => !new Set(effectiveSelection).has(i)));
+                  setGradedWorks((prev) =>
+                    prev.filter((_, i) => !new Set(effectiveSelection).has(i))
+                  );
                   setAuditSelectedIndexes(new Set());
                 }}
                 disabled={effectiveSelection.length === 0}
@@ -5071,7 +6373,9 @@ const App: React.FC = () => {
                 onClick={() => {
                   if (effectiveSelection.length === 0) return;
                   const set = new Set(effectiveSelection);
-                  setGradedWorks((prev) => prev.map((w, i) => (set.has(i) ? { ...w, status: 'draft' as const } : w)));
+                  setGradedWorks((prev) =>
+                    prev.map((w, i) => (set.has(i) ? { ...w, status: 'draft' as const } : w))
+                  );
                 }}
                 disabled={effectiveSelection.length === 0}
                 className="py-2.5 rounded-xl bg-white/60 dark:bg-slate-900/40 text-slate-700 dark:text-slate-200 border border-slate-200/70 dark:border-slate-700/60 text-[10px] font-black uppercase tracking-widest disabled:opacity-50"
@@ -5101,7 +6405,9 @@ const App: React.FC = () => {
               <div
                 key={idx}
                 className={`p-4 rounded-2xl border shadow-sm bg-white/70 dark:bg-slate-800/70 ${
-                  isSelected ? 'border-indigo-400/70' : 'border-slate-200/70 dark:border-slate-700/60'
+                  isSelected
+                    ? 'border-indigo-400/70'
+                    : 'border-slate-200/70 dark:border-slate-700/60'
                 }`}
               >
                 <div className="flex items-start justify-between gap-3">
@@ -5117,24 +6423,32 @@ const App: React.FC = () => {
                     }}
                     className="flex items-start gap-3 flex-1 text-left min-w-0"
                   >
-                    <div className={`w-6 h-6 rounded-full border flex items-center justify-center shrink-0 ${
-                      isSelected ? 'border-indigo-500 bg-indigo-600' : 'border-slate-300 dark:border-slate-600'
-                    }`}>
+                    <div
+                      className={`w-6 h-6 rounded-full border flex items-center justify-center shrink-0 ${
+                        isSelected
+                          ? 'border-indigo-500 bg-indigo-600'
+                          : 'border-slate-300 dark:border-slate-600'
+                      }`}
+                    >
                       {isSelected && <Check className="w-4 h-4 text-white" />}
                     </div>
                     <div className="min-w-0">
-                      <div className="font-black text-sm text-slate-900 dark:text-white truncate">{w.studentName || 'Unknown student'}</div>
+                      <div className="font-black text-sm text-slate-900 dark:text-white truncate">
+                        {w.studentName || 'Unknown student'}
+                      </div>
                       <div className="mt-1 flex flex-wrap items-center gap-2">
                         <div className="text-[11px] font-black text-indigo-700 dark:text-indigo-300">
                           {w.score}/{w.maxScore}
                         </div>
-                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${
-                          state === 'error'
-                            ? 'bg-rose-500/10 border-rose-500/20 text-rose-600 dark:text-rose-300'
-                            : state === 'draft'
-                              ? 'bg-amber-500/10 border-amber-500/20 text-amber-700 dark:text-amber-200'
-                              : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-700 dark:text-emerald-300'
-                        }`}>
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${
+                            state === 'error'
+                              ? 'bg-rose-500/10 border-rose-500/20 text-rose-600 dark:text-rose-300'
+                              : state === 'draft'
+                                ? 'bg-amber-500/10 border-amber-500/20 text-amber-700 dark:text-amber-200'
+                                : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-700 dark:text-emerald-300'
+                          }`}
+                        >
                           {state === 'error' ? 'Error' : state === 'draft' ? 'Draft' : 'Ready'}
                         </span>
                         {w.status === 'synced' && (
@@ -5173,7 +6487,9 @@ const App: React.FC = () => {
           })}
 
           {visible.length === 0 && (
-            <div className="py-10 text-center text-slate-500 text-sm font-bold">Nothing to show.</div>
+            <div className="py-10 text-center text-slate-500 text-sm font-bold">
+              Nothing to show.
+            </div>
           )}
         </div>
       </PageWrapper>
@@ -5181,32 +6497,55 @@ const App: React.FC = () => {
   };
 
   const renderSyncing = () => (
-    <PageWrapper isOnline={isOnline} isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode} syncStatus={syncStatus}>
-       <div className="flex-1 min-h-0 flex flex-col items-center justify-center">
-          <Loader2 className="w-12 h-12 text-indigo-500 animate-spin mb-6" />
-          <h2 className="text-xl font-black text-slate-800 dark:text-slate-100 mb-2">Syncing Data</h2>
-          <p className="text-[16px] font-bold text-slate-500 uppercase tracking-widest">{syncProgress.message}</p>
-          <div className="w-full max-w-xs h-2 bg-slate-200 dark:bg-slate-700 rounded-full mt-6 overflow-hidden">
-             <div className="h-full bg-indigo-500 transition-all duration-300" style={{ width: `${(syncProgress.current / Math.max(1, syncProgress.total)) * 100}%` }} />
-          </div>
-       </div>
+    <PageWrapper
+      isOnline={isOnline}
+      isDarkMode={isDarkMode}
+      setIsDarkMode={setIsDarkMode}
+      syncStatus={syncStatus}
+    >
+      <div className="flex-1 min-h-0 flex flex-col items-center justify-center">
+        <Loader2 className="w-12 h-12 text-indigo-500 animate-spin mb-6" />
+        <h2 className="text-xl font-black text-slate-800 dark:text-slate-100 mb-2">Syncing Data</h2>
+        <p className="text-[16px] font-bold text-slate-500 uppercase tracking-widest">
+          {syncProgress.message}
+        </p>
+        <div className="w-full max-w-xs h-2 bg-slate-200 dark:bg-slate-700 rounded-full mt-6 overflow-hidden">
+          <div
+            className="h-full bg-indigo-500 transition-all duration-300"
+            style={{ width: `${(syncProgress.current / Math.max(1, syncProgress.total)) * 100}%` }}
+          />
+        </div>
+      </div>
     </PageWrapper>
   );
 
   const renderFinale = () => (
-    <PageWrapper isOnline={isOnline} isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode} syncStatus={syncStatus}>
-       <div className="flex-1 min-h-0 flex flex-col items-center justify-center text-center">
-          <div className="w-20 h-20 bg-emerald-500 rounded-full flex items-center justify-center text-white mb-6 shadow-lg"><CheckCircle className="w-10 h-10" /></div>
-          <h2 className="text-3xl font-black text-emerald-500 mb-2">Published!</h2>
-          <p className="text-slate-500 font-bold text-[16px] mb-2">Grades and feedback successfully synced.</p>
-          <p className="text-slate-500 font-bold text-[12px] mb-8">
-            Emails sent: {syncProgress.emailSuccesses}
-            {syncProgress.emailFailures > 0 && ` · Failed: ${syncProgress.emailFailures} (check console)`}
-          </p>
-          <button onClick={() => setPhase(AppPhase.DASHBOARD)} className="py-4 px-8 bg-indigo-600 text-white rounded-xl font-black uppercase tracking-widest text-[16px] shadow-sm hover:-translate-y-0.5 transition-all">
-             Back to Dashboard
-          </button>
-       </div>
+    <PageWrapper
+      isOnline={isOnline}
+      isDarkMode={isDarkMode}
+      setIsDarkMode={setIsDarkMode}
+      syncStatus={syncStatus}
+    >
+      <div className="flex-1 min-h-0 flex flex-col items-center justify-center text-center">
+        <div className="w-20 h-20 bg-emerald-500 rounded-full flex items-center justify-center text-white mb-6 shadow-lg">
+          <CheckCircle className="w-10 h-10" />
+        </div>
+        <h2 className="text-3xl font-black text-emerald-500 mb-2">Published!</h2>
+        <p className="text-slate-500 font-bold text-[16px] mb-2">
+          Grades and feedback successfully synced.
+        </p>
+        <p className="text-slate-500 font-bold text-[12px] mb-8">
+          Emails sent: {syncProgress.emailSuccesses}
+          {syncProgress.emailFailures > 0 &&
+            ` · Failed: ${syncProgress.emailFailures} (check console)`}
+        </p>
+        <button
+          onClick={() => setPhase(AppPhase.DASHBOARD)}
+          className="py-4 px-8 bg-indigo-600 text-white rounded-xl font-black uppercase tracking-widest text-[16px] shadow-sm hover:-translate-y-0.5 transition-all"
+        >
+          Back to Grade
+        </button>
+      </div>
     </PageWrapper>
   );
 
@@ -5219,13 +6558,14 @@ const App: React.FC = () => {
       setIsDarkMode={setIsDarkMode}
       syncStatus={syncStatus}
     >
-      <div className="flex flex-col h-full w-full max-w-sm mx-auto">
+      <div className="flex flex-col h-full w-full min-w-0 max-w-full md:max-w-xl lg:max-w-2xl mx-auto px-3 sm:px-5">
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
           <h2 className="text-xl font-black text-slate-900 dark:text-slate-50 text-center">
             Unlock syncing & student emails
           </h2>
           <p className="text-sm text-slate-600 dark:text-slate-300 text-center">
-            Syncing grades back to Google Classroom, emailing students, and saving scans to Drive are premium features.
+            Syncing grades back to Google Classroom, emailing students, and saving scans to Drive
+            are premium features.
           </p>
           <div className="w-full bg-white/70 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2 text-sm text-slate-700 dark:text-slate-200">
             <p className="font-semibold">Your DoneGrading Pro plan includes:</p>
@@ -5236,17 +6576,69 @@ const App: React.FC = () => {
               <li>Email summaries with feedback and scans for students.</li>
             </ul>
           </div>
+          {paywallCheckoutError ? (
+            <p className="w-full text-sm text-red-600 dark:text-red-400 text-center" role="alert">
+              {paywallCheckoutError}
+            </p>
+          ) : null}
           <button
             type="button"
+            disabled={paywallCheckoutLoading}
             onClick={() => {
-              // TODO: Call backend to create Stripe Checkout session and redirect.
-              // Placeholder: mark as trialing so you can test the flow.
-              setSubscriptionStatus('trialing');
-              setPhase(AppPhase.DASHBOARD);
+              void (async () => {
+                setPaywallCheckoutError(null);
+                setPaywallCheckoutLoading(true);
+                try {
+                  const checkoutEmail = (
+                    firebaseUser?.email ||
+                    email ||
+                    ''
+                  ).trim();
+                  const r = await fetch(`${billingApiBase}/api/billing/create-checkout-session`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(
+                      checkoutEmail ? { email: checkoutEmail } : {}
+                    ),
+                  });
+                  const data = (await r.json()) as {
+                    url?: string;
+                    error?: string;
+                    code?: string;
+                  };
+                  if (!r.ok) {
+                    if (data.code === 'BILLING_DISABLED') {
+                      setPaywallCheckoutError(
+                        'Billing is not configured on the server. Add STRIPE_SECRET_KEY and STRIPE_PRICE_ID, set APP_ORIGIN, then restart the server.'
+                      );
+                    } else {
+                      setPaywallCheckoutError(data.error || 'Could not start checkout.');
+                    }
+                    return;
+                  }
+                  if (data.url) {
+                    logEvent('subscription_start', { surface: 'paywall' });
+                    window.location.href = data.url;
+                    return;
+                  }
+                  setPaywallCheckoutError('No checkout URL returned.');
+                } catch {
+                  setPaywallCheckoutError('Network error. Try again.');
+                } finally {
+                  setPaywallCheckoutLoading(false);
+                }
+              })();
             }}
-            className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black uppercase tracking-[0.12em] text-[14px] shadow-sm hover:-translate-y-0.5 transition-all"
+            className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 disabled:pointer-events-none text-white rounded-xl font-black uppercase tracking-[0.12em] text-[14px] shadow-sm hover:-translate-y-0.5 transition-all inline-flex items-center justify-center gap-2"
           >
-            Start 30‑day free trial
+            {paywallCheckoutLoading ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin shrink-0" aria-hidden />
+                <span>Opening checkout…</span>
+              </>
+            ) : (
+              'Start 30‑day free trial'
+            )}
           </button>
           <button
             type="button"
@@ -5256,7 +6648,8 @@ const App: React.FC = () => {
             Maybe later – keep exploring
           </button>
           <p className="mt-2 text-[10px] text-slate-500 dark:text-slate-400 text-center">
-            You can start your trial anytime from the Sync screen. We never sell your data and you can cancel anytime.
+            You can start your trial anytime from the Sync screen. We never sell your data and you
+            can cancel anytime.
           </p>
         </div>
       </div>
@@ -5273,18 +6666,27 @@ const App: React.FC = () => {
     const draftObjectiveIfEmpty = () => {
       if (planObjective.trim()) return;
       const base = planLessonTitle || lessonTopic || effectiveTopic;
-      setPlanObjective(`I can explain ${base} and use evidence + key vocabulary to answer questions.`);
+      setPlanObjective(
+        `I can explain ${base} and use evidence + key vocabulary to answer questions.`
+      );
     };
     const draftPrepList = () => {
       const base = planLessonTitle || lessonTopic || effectiveTopic;
       const supports: string[] = [];
-      if (/ELL|ESL|ELLs|ELL\/ESL/i.test(classProfile)) supports.push('ELL supports: word bank + sentence frames');
-      if (/ADHD/i.test(classProfile)) supports.push('ADHD supports: visual timer + movement break at transitions');
-      if (/IEP|504/i.test(classProfile)) supports.push('IEP/504 supports: chunked directions + frequent check-ins');
-      if (/Dyslexia/i.test(classProfile)) supports.push('Dyslexia supports: reduced clutter + larger text + optional audio');
-      if (/Autism/i.test(classProfile)) supports.push('Autism supports: clear routine, explicit expectations, example/non-example');
+      if (/ELL|ESL|ELLs|ELL\/ESL/i.test(classProfile))
+        supports.push('ELL supports: word bank + sentence frames');
+      if (/ADHD/i.test(classProfile))
+        supports.push('ADHD supports: visual timer + movement break at transitions');
+      if (/IEP|504/i.test(classProfile))
+        supports.push('IEP/504 supports: chunked directions + frequent check-ins');
+      if (/Dyslexia/i.test(classProfile))
+        supports.push('Dyslexia supports: reduced clutter + larger text + optional audio');
+      if (/Autism/i.test(classProfile))
+        supports.push('Autism supports: clear routine, explicit expectations, example/non-example');
 
-      const differentiationLine = supports.length ? `Differentiation/provides:\n- ${supports.join('\n- ')}` : '';
+      const differentiationLine = supports.length
+        ? `Differentiation/provides:\n- ${supports.join('\n- ')}`
+        : '';
       const suggestion = [
         'Prep list (before class):',
         `- Board/slide plan for “${base}” (agenda + 1 worked example)`,
@@ -5293,7 +6695,8 @@ const App: React.FC = () => {
         '- We do guided practice set (partner talk + a CFU after each example)',
         '- You do independent task directions + a clear success checklist',
         '- Exit ticket (3 questions) + look-fors rubric',
-        differentiationLine || '- Differentiation supports (sentence frames, extra examples, and quick reteach prompts)',
+        differentiationLine ||
+          '- Differentiation supports (sentence frames, extra examples, and quick reteach prompts)',
         '- Materials: markers, mini whiteboards (or scrap paper), handouts/notes, sticky notes',
       ]
         .filter(Boolean)
@@ -5326,7 +6729,9 @@ const App: React.FC = () => {
         });
 
         if (!res) {
-          setLearningTargetAiError('Could not generate learning target and success criteria. Try again.');
+          setLearningTargetAiError(
+            'Could not generate learning target and success criteria. Try again.'
+          );
           return;
         }
 
@@ -5426,11 +6831,41 @@ const App: React.FC = () => {
       if (sum !== total) {
         const delta = sum - total;
         const blocks: Array<[string, number, () => void]> = [
-          ['doNow', doNow, () => { doNow = Math.max(3, doNow - delta); }],
-          ['iDo', iDo, () => { iDo = Math.max(6, iDo - delta); }],
-          ['weDo', weDo, () => { weDo = Math.max(6, weDo - delta); }],
-          ['youDo', youDo, () => { youDo = Math.max(6, youDo - delta); }],
-          ['exit', exit, () => { exit = Math.max(3, exit - delta); }],
+          [
+            'doNow',
+            doNow,
+            () => {
+              doNow = Math.max(3, doNow - delta);
+            },
+          ],
+          [
+            'iDo',
+            iDo,
+            () => {
+              iDo = Math.max(6, iDo - delta);
+            },
+          ],
+          [
+            'weDo',
+            weDo,
+            () => {
+              weDo = Math.max(6, weDo - delta);
+            },
+          ],
+          [
+            'youDo',
+            youDo,
+            () => {
+              youDo = Math.max(6, youDo - delta);
+            },
+          ],
+          [
+            'exit',
+            exit,
+            () => {
+              exit = Math.max(3, exit - delta);
+            },
+          ],
         ];
         const largest = blocks.sort((a, b) => b[1] - a[1])[0];
         if (largest) largest[2]();
@@ -5483,14 +6918,15 @@ const App: React.FC = () => {
       const vocab = lessonResult?.vocabulary?.join(', ') || '';
       const aiDiscussion =
         lessonResult?.discussionQuestions?.map((q, i) => `${i + 1}. ${q}`).join('\n') || '';
-      const discussion = [
-        aiDiscussion ? aiDiscussion : '',
-        cfuIdeas ? `${aiDiscussion ? aiDiscussion + '\n' : ''}CFU checks:\n${cfuIdeas}` : '',
-      ]
-        .filter(Boolean)
-        .join('\n')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim() || (cfuIdeas ? `CFU checks:\n${cfuIdeas}` : 'N/A');
+      const discussion =
+        [
+          aiDiscussion ? aiDiscussion : '',
+          cfuIdeas ? `${aiDiscussion ? aiDiscussion + '\n' : ''}CFU checks:\n${cfuIdeas}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n')
+          .replace(/\n{3,}/g, '\n\n')
+          .trim() || (cfuIdeas ? `CFU checks:\n${cfuIdeas}` : 'N/A');
       return [
         `Lesson: ${planLessonTitle || lessonTopic || 'Untitled Lesson'}`,
         `Unit: ${planUnit}`,
@@ -5530,12 +6966,18 @@ const App: React.FC = () => {
         independentNotes || 'N/A',
         '',
         'Resources',
-        resourceCards.map((c) => `- ${c.title} (${c.source}) ${c.url}`).join('\n') || resourceQuery || 'N/A',
+        resourceCards.map((c) => `- ${c.title} (${c.source}) ${c.url}`).join('\n') ||
+          resourceQuery ||
+          'N/A',
         '',
         'Assessment',
         `Exit ticket prompt: ${exitTicketPrompt || 'N/A'}`,
-        exitTicketQuestions.length ? `Questions:\n${exitTicketQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}` : '',
-        successCriteria.length ? `Success criteria:\n${successCriteria.map((s, i) => `${i + 1}. ${s}`).join('\n')}` : '',
+        exitTicketQuestions.length
+          ? `Questions:\n${exitTicketQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}`
+          : '',
+        successCriteria.length
+          ? `Success criteria:\n${successCriteria.map((s, i) => `${i + 1}. ${s}`).join('\n')}`
+          : '',
         '',
         'Vocabulary',
         vocab || 'N/A',
@@ -5586,7 +7028,10 @@ const App: React.FC = () => {
 
     const handlePrintLessonPlan = () => {
       handleSavePlanNow();
-      const html = buildLessonPlanHtmlDocument(getLessonPlanExportFields(), new Date().toISOString());
+      const html = buildLessonPlanHtmlDocument(
+        getLessonPlanExportFields(),
+        new Date().toISOString()
+      );
       const w = window.open('', '_blank', 'noopener,noreferrer');
       if (!w) {
         setPlanActionMessage('Pop-up blocked. Allow pop-ups to print, or use Download HTML.');
@@ -5614,7 +7059,10 @@ const App: React.FC = () => {
         .slice(0, 56)
         .replace(/\s+/g, '-')
         .toLowerCase();
-      const html = buildLessonPlanHtmlDocument(getLessonPlanExportFields(), new Date().toISOString());
+      const html = buildLessonPlanHtmlDocument(
+        getLessonPlanExportFields(),
+        new Date().toISOString()
+      );
       const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -5625,7 +7073,9 @@ const App: React.FC = () => {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      setPlanActionMessage('Lesson plan downloaded as HTML (open in any browser; use Print to PDF if needed).');
+      setPlanActionMessage(
+        'Lesson plan downloaded as HTML (open in any browser; use Print to PDF if needed).'
+      );
       logEvent('lesson_plan_download_html');
     };
 
@@ -5650,7 +7100,10 @@ const App: React.FC = () => {
           .slice(0, 48)
           .replace(/\s+/g, ' ');
         const fileName = `${slug || 'Lesson plan'} — ${iso}.html`;
-        const html = buildLessonPlanHtmlDocument(getLessonPlanExportFields(), new Date().toISOString());
+        const html = buildLessonPlanHtmlDocument(
+          getLessonPlanExportFields(),
+          new Date().toISOString()
+        );
         const meta = await uploadTextFileToDrive(accessToken, html, fileName, rootId, 'text/html');
         const link = meta.webViewLink || `https://drive.google.com/file/d/${meta.id}/view`;
         setPlanActionMessage(`Saved to Google Drive: ${fileName}. Open in Drive to view or share.`);
@@ -5676,7 +7129,10 @@ const App: React.FC = () => {
       handleSavePlanNow();
       const subject = `Lesson plan: ${planLessonTitle || lessonTopic || 'Lesson'}`;
       const plain = buildPlanText();
-      const htmlDoc = buildLessonPlanHtmlDocument(getLessonPlanExportFields(), new Date().toISOString());
+      const htmlDoc = buildLessonPlanHtmlDocument(
+        getLessonPlanExportFields(),
+        new Date().toISOString()
+      );
 
       if (classroom && accessToken && isOnline) {
         setPlanActionLoading('email');
@@ -5686,7 +7142,11 @@ const App: React.FC = () => {
           setPlanActionMessage(`Lesson plan emailed to ${to} via Gmail.`);
           logEvent('lesson_plan_email_admin');
         } catch (e) {
-          setPlanActionMessage(e instanceof Error ? e.message : 'Gmail send failed. Try “Open in email app” or check permissions.');
+          setPlanActionMessage(
+            e instanceof Error
+              ? e.message
+              : 'Gmail send failed. Try “Open in email app” or check permissions.'
+          );
         } finally {
           setPlanActionLoading(null);
         }
@@ -5696,7 +7156,7 @@ const App: React.FC = () => {
       const maxMailto = 1800;
       if (plain.length > maxMailto) {
         setPlanActionMessage(
-          `Plan is long for a mailto link. Sign in with Google to email the formatted plan via Gmail, or use Download HTML and attach it.`,
+          `Plan is long for a mailto link. Sign in with Google to email the formatted plan via Gmail, or use Download HTML and attach it.`
         );
         return;
       }
@@ -5748,7 +7208,11 @@ const App: React.FC = () => {
     };
     void handlePlanActionSelect;
     const handleGeneratePlan = async () => {
-      const topic = (lessonTopic || planLessonTitle || `${planSubject} lesson for grade ${planGrade}`).trim();
+      const topic = (
+        lessonTopic ||
+        planLessonTitle ||
+        `${planSubject} lesson for grade ${planGrade}`
+      ).trim();
       if (!topic) {
         setPlanAiError('Add a lesson title or topic first.');
         return;
@@ -5762,24 +7226,35 @@ const App: React.FC = () => {
         if (stdLabel) {
           const cleaned = stdLabel.replace(/\.$/, '');
           setPlanObjective(
-            `I can explain what “${cleaned}” looks like in our lesson, using evidence and key vocabulary to answer questions.`,
+            `I can explain what “${cleaned}” looks like in our lesson, using evidence and key vocabulary to answer questions.`
           );
           return;
         }
-        setPlanObjective(`I can explain ${base} and use evidence + key vocabulary to answer questions.`);
+        setPlanObjective(
+          `I can explain ${base} and use evidence + key vocabulary to answer questions.`
+        );
       };
       const draftPrepIfEmpty = () => {
         if (planPrepMaterials.trim()) return;
         const base = planLessonTitle || lessonTopic || topic;
         const stdLabel = pinnedStandards[0]?.label?.trim();
         const supports: string[] = [];
-        if (/ELL|ESL|ELLs|ELL\/ESL/i.test(classProfile)) supports.push('ELL supports: word bank + sentence frames');
-        if (/ADHD/i.test(classProfile)) supports.push('ADHD supports: visual timer + movement break at transitions');
-        if (/IEP|504/i.test(classProfile)) supports.push('IEP/504 supports: chunked directions + frequent check-ins');
-        if (/Dyslexia/i.test(classProfile)) supports.push('Dyslexia supports: reduced clutter + larger text + optional audio');
-        if (/Autism/i.test(classProfile)) supports.push('Autism supports: clear routine, explicit expectations, example/non-example');
+        if (/ELL|ESL|ELLs|ELL\/ESL/i.test(classProfile))
+          supports.push('ELL supports: word bank + sentence frames');
+        if (/ADHD/i.test(classProfile))
+          supports.push('ADHD supports: visual timer + movement break at transitions');
+        if (/IEP|504/i.test(classProfile))
+          supports.push('IEP/504 supports: chunked directions + frequent check-ins');
+        if (/Dyslexia/i.test(classProfile))
+          supports.push('Dyslexia supports: reduced clutter + larger text + optional audio');
+        if (/Autism/i.test(classProfile))
+          supports.push(
+            'Autism supports: clear routine, explicit expectations, example/non-example'
+          );
 
-        const differentiationLine = supports.length ? `Differentiation/provides:\n- ${supports.join('\n- ')}` : '';
+        const differentiationLine = supports.length
+          ? `Differentiation/provides:\n- ${supports.join('\n- ')}`
+          : '';
         const stdTag = stdLabel ? ` (standard: ${stdLabel.replace(/\.$/, '')})` : '';
         const suggestion = [
           'Prep list (before class):',
@@ -5789,7 +7264,8 @@ const App: React.FC = () => {
           '- We do guided practice set (partner talk + a CFU after each example)',
           '- You do independent task directions + a clear success checklist',
           '- Exit ticket (3 questions) + look-fors rubric',
-          differentiationLine || '- Differentiation supports (sentence frames, extra examples, and quick reteach prompts)',
+          differentiationLine ||
+            '- Differentiation supports (sentence frames, extra examples, and quick reteach prompts)',
           '- Materials: markers, mini whiteboards (or scrap paper), handouts/notes, sticky notes',
         ]
           .filter(Boolean)
@@ -5827,15 +7303,21 @@ const App: React.FC = () => {
           .map((l) => l.trim())
           .filter(Boolean);
         if (!planBlockLocks.A && !hookContent.trim()) {
-          const hook = outlineLines.find((l) => /warm-?up|hook/i.test(l)) || `Hook: Quick prompt about ${topic}.`;
+          const hook =
+            outlineLines.find((l) => /warm-?up|hook/i.test(l)) ||
+            `Hook: Quick prompt about ${topic}.`;
           setHookContent(hook);
         }
         if (!planBlockLocks.C && !guidedNotes.trim()) {
-          const guided = outlineLines.find((l) => /guided|practice|think-pair-share/i.test(l)) || `Guided practice: model + 2 examples, then pairs practice.`;
+          const guided =
+            outlineLines.find((l) => /guided|practice|think-pair-share/i.test(l)) ||
+            `Guided practice: model + 2 examples, then pairs practice.`;
           setGuidedNotes(guided);
         }
         if (!planBlockLocks.D && !independentNotes.trim()) {
-          const indep = outlineLines.find((l) => /independent|task|apply/i.test(l)) || `Independent practice: students apply the concept to a short task.`;
+          const indep =
+            outlineLines.find((l) => /independent|task|apply/i.test(l)) ||
+            `Independent practice: students apply the concept to a short task.`;
           setIndependentNotes(indep);
         }
         draftObjectiveIfEmpty();
@@ -5924,7 +7406,7 @@ const App: React.FC = () => {
             .plan-print-footer { display: none; }
           `}</style>
           {/* Compact header + step tabs */}
-          <div className="plan-no-print flex-none flex flex-col gap-2 mx-2 mt-1 mb-2 px-3 py-2 bg-white/90 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-700 rounded-xl shadow-sm">
+          <div className="plan-no-print flex-none flex flex-col gap-2 w-full mt-0 mb-1 px-2 sm:px-3 py-2 bg-white/90 dark:bg-slate-900/90 border-x-0 border-t-0 border-b border-slate-200/80 dark:border-slate-700/80 sm:border sm:rounded-xl shadow-none sm:shadow-sm">
             <div className="flex items-center justify-between gap-2">
               <div className="space-y-1">
                 <div className="text-[9px] font-black uppercase tracking-[0.18em] text-slate-500">
@@ -6033,7 +7515,11 @@ const App: React.FC = () => {
                     disabled={lessonLoading}
                     className="px-2.5 py-1.5 rounded-lg bg-sky-600 text-white text-[10px] font-black uppercase tracking-[0.18em] flex items-center gap-1.5 disabled:opacity-60"
                   >
-                    {lessonLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                    {lessonLoading ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-3 h-3" />
+                    )}
                     {lessonLoading ? 'Drafting…' : 'Draft with AI'}
                   </button>
                 </div>
@@ -6042,20 +7528,24 @@ const App: React.FC = () => {
 
             <div className="flex items-center justify-between gap-2 mt-1">
               <div className="inline-flex rounded-full bg-slate-100 dark:bg-slate-800 p-0.5 text-[10px]">
-                {([
+                {(
+                  [
                     { id: 'setup', label: 'Objective' },
-                  { id: 'doNow', label: 'Do now' },
-                  { id: 'iDo', label: 'I do' },
-                  { id: 'weDo', label: 'We do' },
-                  { id: 'youDo', label: 'You do' },
-                  { id: 'exit', label: 'Exit ticket' },
-                ] as const).map((tab) => (
+                    { id: 'doNow', label: 'Do now' },
+                    { id: 'iDo', label: 'I do' },
+                    { id: 'weDo', label: 'We do' },
+                    { id: 'youDo', label: 'You do' },
+                    { id: 'exit', label: 'Exit ticket' },
+                  ] as const
+                ).map((tab) => (
                   <button
                     key={tab.id}
                     type="button"
                     onClick={() => setPlanTab(tab.id)}
                     className={`px-3 py-1 rounded-full font-semibold ${
-                      planTab === tab.id ? 'bg-sky-600 text-white shadow-sm' : 'text-slate-700 dark:text-slate-300'
+                      planTab === tab.id
+                        ? 'bg-sky-600 text-white shadow-sm'
+                        : 'text-slate-700 dark:text-slate-300'
                     }`}
                   >
                     {tab.label}
@@ -6070,38 +7560,38 @@ const App: React.FC = () => {
                 Edit context
               </button>
             </div>
-              <div className="bg-sky-50/80 dark:bg-sky-900/20 border border-sky-200 dark:border-sky-700 rounded-xl p-2 mt-1">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-[9px] font-black uppercase tracking-[0.18em] text-sky-800 dark:text-sky-100">
-                    Prep / Materials / Tools
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => draftPrepList()}
-                      className="px-2 py-1 rounded-lg bg-sky-600 text-white text-[10px] font-semibold"
-                    >
-                      Draft prep list
-                    </button>
-                  </div>
+            <div className="bg-sky-50/80 dark:bg-sky-900/20 border border-sky-200 dark:border-sky-700 rounded-xl p-2 mt-1">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[9px] font-black uppercase tracking-[0.18em] text-sky-800 dark:text-sky-100">
+                  Prep / Materials / Tools
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => draftPrepList()}
+                    className="px-2 py-1 rounded-lg bg-sky-600 text-white text-[10px] font-semibold"
+                  >
+                    Draft prep list
+                  </button>
                 </div>
-                <textarea
-                  value={planPrepMaterials}
-                  onChange={(e) => setPlanPrepMaterials(e.target.value)}
-                  placeholder="What do you need to prepare before class? (board plan, examples, handouts, tools, differentiated supports...)"
-                  className="mt-1 w-full min-h-[64px] px-2.5 py-1.5 rounded-xl border border-sky-200 dark:border-sky-700 bg-white/95 dark:bg-slate-900/80 text-[11px] outline-none resize-none custom-scrollbar"
-                />
-                {cfuPreview && (
-                  <div className="mt-2">
-                    <p className="text-[9px] font-black uppercase tracking-widest text-sky-800 dark:text-sky-100">
-                      CFU preview
-                    </p>
-                    <pre className="mt-1 w-full max-h-24 overflow-y-auto whitespace-pre-wrap text-[10px] leading-[1.25] px-2 py-1.5 rounded-xl border border-sky-200 dark:border-sky-700 bg-white/60 dark:bg-slate-900/40 custom-scrollbar">
-                      {cfuPreview}
-                    </pre>
-                  </div>
-                )}
               </div>
+              <textarea
+                value={planPrepMaterials}
+                onChange={(e) => setPlanPrepMaterials(e.target.value)}
+                placeholder="What do you need to prepare before class? (board plan, examples, handouts, tools, differentiated supports...)"
+                className="mt-1 w-full min-h-[64px] px-2.5 py-1.5 rounded-xl border border-sky-200 dark:border-sky-700 bg-white/95 dark:bg-slate-900/80 text-[11px] outline-none resize-none custom-scrollbar"
+              />
+              {cfuPreview && (
+                <div className="mt-2">
+                  <p className="text-[9px] font-black uppercase tracking-widest text-sky-800 dark:text-sky-100">
+                    CFU preview
+                  </p>
+                  <pre className="mt-1 w-full max-h-24 overflow-y-auto whitespace-pre-wrap text-[10px] leading-[1.25] px-2 py-1.5 rounded-xl border border-sky-200 dark:border-sky-700 bg-white/60 dark:bg-slate-900/40 custom-scrollbar">
+                    {cfuPreview}
+                  </pre>
+                </div>
+              )}
+            </div>
             {planAiError && (
               <p className="text-[9px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded px-2 py-1">
                 {planAiError}
@@ -6119,7 +7609,8 @@ const App: React.FC = () => {
                   Export &amp; share
                 </p>
                 <p className="text-[8px] text-indigo-600/90 dark:text-indigo-300/80 max-w-[55%] text-right leading-tight">
-                  Print, download HTML, Share sheet, Drive, or email your admin (Gmail when signed in with Google).
+                  Print, download HTML, Share sheet, Drive, or email your admin (Gmail when signed
+                  in with Google).
                 </p>
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -6156,7 +7647,11 @@ const App: React.FC = () => {
                   type="button"
                   onClick={() => void handleSaveLessonPlanToDrive()}
                   disabled={planActionLoading !== null || !accessToken}
-                  title={!accessToken ? 'Sign in with Google to save to Drive' : 'Save formatted plan to Google Drive'}
+                  title={
+                    !accessToken
+                      ? 'Sign in with Google to save to Drive'
+                      : 'Save formatted plan to Google Drive'
+                  }
                   className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-indigo-600 text-white border border-indigo-700 text-[10px] font-semibold shadow-sm hover:bg-indigo-700 disabled:opacity-50"
                 >
                   {planActionLoading === 'drive' ? (
@@ -6211,11 +7706,15 @@ const App: React.FC = () => {
           <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
             {planContextOpen && (
               <div className="plan-no-print absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-xl p-4 flex flex-col">
-                <div className="w-full max-w-md mx-auto bg-white dark:bg-slate-900 rounded-3xl p-5 shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden">
+                <div className="w-full min-w-0 max-w-full sm:max-w-md md:max-w-lg lg:max-w-xl mx-auto bg-white dark:bg-slate-900 rounded-none sm:rounded-3xl p-4 sm:p-5 shadow-2xl border-0 sm:border border-slate-200 dark:border-slate-700 flex flex-col overflow-hidden">
                   <div className="flex items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-700">
                     <div>
-                      <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Context drawer</div>
-                      <div className="mt-1 text-sm font-black text-slate-900 dark:text-white">Fast edits</div>
+                      <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                        Context drawer
+                      </div>
+                      <div className="mt-1 text-sm font-black text-slate-900 dark:text-white">
+                        Fast edits
+                      </div>
                     </div>
                     <button
                       type="button"
@@ -6427,7 +7926,9 @@ const App: React.FC = () => {
                                   min={10}
                                   max={120}
                                   value={planDuration}
-                                  onChange={(e) => setPlanDuration(parseInt(e.target.value || '0', 10))}
+                                  onChange={(e) =>
+                                    setPlanDuration(parseInt(e.target.value || '0', 10))
+                                  }
                                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none"
                                 />
                               )}
@@ -6442,92 +7943,94 @@ const App: React.FC = () => {
                       </div>
                     </div>
 
-                      <div>
-                        <label className={label}>Class profile (remembered)</label>
-                        {(() => {
-                          const COMMON_PREFIX = 'Common:';
-                          const commonTags = [
-                            { id: 'ELLs', label: 'ELLs / ESL' },
-                            { id: 'ADHD', label: 'ADHD' },
-                            { id: 'IEP', label: 'IEP' },
-                            { id: '504', label: '504' },
-                            { id: 'Autism', label: 'Autism' },
-                            { id: 'Dyslexia', label: 'Dyslexia' },
-                            { id: 'Gifted', label: 'Gifted & advanced' },
-                            { id: 'Anxiety', label: 'Anxiety' },
-                            { id: 'Behavior', label: 'Behavior needs' },
-                          ] as const;
+                    <div>
+                      <label className={label}>Class profile (remembered)</label>
+                      {(() => {
+                        const COMMON_PREFIX = 'Common:';
+                        const commonTags = [
+                          { id: 'ELLs', label: 'ELLs / ESL' },
+                          { id: 'ADHD', label: 'ADHD' },
+                          { id: 'IEP', label: 'IEP' },
+                          { id: '504', label: '504' },
+                          { id: 'Autism', label: 'Autism' },
+                          { id: 'Dyslexia', label: 'Dyslexia' },
+                          { id: 'Gifted', label: 'Gifted & advanced' },
+                          { id: 'Anxiety', label: 'Anxiety' },
+                          { id: 'Behavior', label: 'Behavior needs' },
+                        ] as const;
 
-                          const parse = (profile: string) => {
-                            const raw = profile ?? '';
-                            const trimmed = raw.trim();
-                            if (!trimmed) return { selected: new Set<string>(), customText: '' };
-                            const lines = raw.split('\n');
-                            const first = (lines[0] || '').trim();
-                            if (!first.startsWith(COMMON_PREFIX)) {
-                              return { selected: new Set<string>(), customText: raw };
-                            }
-                            const after = first.slice(COMMON_PREFIX.length).trim();
-                            const selected = new Set<string>(
-                              after
-                                ? after
-                                    .split(',')
-                                    .map((s) => s.trim())
-                                    .filter(Boolean)
-                                : [],
-                            );
-                            const customText = lines.slice(1).join('\n').trimStart();
-                            return { selected, customText };
-                          };
-
-                          const { selected, customText } = parse(classProfile);
-
-                          const rebuild = (nextSelected: Set<string>, nextCustomText: string) => {
-                            const tags = [...nextSelected].filter(Boolean);
-                            const commonLine = tags.length ? `${COMMON_PREFIX} ${tags.join(', ')}` : '';
-                            const ct = nextCustomText ?? '';
-                            if (!commonLine && !ct.trim()) return '';
-                            if (!commonLine) return ct;
-                            if (!ct.trim()) return commonLine;
-                            return `${commonLine}\n\n${ct}`;
-                          };
-
-                          return (
-                            <>
-                              <div className="mt-1 flex flex-wrap gap-1.5">
-                                {commonTags.map((t) => {
-                                  const checked = selected.has(t.id);
-                                  return (
-                                    <button
-                                      key={t.id}
-                                      type="button"
-                                      onClick={() => {
-                                        const next = new Set(selected);
-                                        if (next.has(t.id)) next.delete(t.id);
-                                        else next.add(t.id);
-                                        setClassProfile(rebuild(next, customText));
-                                      }}
-                                      className={`px-2 py-1 rounded-full text-[10px] font-semibold border ${
-                                        checked
-                                          ? 'bg-indigo-600 text-white border-indigo-600'
-                                          : 'bg-white/90 dark:bg-slate-900/80 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
-                                      }`}
-                                    >
-                                      {t.label}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                              <textarea
-                                value={customText}
-                                onChange={(e) => setClassProfile(rebuild(selected, e.target.value))}
-                                placeholder='Add any custom class notes… (e.g. "3 students with ADHD, 2 ELL Level 1")'
-                                className="mt-2 w-full min-h-[84px] px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none resize-none custom-scrollbar"
-                              />
-                            </>
+                        const parse = (profile: string) => {
+                          const raw = profile ?? '';
+                          const trimmed = raw.trim();
+                          if (!trimmed) return { selected: new Set<string>(), customText: '' };
+                          const lines = raw.split('\n');
+                          const first = (lines[0] || '').trim();
+                          if (!first.startsWith(COMMON_PREFIX)) {
+                            return { selected: new Set<string>(), customText: raw };
+                          }
+                          const after = first.slice(COMMON_PREFIX.length).trim();
+                          const selected = new Set<string>(
+                            after
+                              ? after
+                                  .split(',')
+                                  .map((s) => s.trim())
+                                  .filter(Boolean)
+                              : []
                           );
-                        })()}
-                      </div>
+                          const customText = lines.slice(1).join('\n').trimStart();
+                          return { selected, customText };
+                        };
+
+                        const { selected, customText } = parse(classProfile);
+
+                        const rebuild = (nextSelected: Set<string>, nextCustomText: string) => {
+                          const tags = [...nextSelected].filter(Boolean);
+                          const commonLine = tags.length
+                            ? `${COMMON_PREFIX} ${tags.join(', ')}`
+                            : '';
+                          const ct = nextCustomText ?? '';
+                          if (!commonLine && !ct.trim()) return '';
+                          if (!commonLine) return ct;
+                          if (!ct.trim()) return commonLine;
+                          return `${commonLine}\n\n${ct}`;
+                        };
+
+                        return (
+                          <>
+                            <div className="mt-1 flex flex-wrap gap-1.5">
+                              {commonTags.map((t) => {
+                                const checked = selected.has(t.id);
+                                return (
+                                  <button
+                                    key={t.id}
+                                    type="button"
+                                    onClick={() => {
+                                      const next = new Set(selected);
+                                      if (next.has(t.id)) next.delete(t.id);
+                                      else next.add(t.id);
+                                      setClassProfile(rebuild(next, customText));
+                                    }}
+                                    className={`px-2 py-1 rounded-full text-[10px] font-semibold border ${
+                                      checked
+                                        ? 'bg-indigo-600 text-white border-indigo-600'
+                                        : 'bg-white/90 dark:bg-slate-900/80 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
+                                    }`}
+                                  >
+                                    {t.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <textarea
+                              value={customText}
+                              onChange={(e) => setClassProfile(rebuild(selected, e.target.value))}
+                              placeholder='Add any custom class notes… (e.g. "3 students with ADHD, 2 ELL Level 1")'
+                              className="mt-2 w-full min-h-[84px] px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-sm text-slate-800 dark:text-slate-100 outline-none resize-none custom-scrollbar"
+                            />
+                          </>
+                        );
+                      })()}
+                    </div>
                   </div>
 
                   <div className="pt-3 border-t border-slate-100 dark:border-slate-700 grid grid-cols-2 gap-2">
@@ -6547,10 +8050,12 @@ const App: React.FC = () => {
             <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2 space-y-2">
               <section className="plan-print-plain bg-sky-50/80 dark:bg-sky-900/20 border border-sky-200 dark:border-sky-700 rounded-xl p-3">
                 <p className="text-[10px] font-semibold text-sky-800 dark:text-sky-100">
-                  Grade {planGrade || '?'} · {planSubject || 'Subject'} · {planDuration || 45} min · {planStateRegion}
+                  Grade {planGrade || '?'} · {planSubject || 'Subject'} · {planDuration || 45} min ·{' '}
+                  {planStateRegion}
                 </p>
                 <p className="text-[10px] text-slate-600 dark:text-slate-300 mt-1">
-                  Follow the complete flow: Objective → Do now → I do → We do → You do → Exit ticket.
+                  Follow the complete flow: Objective → Do now → I do → We do → You do → Exit
+                  ticket.
                 </p>
               </section>
 
@@ -6608,12 +8113,15 @@ const App: React.FC = () => {
                         onClick={() => {
                           const raw = planObjective.trim();
                           const cleaned = raw
-                            ? raw.replace(/^I can\s*/i, '').replace(/\.$/, '').trim()
+                            ? raw
+                                .replace(/^I can\s*/i, '')
+                                .replace(/\.$/, '')
+                                .trim()
                             : '';
                           setPlanStudentSuccessCriteria(
                             cleaned
                               ? `You know you are successful when you can ${cleaned}.`
-                              : 'You know you are successful when you can explain the objective and use evidence.',
+                              : 'You know you are successful when you can explain the objective and use evidence.'
                           );
                         }}
                         className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
@@ -6673,7 +8181,9 @@ const App: React.FC = () => {
                         disabled={objectiveGenLoadingPart !== null || !planObjective.trim()}
                         className="px-2 py-1 rounded-lg bg-sky-600 text-white text-[10px] font-semibold disabled:opacity-60"
                       >
-                        {objectiveGenLoadingPart === 'doNow' ? 'Generating…' : 'Generate Do Now options'}
+                        {objectiveGenLoadingPart === 'doNow'
+                          ? 'Generating…'
+                          : 'Generate Do Now options'}
                       </button>
                       <button
                         type="button"
@@ -6720,8 +8230,9 @@ const App: React.FC = () => {
                     <button
                       type="button"
                       onClick={() =>
-                        setHookContent((prev) =>
-                          `${prev || ''}${prev ? '\n\n' : ''}Scaffold: add a model example on the board and a sentence frame.`,
+                        setHookContent(
+                          (prev) =>
+                            `${prev || ''}${prev ? '\n\n' : ''}Scaffold: add a model example on the board and a sentence frame.`
                         )
                       }
                       className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
@@ -6731,8 +8242,9 @@ const App: React.FC = () => {
                     <button
                       type="button"
                       onClick={() =>
-                        setHookContent((prev) =>
-                          `${prev || ''}${prev ? '\n\n' : ''}Differentiate: 2 versions (on‑level + challenge) for the same skill.`,
+                        setHookContent(
+                          (prev) =>
+                            `${prev || ''}${prev ? '\n\n' : ''}Differentiate: 2 versions (on‑level + challenge) for the same skill.`
                         )
                       }
                       className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
@@ -6742,8 +8254,9 @@ const App: React.FC = () => {
                     <button
                       type="button"
                       onClick={() =>
-                        setCfuIdeas((prev) =>
-                          `${prev || ''}${prev ? '\n' : ''}After Do now: thumb check (👍 / 👎 / ✋).`,
+                        setCfuIdeas(
+                          (prev) =>
+                            `${prev || ''}${prev ? '\n' : ''}After Do now: thumb check (👍 / 👎 / ✋).`
                         )
                       }
                       className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
@@ -6756,7 +8269,9 @@ const App: React.FC = () => {
 
               {planTab === 'iDo' && (
                 <section className="bg-white/95 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-3">
-                  <p className={sectionTitle}>Step 2 · I do (direct instruction) · {pacing.iDo} min</p>
+                  <p className={sectionTitle}>
+                    Step 2 · I do (direct instruction) · {pacing.iDo} min
+                  </p>
                   <div className="space-y-2">
                     <div className="flex items-center justify-between gap-2">
                       <button
@@ -6765,7 +8280,9 @@ const App: React.FC = () => {
                         disabled={objectiveGenLoadingPart !== null || !planObjective.trim()}
                         className="px-2 py-1 rounded-lg bg-sky-600 text-white text-[10px] font-semibold disabled:opacity-60"
                       >
-                        {objectiveGenLoadingPart === 'iDo' ? 'Generating…' : 'Generate I do options'}
+                        {objectiveGenLoadingPart === 'iDo'
+                          ? 'Generating…'
+                          : 'Generate I do options'}
                       </button>
                       <button
                         type="button"
@@ -6812,8 +8329,9 @@ const App: React.FC = () => {
                     <button
                       type="button"
                       onClick={() =>
-                        setDirectPoints((prev) =>
-                          `${prev || ''}${prev ? '\n\n' : ''}Scaffold: think‑aloud + worked example before students try.`,
+                        setDirectPoints(
+                          (prev) =>
+                            `${prev || ''}${prev ? '\n\n' : ''}Scaffold: think‑aloud + worked example before students try.`
                         )
                       }
                       className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
@@ -6822,9 +8340,7 @@ const App: React.FC = () => {
                     </button>
                     <button
                       type="button"
-                      onClick={() =>
-                        setGuidedTemplate('Socratic Seminar')
-                      }
+                      onClick={() => setGuidedTemplate('Socratic Seminar')}
                       className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
                     >
                       Socratic Seminar
@@ -6832,8 +8348,9 @@ const App: React.FC = () => {
                     <button
                       type="button"
                       onClick={() =>
-                        setCfuIdeas((prev) =>
-                          `${prev || ''}${prev ? '\n' : ''}After I do: cold-call 3 students to restate the step in their own words.`,
+                        setCfuIdeas(
+                          (prev) =>
+                            `${prev || ''}${prev ? '\n' : ''}After I do: cold-call 3 students to restate the step in their own words.`
                         )
                       }
                       className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
@@ -6842,7 +8359,9 @@ const App: React.FC = () => {
                     </button>
                   </div>
                   <div className="mt-1 flex items-center gap-2 text-[10px]">
-                    <span className="font-semibold text-slate-600 dark:text-slate-300">Discussion structure:</span>
+                    <span className="font-semibold text-slate-600 dark:text-slate-300">
+                      Discussion structure:
+                    </span>
                     <span className="px-2 py-0.5 rounded-full border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100">
                       {guidedTemplate}
                     </span>
@@ -6852,7 +8371,9 @@ const App: React.FC = () => {
 
               {planTab === 'weDo' && (
                 <section className="bg-white/95 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-3">
-                  <p className={sectionTitle}>Step 3 · We do (guided practice) · {pacing.weDo} min</p>
+                  <p className={sectionTitle}>
+                    Step 3 · We do (guided practice) · {pacing.weDo} min
+                  </p>
                   <div className="space-y-2">
                     <div className="flex items-center justify-between gap-2">
                       <button
@@ -6861,7 +8382,9 @@ const App: React.FC = () => {
                         disabled={objectiveGenLoadingPart !== null || !planObjective.trim()}
                         className="px-2 py-1 rounded-lg bg-sky-600 text-white text-[10px] font-semibold disabled:opacity-60"
                       >
-                        {objectiveGenLoadingPart === 'weDo' ? 'Generating…' : 'Generate We do options'}
+                        {objectiveGenLoadingPart === 'weDo'
+                          ? 'Generating…'
+                          : 'Generate We do options'}
                       </button>
                       <button
                         type="button"
@@ -6908,8 +8431,9 @@ const App: React.FC = () => {
                     <button
                       type="button"
                       onClick={() =>
-                        setGuidedNotes((prev) =>
-                          `${prev || ''}${prev ? '\n\n' : ''}Scaffold: use sentence frames and partner talk before calling on volunteers.`,
+                        setGuidedNotes(
+                          (prev) =>
+                            `${prev || ''}${prev ? '\n\n' : ''}Scaffold: use sentence frames and partner talk before calling on volunteers.`
                         )
                       }
                       className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
@@ -6918,9 +8442,7 @@ const App: React.FC = () => {
                     </button>
                     <button
                       type="button"
-                      onClick={() =>
-                        setGuidedTemplate('Jigsaw')
-                      }
+                      onClick={() => setGuidedTemplate('Jigsaw')}
                       className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
                     >
                       Jigsaw
@@ -6928,8 +8450,9 @@ const App: React.FC = () => {
                     <button
                       type="button"
                       onClick={() =>
-                        setCfuIdeas((prev) =>
-                          `${prev || ''}${prev ? '\n' : ''}After We do: quick show of hands / mini-whiteboard check after each example.`,
+                        setCfuIdeas(
+                          (prev) =>
+                            `${prev || ''}${prev ? '\n' : ''}After We do: quick show of hands / mini-whiteboard check after each example.`
                         )
                       }
                       className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
@@ -6938,7 +8461,9 @@ const App: React.FC = () => {
                     </button>
                   </div>
                   <div className="mt-1 flex items-center gap-2 text-[10px]">
-                    <span className="font-semibold text-slate-600 dark:text-slate-300">Discussion structure:</span>
+                    <span className="font-semibold text-slate-600 dark:text-slate-300">
+                      Discussion structure:
+                    </span>
                     <span className="px-2 py-0.5 rounded-full border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100">
                       {guidedTemplate}
                     </span>
@@ -6948,7 +8473,9 @@ const App: React.FC = () => {
 
               {planTab === 'youDo' && (
                 <section className="bg-white/95 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-3">
-                  <p className={sectionTitle}>Step 4 · You do (independent practice) · {pacing.youDo} min</p>
+                  <p className={sectionTitle}>
+                    Step 4 · You do (independent practice) · {pacing.youDo} min
+                  </p>
                   <div className="space-y-2">
                     <div className="flex items-center justify-between gap-2">
                       <button
@@ -6957,7 +8484,9 @@ const App: React.FC = () => {
                         disabled={objectiveGenLoadingPart !== null || !planObjective.trim()}
                         className="px-2 py-1 rounded-lg bg-sky-600 text-white text-[10px] font-semibold disabled:opacity-60"
                       >
-                        {objectiveGenLoadingPart === 'youDo' ? 'Generating…' : 'Generate You do options'}
+                        {objectiveGenLoadingPart === 'youDo'
+                          ? 'Generating…'
+                          : 'Generate You do options'}
                       </button>
                       <button
                         type="button"
@@ -7004,8 +8533,9 @@ const App: React.FC = () => {
                     <button
                       type="button"
                       onClick={() =>
-                        setIndependentNotes((prev) =>
-                          `${prev || ''}${prev ? '\n\n' : ''}Scaffold: provide a checklist or graphic organizer for the task.`,
+                        setIndependentNotes(
+                          (prev) =>
+                            `${prev || ''}${prev ? '\n\n' : ''}Scaffold: provide a checklist or graphic organizer for the task.`
                         )
                       }
                       className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
@@ -7014,9 +8544,7 @@ const App: React.FC = () => {
                     </button>
                     <button
                       type="button"
-                      onClick={() =>
-                        setGuidedTemplate('Think-Pair-Share')
-                      }
+                      onClick={() => setGuidedTemplate('Think-Pair-Share')}
                       className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
                     >
                       Think-Pair-Share
@@ -7024,8 +8552,9 @@ const App: React.FC = () => {
                     <button
                       type="button"
                       onClick={() =>
-                        setCfuIdeas((prev) =>
-                          `${prev || ''}${prev ? '\n' : ''}After You do: 1-sentence conference at 3–5 desks.`,
+                        setCfuIdeas(
+                          (prev) =>
+                            `${prev || ''}${prev ? '\n' : ''}After You do: 1-sentence conference at 3–5 desks.`
                         )
                       }
                       className="px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100"
@@ -7034,7 +8563,9 @@ const App: React.FC = () => {
                     </button>
                   </div>
                   <div className="mt-1 flex items-center gap-2 text-[10px]">
-                    <span className="font-semibold text-slate-600 dark:text-slate-300">Discussion structure:</span>
+                    <span className="font-semibold text-slate-600 dark:text-slate-300">
+                      Discussion structure:
+                    </span>
                     <span className="px-2 py-0.5 rounded-full border border-sky-200 bg-sky-50 text-sky-800 dark:bg-sky-900/30 dark:border-sky-700 dark:text-sky-100">
                       {guidedTemplate}
                     </span>
@@ -7044,7 +8575,9 @@ const App: React.FC = () => {
 
               {planTab === 'exit' && (
                 <section className="bg-white/95 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-3">
-                  <p className={sectionTitle}>Step 5 · Exit ticket & look‑fors · {pacing.exit} min</p>
+                  <p className={sectionTitle}>
+                    Step 5 · Exit ticket & look‑fors · {pacing.exit} min
+                  </p>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div className="space-y-1.5">
                       <div className="space-y-2">
@@ -7055,7 +8588,9 @@ const App: React.FC = () => {
                             disabled={objectiveGenLoadingPart !== null || !planObjective.trim()}
                             className="px-2 py-1 rounded-lg bg-sky-600 text-white text-[10px] font-semibold disabled:opacity-60"
                           >
-                            {objectiveGenLoadingPart === 'exitTicket' ? 'Generating…' : 'Generate Exit ticket options'}
+                            {objectiveGenLoadingPart === 'exitTicket'
+                              ? 'Generating…'
+                              : 'Generate Exit ticket options'}
                           </button>
                           <button
                             type="button"
@@ -7160,11 +8695,13 @@ const App: React.FC = () => {
                           <textarea
                             value={reflectionNote}
                             onChange={(e) => setReflectionNote(e.target.value)}
-                            placeholder='“Next time, skip the video—it was too long.” This note will be pinned to this lesson.'
+                            placeholder="“Next time, skip the video—it was too long.” This note will be pinned to this lesson."
                             className="w-full min-h-[56px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar pr-12"
                           />
                           <VoiceInputButton
-                            onResult={(text) => setReflectionNote((prev) => prev + (prev ? ' ' : '') + text)}
+                            onResult={(text) =>
+                              setReflectionNote((prev) => prev + (prev ? ' ' : '') + text)
+                            }
                             className="absolute right-2 bottom-2"
                           />
                         </div>
@@ -7176,994 +8713,1013 @@ const App: React.FC = () => {
             </div>
 
             {(planTab as string) === 'context' && (
-            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2 space-y-2">
-            <aside className="space-y-2">
-              <section className="plan-print-plain bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-3 space-y-1">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-700 dark:text-indigo-200">
-                  State compliance checkpoint
-                </p>
-                <p className="text-[10px] text-slate-700 dark:text-slate-200">
-                  {planStateRegion === 'National'
-                    ? 'Using national template: objective, standards, differentiation, formative checks, and assessment evidence.'
-                    : `Using ${planStateRegion} alignment workflow: standards mapping, objective language, differentiation plan, accommodations, and evidence of mastery.`}
-                </p>
-              </section>
-              <section className="bg-white/85 dark:bg-slate-900/85 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
-                <p className={sectionTitle}>
-                  Context & Constraints
-                </p>
-                <div className="grid grid-cols-3 gap-2 text-[10px]">
-                  <div className="flex flex-col gap-1 col-span-3">
-                    <label className={label}>State (standards)</label>
-                    <select
-                      value={planStateRegion}
-                      onChange={(e) => setPlanStateRegion(e.target.value)}
-                      className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80"
-                    >
-                      <option value="National">National / General</option>
-                      <option value="AL">Alabama</option>
-                      <option value="AK">Alaska</option>
-                      <option value="AZ">Arizona</option>
-                      <option value="AR">Arkansas</option>
-                      <option value="CA">California</option>
-                      <option value="CO">Colorado</option>
-                      <option value="CT">Connecticut</option>
-                      <option value="DE">Delaware</option>
-                      <option value="FL">Florida</option>
-                      <option value="GA">Georgia</option>
-                      <option value="HI">Hawaii</option>
-                      <option value="ID">Idaho</option>
-                      <option value="IL">Illinois</option>
-                      <option value="IN">Indiana</option>
-                      <option value="IA">Iowa</option>
-                      <option value="KS">Kansas</option>
-                      <option value="KY">Kentucky</option>
-                      <option value="LA">Louisiana</option>
-                      <option value="ME">Maine</option>
-                      <option value="MD">Maryland</option>
-                      <option value="MA">Massachusetts</option>
-                      <option value="MI">Michigan</option>
-                      <option value="MN">Minnesota</option>
-                      <option value="MS">Mississippi</option>
-                      <option value="MO">Missouri</option>
-                      <option value="MT">Montana</option>
-                      <option value="NE">Nebraska</option>
-                      <option value="NV">Nevada</option>
-                      <option value="NH">New Hampshire</option>
-                      <option value="NJ">New Jersey</option>
-                      <option value="NM">New Mexico</option>
-                      <option value="NY">New York</option>
-                      <option value="NC">North Carolina</option>
-                      <option value="ND">North Dakota</option>
-                      <option value="OH">Ohio</option>
-                      <option value="OK">Oklahoma</option>
-                      <option value="OR">Oregon</option>
-                      <option value="PA">Pennsylvania</option>
-                      <option value="RI">Rhode Island</option>
-                      <option value="SC">South Carolina</option>
-                      <option value="SD">South Dakota</option>
-                      <option value="TN">Tennessee</option>
-                      <option value="TX">Texas</option>
-                      <option value="UT">Utah</option>
-                      <option value="VT">Vermont</option>
-                      <option value="VA">Virginia</option>
-                      <option value="WA">Washington</option>
-                      <option value="WV">West Virginia</option>
-                      <option value="WI">Wisconsin</option>
-                      <option value="WY">Wyoming</option>
-                    </select>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className={label}>Grade</label>
-                    <input
-                      value={planGrade}
-                      onChange={(e) => setPlanGrade(e.target.value)}
-                      className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1 col-span-2">
-                    <label className={label}>Subject</label>
-                    <input
-                      value={planSubject}
-                      onChange={(e) => setPlanSubject(e.target.value)}
-                      className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1 col-span-3">
-                    <label className="font-semibold text-slate-600 dark:text-slate-300">Duration (mins)</label>
-                    <input
-                      type="number"
-                      min={10}
-                      max={120}
-                      value={planDuration}
-                      onChange={(e) => setPlanDuration(parseInt(e.target.value || '0', 10))}
-                      className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80"
-                    />
-                  </div>
-                </div>
-              </section>
-
-              <section className="bg-white/85 dark:bg-slate-900/85 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <p className={sectionTitle}>
-                    Standards
-                  </p>
-                </div>
-                <input
-                  value={standardsQuery}
-                  onChange={(e) => setStandardsQuery(e.target.value)}
-                  placeholder="e.g. Water Cycle, NGSS"
-                  className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[11px]"
-                />
-                <button
-                  type="button"
-                  disabled={!standardsQuery.trim()}
-                  onClick={() => {
-                    // Placeholder AI behavior: turn the query into 2–3 pseudo-codes to pin
-                    const base = standardsQuery.trim();
-                    const suggestions: StandardItem[] = [
-                      { code: 'NGSS-MS-ESS2-4', label: `Develop a model of the ${base.toLowerCase()}.` },
-                      { code: 'NGSS-5-ESS2-1', label: `Describe interactions in the ${base.toLowerCase()} within ecosystems.` },
-                    ];
-                    setStandardsSuggestions(suggestions);
-                  }}
-                  className="w-full mt-1 px-2 py-1 rounded-lg bg-indigo-600 text-white text-[10px] font-semibold disabled:opacity-40"
-                >
-                  Suggest standards
-                </button>
-                {standardsSuggestions.length > 0 && (
-                  <div className="mt-1 space-y-1 max-h-24 overflow-y-auto custom-scrollbar">
-                    {standardsSuggestions.map((s) => (
-                      <button
-                        key={s.code}
-                        type="button"
-                        onClick={() => {
-                          if (pinnedStandards.some((p) => p.code === s.code)) return;
-                          setPinnedStandards((prev) => [...prev, s]);
-                        }}
-                        className="w-full text-left px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[10px] hover:bg-indigo-50/80 dark:hover:bg-indigo-900/40"
-                      >
-                        <span className="font-semibold">{s.code}</span>
-                        <span className="ml-1 text-slate-600 dark:text-slate-300">{s.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {pinnedStandards.length > 0 && (
-                  <div className="mt-1 space-y-1">
-                    <p className="text-[9px] font-semibold text-slate-500 dark:text-slate-400">Pinned</p>
-                    {pinnedStandards.map((s) => (
-                      <div
-                        key={s.code}
-                        className="flex items-center justify-between gap-2 px-2 py-1 rounded-lg bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 text-[10px]"
-                      >
-                        <span className="truncate">
-                          <span className="font-semibold">{s.code}</span>
-                          <span className="ml-1 text-slate-600 dark:text-slate-300">{s.label}</span>
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setPinnedStandards((prev) => prev.filter((p) => p.code !== s.code))
-                          }
-                          className="p-1 text-slate-400 hover:text-red-500"
+              <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2 space-y-2">
+                <aside className="space-y-2">
+                  <section className="plan-print-plain bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-3 space-y-1">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-700 dark:text-indigo-200">
+                      State compliance checkpoint
+                    </p>
+                    <p className="text-[10px] text-slate-700 dark:text-slate-200">
+                      {planStateRegion === 'National'
+                        ? 'Using national template: objective, standards, differentiation, formative checks, and assessment evidence.'
+                        : `Using ${planStateRegion} alignment workflow: standards mapping, objective language, differentiation plan, accommodations, and evidence of mastery.`}
+                    </p>
+                  </section>
+                  <section className="bg-white/85 dark:bg-slate-900/85 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
+                    <p className={sectionTitle}>Context & Constraints</p>
+                    <div className="grid grid-cols-3 gap-2 text-[10px]">
+                      <div className="flex flex-col gap-1 col-span-3">
+                        <label className={label}>State (standards)</label>
+                        <select
+                          value={planStateRegion}
+                          onChange={(e) => setPlanStateRegion(e.target.value)}
+                          className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80"
                         >
-                          <X className="w-3 h-3" />
-                        </button>
+                          <option value="National">National / General</option>
+                          <option value="AL">Alabama</option>
+                          <option value="AK">Alaska</option>
+                          <option value="AZ">Arizona</option>
+                          <option value="AR">Arkansas</option>
+                          <option value="CA">California</option>
+                          <option value="CO">Colorado</option>
+                          <option value="CT">Connecticut</option>
+                          <option value="DE">Delaware</option>
+                          <option value="FL">Florida</option>
+                          <option value="GA">Georgia</option>
+                          <option value="HI">Hawaii</option>
+                          <option value="ID">Idaho</option>
+                          <option value="IL">Illinois</option>
+                          <option value="IN">Indiana</option>
+                          <option value="IA">Iowa</option>
+                          <option value="KS">Kansas</option>
+                          <option value="KY">Kentucky</option>
+                          <option value="LA">Louisiana</option>
+                          <option value="ME">Maine</option>
+                          <option value="MD">Maryland</option>
+                          <option value="MA">Massachusetts</option>
+                          <option value="MI">Michigan</option>
+                          <option value="MN">Minnesota</option>
+                          <option value="MS">Mississippi</option>
+                          <option value="MO">Missouri</option>
+                          <option value="MT">Montana</option>
+                          <option value="NE">Nebraska</option>
+                          <option value="NV">Nevada</option>
+                          <option value="NH">New Hampshire</option>
+                          <option value="NJ">New Jersey</option>
+                          <option value="NM">New Mexico</option>
+                          <option value="NY">New York</option>
+                          <option value="NC">North Carolina</option>
+                          <option value="ND">North Dakota</option>
+                          <option value="OH">Ohio</option>
+                          <option value="OK">Oklahoma</option>
+                          <option value="OR">Oregon</option>
+                          <option value="PA">Pennsylvania</option>
+                          <option value="RI">Rhode Island</option>
+                          <option value="SC">South Carolina</option>
+                          <option value="SD">South Dakota</option>
+                          <option value="TN">Tennessee</option>
+                          <option value="TX">Texas</option>
+                          <option value="UT">Utah</option>
+                          <option value="VT">Vermont</option>
+                          <option value="VA">Virginia</option>
+                          <option value="WA">Washington</option>
+                          <option value="WV">West Virginia</option>
+                          <option value="WI">Wisconsin</option>
+                          <option value="WY">Wyoming</option>
+                        </select>
                       </div>
-                    ))}
-                  </div>
-                )}
-              </section>
+                      <div className="flex flex-col gap-1">
+                        <label className={label}>Grade</label>
+                        <input
+                          value={planGrade}
+                          onChange={(e) => setPlanGrade(e.target.value)}
+                          className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1 col-span-2">
+                        <label className={label}>Subject</label>
+                        <input
+                          value={planSubject}
+                          onChange={(e) => setPlanSubject(e.target.value)}
+                          className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1 col-span-3">
+                        <label className="font-semibold text-slate-600 dark:text-slate-300">
+                          Duration (mins)
+                        </label>
+                        <input
+                          type="number"
+                          min={10}
+                          max={120}
+                          value={planDuration}
+                          onChange={(e) => setPlanDuration(parseInt(e.target.value || '0', 10))}
+                          className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80"
+                        />
+                      </div>
+                    </div>
+                  </section>
 
-              <section className="bg-white/85 dark:bg-slate-900/85 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
-                <p className={sectionTitle}>
-                  Class Profile
-                </p>
-                <textarea
-                  value={classProfile}
-                  onChange={(e) => setClassProfile(e.target.value)}
-                  placeholder='e.g. "3 students with ADHD, 2 ELL Level 1"'
-                  className="w-full min-h-[64px] px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[11px] resize-none custom-scrollbar"
-                />
-                <button
-                  type="button"
-                  disabled={!classProfile.trim()}
-                  onClick={() => {
-                    setSafetyStatus('scanning');
-                    // Placeholder "AI" safety check that just echoes considerations.
-                    const msg =
-                      'Watch for pacing, visuals, and movement breaks for students mentioned in the class profile.';
-                    setTimeout(() => {
-                      setSafetyFindings(msg);
-                      setSafetyStatus('done');
-                    }, 600);
-                  }}
-                  className="w-full mt-1 px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-semibold disabled:opacity-40"
-                >
-                  {safetyStatus === 'scanning' ? 'Running safety check…' : 'Safety check'}
-                </button>
-                {safetyFindings && (
-                  <p className="mt-1 text-[10px] text-amber-700 dark:text-amber-300 bg-amber-50/80 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 rounded-lg px-2 py-1">
-                    {safetyFindings}
-                  </p>
-                )}
-              </section>
-            </aside>
-            </div>
+                  <section className="bg-white/85 dark:bg-slate-900/85 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className={sectionTitle}>Standards</p>
+                    </div>
+                    <input
+                      value={standardsQuery}
+                      onChange={(e) => setStandardsQuery(e.target.value)}
+                      placeholder="e.g. Water Cycle, NGSS"
+                      className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[11px]"
+                    />
+                    <button
+                      type="button"
+                      disabled={!standardsQuery.trim()}
+                      onClick={() => {
+                        // Placeholder AI behavior: turn the query into 2–3 pseudo-codes to pin
+                        const base = standardsQuery.trim();
+                        const suggestions: StandardItem[] = [
+                          {
+                            code: 'NGSS-MS-ESS2-4',
+                            label: `Develop a model of the ${base.toLowerCase()}.`,
+                          },
+                          {
+                            code: 'NGSS-5-ESS2-1',
+                            label: `Describe interactions in the ${base.toLowerCase()} within ecosystems.`,
+                          },
+                        ];
+                        setStandardsSuggestions(suggestions);
+                      }}
+                      className="w-full mt-1 px-2 py-1 rounded-lg bg-indigo-600 text-white text-[10px] font-semibold disabled:opacity-40"
+                    >
+                      Suggest standards
+                    </button>
+                    {standardsSuggestions.length > 0 && (
+                      <div className="mt-1 space-y-1 max-h-24 overflow-y-auto custom-scrollbar">
+                        {standardsSuggestions.map((s) => (
+                          <button
+                            key={s.code}
+                            type="button"
+                            onClick={() => {
+                              if (pinnedStandards.some((p) => p.code === s.code)) return;
+                              setPinnedStandards((prev) => [...prev, s]);
+                            }}
+                            className="w-full text-left px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[10px] hover:bg-indigo-50/80 dark:hover:bg-indigo-900/40"
+                          >
+                            <span className="font-semibold">{s.code}</span>
+                            <span className="ml-1 text-slate-600 dark:text-slate-300">
+                              {s.label}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {pinnedStandards.length > 0 && (
+                      <div className="mt-1 space-y-1">
+                        <p className="text-[9px] font-semibold text-slate-500 dark:text-slate-400">
+                          Pinned
+                        </p>
+                        {pinnedStandards.map((s) => (
+                          <div
+                            key={s.code}
+                            className="flex items-center justify-between gap-2 px-2 py-1 rounded-lg bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 text-[10px]"
+                          >
+                            <span className="truncate">
+                              <span className="font-semibold">{s.code}</span>
+                              <span className="ml-1 text-slate-600 dark:text-slate-300">
+                                {s.label}
+                              </span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPinnedStandards((prev) => prev.filter((p) => p.code !== s.code))
+                              }
+                              className="p-1 text-slate-400 hover:text-red-500"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+
+                  <section className="bg-white/85 dark:bg-slate-900/85 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
+                    <p className={sectionTitle}>Class Profile</p>
+                    <textarea
+                      value={classProfile}
+                      onChange={(e) => setClassProfile(e.target.value)}
+                      placeholder='e.g. "3 students with ADHD, 2 ELL Level 1"'
+                      className="w-full min-h-[64px] px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[11px] resize-none custom-scrollbar"
+                    />
+                    <button
+                      type="button"
+                      disabled={!classProfile.trim()}
+                      onClick={() => {
+                        setSafetyStatus('scanning');
+                        // Placeholder "AI" safety check that just echoes considerations.
+                        const msg =
+                          'Watch for pacing, visuals, and movement breaks for students mentioned in the class profile.';
+                        setTimeout(() => {
+                          setSafetyFindings(msg);
+                          setSafetyStatus('done');
+                        }, 600);
+                      }}
+                      className="w-full mt-1 px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-semibold disabled:opacity-40"
+                    >
+                      {safetyStatus === 'scanning' ? 'Running safety check…' : 'Safety check'}
+                    </button>
+                    {safetyFindings && (
+                      <p className="mt-1 text-[10px] text-amber-700 dark:text-amber-300 bg-amber-50/80 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 rounded-lg px-2 py-1">
+                        {safetyFindings}
+                      </p>
+                    )}
+                  </section>
+                </aside>
+              </div>
             )}
 
             {(planTab as string) === 'blocks' && (
-            <div className="flex-1 min-h-0 overflow-hidden flex flex-col p-2">
-              <section className="plan-print-plain mb-2 bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-2">
-                <p className="text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
-                  Instruction design sequence: Hook → Direct instruction → Guided practice → Independent transfer.
-                </p>
-              </section>
-              <div className="flex gap-1 mb-2">
-                {(['A', 'B', 'C', 'D'] as const).map((b) => (
-                  <button key={b} type="button" onClick={() => setPlanBlockTab(b)} className={`flex-1 py-1 rounded-lg text-[9px] font-bold ${planBlockTab === b ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'}`}>{b}</button>
-                ))}
-              </div>
-              <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
-              <section className="bg-white/85 dark:bg-slate-900/85 border border-slate-200 dark:border-slate-700 rounded-xl p-3 flex flex-col gap-3">
-                <p className={sectionTitle}>
-                  Block {planBlockTab}
-                </p>
-
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
+              <div className="flex-1 min-h-0 overflow-hidden flex flex-col p-2">
+                <section className="plan-print-plain mb-2 bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-2">
+                  <p className="text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
+                    Instruction design sequence: Hook → Direct instruction → Guided practice →
+                    Independent transfer.
+                  </p>
+                </section>
+                <div className="flex gap-1 mb-2">
+                  {(['A', 'B', 'C', 'D'] as const).map((b) => (
                     <button
+                      key={b}
                       type="button"
-                      onClick={() =>
-                        setPlanBlockLocks((prev) => ({ ...prev, [planBlockTab]: !prev[planBlockTab] }))
-                      }
-                      className={`px-3 py-2 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-colors ${
-                        planBlockLocks[planBlockTab]
-                          ? 'bg-rose-500 text-white border-rose-500'
-                          : 'bg-white/60 dark:bg-slate-900/40 text-slate-600 dark:text-slate-200 border-slate-200/70 dark:border-slate-700/60 hover:opacity-90'
-                      }`}
-                      title={planBlockLocks[planBlockTab] ? 'Unlock this block' : 'Lock this block'}
+                      onClick={() => setPlanBlockTab(b)}
+                      className={`flex-1 py-1 rounded-lg text-[9px] font-bold ${planBlockTab === b ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'}`}
                     >
-                      {planBlockLocks[planBlockTab] ? 'Locked' : 'Lock'}
+                      {b}
                     </button>
-                    <div className="text-[10px] text-slate-500 dark:text-slate-400">
-                      Smart edits
+                  ))}
+                </div>
+                <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+                  <section className="bg-white/85 dark:bg-slate-900/85 border border-slate-200 dark:border-slate-700 rounded-xl p-3 flex flex-col gap-3">
+                    <p className={sectionTitle}>Block {planBlockTab}</p>
+
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPlanBlockLocks((prev) => ({
+                              ...prev,
+                              [planBlockTab]: !prev[planBlockTab],
+                            }))
+                          }
+                          className={`px-3 py-2 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-colors ${
+                            planBlockLocks[planBlockTab]
+                              ? 'bg-rose-500 text-white border-rose-500'
+                              : 'bg-white/60 dark:bg-slate-900/40 text-slate-600 dark:text-slate-200 border-slate-200/70 dark:border-slate-700/60 hover:opacity-90'
+                          }`}
+                          title={
+                            planBlockLocks[planBlockTab] ? 'Unlock this block' : 'Lock this block'
+                          }
+                        >
+                          {planBlockLocks[planBlockTab] ? 'Locked' : 'Lock'}
+                        </button>
+                        <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                          Smart edits
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {(['shorter', 'longer', 'scaffold', 'rigor'] as const).map((k) => (
+                          <button
+                            key={k}
+                            type="button"
+                            disabled={planBlockLocks[planBlockTab]}
+                            onClick={() => {
+                              if (planBlockLocks[planBlockTab]) return;
+                              const apply = (text: string) => {
+                                const t = (text || '').trim();
+                                if (!t) return t;
+                                if (k === 'shorter') return t.split('\n').slice(0, 2).join('\n');
+                                if (k === 'longer')
+                                  return `${t}\n\nExtension: Add one more example and a quick check question.`;
+                                if (k === 'scaffold')
+                                  return `${t}\n\nScaffold: sentence frames + worked example + check for understanding.`;
+                                return `${t}\n\nRigor: add “why” and “how do you know?” prompts + an extension task.`;
+                              };
+                              if (planBlockTab === 'A') setHookContent((prev) => apply(prev));
+                              if (planBlockTab === 'B') setDirectPoints((prev) => apply(prev));
+                              if (planBlockTab === 'C') setGuidedNotes((prev) => apply(prev));
+                              if (planBlockTab === 'D') setIndependentNotes((prev) => apply(prev));
+                            }}
+                            className="px-2.5 py-2 rounded-xl bg-white/60 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-[10px] font-black uppercase tracking-widest text-slate-700 dark:text-slate-200 disabled:opacity-50"
+                            title={k}
+                          >
+                            {k}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    {(['shorter', 'longer', 'scaffold', 'rigor'] as const).map((k) => (
+
+                    <div className="grid grid-cols-2 gap-2">
                       <button
-                        key={k}
                         type="button"
-                        disabled={planBlockLocks[planBlockTab]}
                         onClick={() => {
-                          if (planBlockLocks[planBlockTab]) return;
-                          const apply = (text: string) => {
-                            const t = (text || '').trim();
-                            if (!t) return t;
-                            if (k === 'shorter') return t.split('\n').slice(0, 2).join('\n');
-                            if (k === 'longer')
-                              return `${t}\n\nExtension: Add one more example and a quick check question.`;
-                            if (k === 'scaffold')
-                              return `${t}\n\nScaffold: sentence frames + worked example + check for understanding.`;
-                            return `${t}\n\nRigor: add “why” and “how do you know?” prompts + an extension task.`;
+                          const applyAll = (t: string) =>
+                            `${(t || '').trim()}\n\nRefine: add a misconception check + 1 concrete example + 1 quick CFU.`;
+                          if (!planBlockLocks.B) setDirectPoints((p) => applyAll(p));
+                          if (!planBlockLocks.C) setGuidedNotes((p) => applyAll(p));
+                          if (!planBlockLocks.D) setIndependentNotes((p) => applyAll(p));
+                          setPlanActionMessage('Refine applied to unlocked blocks.');
+                        }}
+                        className="py-2.5 rounded-xl bg-emerald-500 text-white font-black uppercase tracking-widest text-[10px]"
+                      >
+                        Refine quality
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const applyAll = (t: string) => {
+                            const base = (t || '').trim();
+                            if (!base) return base;
+                            return base.split('\n').slice(0, 3).join('\n');
                           };
-                          if (planBlockTab === 'A') setHookContent((prev) => apply(prev));
-                          if (planBlockTab === 'B') setDirectPoints((prev) => apply(prev));
-                          if (planBlockTab === 'C') setGuidedNotes((prev) => apply(prev));
-                          if (planBlockTab === 'D') setIndependentNotes((prev) => apply(prev));
+                          if (!planBlockLocks.B) setDirectPoints((p) => applyAll(p));
+                          if (!planBlockLocks.C) setGuidedNotes((p) => applyAll(p));
+                          if (!planBlockLocks.D) setIndependentNotes((p) => applyAll(p));
+                          setPlanActionMessage('Tightened timing (kept top 3 lines).');
                         }}
-                        className="px-2.5 py-2 rounded-xl bg-white/60 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-[10px] font-black uppercase tracking-widest text-slate-700 dark:text-slate-200 disabled:opacity-50"
-                        title={k}
+                        className="py-2.5 rounded-xl bg-white/70 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-slate-700 dark:text-slate-200 font-black uppercase tracking-widest text-[10px]"
                       >
-                        {k}
+                        Tighten timing
                       </button>
-                    ))}
-                  </div>
-                </div>
+                    </div>
 
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const applyAll = (t: string) =>
-                        `${(t || '').trim()}\n\nRefine: add a misconception check + 1 concrete example + 1 quick CFU.`;
-                      if (!planBlockLocks.B) setDirectPoints((p) => applyAll(p));
-                      if (!planBlockLocks.C) setGuidedNotes((p) => applyAll(p));
-                      if (!planBlockLocks.D) setIndependentNotes((p) => applyAll(p));
-                      setPlanActionMessage('Refine applied to unlocked blocks.');
-                    }}
-                    className="py-2.5 rounded-xl bg-emerald-500 text-white font-black uppercase tracking-widest text-[10px]"
-                  >
-                    Refine quality
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const applyAll = (t: string) => {
-                        const base = (t || '').trim();
-                        if (!base) return base;
-                        return base
-                          .split('\n')
-                          .slice(0, 3)
-                          .join('\n');
-                      };
-                      if (!planBlockLocks.B) setDirectPoints((p) => applyAll(p));
-                      if (!planBlockLocks.C) setGuidedNotes((p) => applyAll(p));
-                      if (!planBlockLocks.D) setIndependentNotes((p) => applyAll(p));
-                      setPlanActionMessage('Tightened timing (kept top 3 lines).');
-                    }}
-                    className="py-2.5 rounded-xl bg-white/70 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-slate-700 dark:text-slate-200 font-black uppercase tracking-widest text-[10px]"
-                  >
-                    Tighten timing
-                  </button>
-                </div>
-
-                {planBlockTab === 'A' && (
-                <div className="border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="w-5 h-5 rounded-full bg-indigo-500 text-white text-[10px] flex items-center justify-center font-bold">
-                        A
-                      </span>
-                      <div>
-                        <p className="text-xs font-semibold text-slate-800 dark:text-slate-100">
-                          Hook (5–10 mins)
-                        </p>
-                        <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                          Kick off curiosity so students lean in.
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          // Simple regenerate stub based on type
-                          const base = effectiveTopic.toLowerCase();
-                          const suggestion =
-                            hookType === 'video'
-                              ? `Short 60‑second video clip showing the ${base} in action.`
-                              : hookType === 'mystery'
-                                ? `Reveal a mystery object related to the ${base} and ask students to predict what it represents.`
-                                : `Pose a provocative question: "What would happen to our classroom if the ${base} stopped working?"`;
-                          setHookContent(suggestion);
-                        }}
-                        className="p-1.5 rounded-full text-[10px] text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50/80 dark:hover:bg-indigo-900/30"
-                        title="AI Regenerate"
-                      >
-                        <Sparkles className="w-3 h-3" />
-                      </button>
-                      <button
-                        type="button"
-                        className="p-1.5 rounded-full text-[10px] text-slate-500 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-                        title="Manual edit"
-                        onClick={() => {
-                          // no-op, textarea is always editable
-                        }}
-                      >
-                        <FileText className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 text-[10px]">
-                    <span className="font-semibold text-slate-600 dark:text-slate-300">Option</span>
-                    <button
-                      type="button"
-                      onClick={() => setHookType('video')}
-                      className={`px-2 py-0.5 rounded-full border text-[9px] ${
-                        hookType === 'video'
-                          ? 'bg-indigo-50 border-indigo-400 text-indigo-700'
-                          : 'bg-white/90 dark:bg-slate-900/80 border-slate-200 dark:border-slate-700'
-                      }`}
-                    >
-                      Video link
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setHookType('question')}
-                      className={`px-2 py-0.5 rounded-full border text-[9px] ${
-                        hookType === 'question'
-                          ? 'bg-indigo-50 border-indigo-400 text-indigo-700'
-                          : 'bg-white/90 dark:bg-slate-900/80 border-slate-200 dark:border-slate-700'
-                      }`}
-                    >
-                      Question
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setHookType('mystery')}
-                      className={`px-2 py-0.5 rounded-full border text-[9px] ${
-                        hookType === 'mystery'
-                          ? 'bg-indigo-50 border-indigo-400 text-indigo-700'
-                          : 'bg-white/90 dark:bg-slate-900/80 border-slate-200 dark:border-slate-700'
-                      }`}
-                    >
-                      Mystery object
-                    </button>
-                  </div>
-                  <textarea
-                    value={hookContent}
-                    onChange={(e) => setHookContent(e.target.value)}
-                    placeholder="Write or paste what students will see / hear first…"
-                    className="w-full min-h-[60px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
-                  />
-                </div>
-                )}
-
-                {planBlockTab === 'B' && (
-                <div className="border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="w-5 h-5 rounded-full bg-emerald-500 text-white text-[10px] flex items-center justify-center font-bold">
-                        B
-                      </span>
-                      <div>
-                        <p className="text-xs font-semibold text-slate-800 dark:text-slate-100">
-                          Direct Instruction (15–20 mins)
-                        </p>
-                        <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                          Capture just the must‑know pieces.
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => void handleGeneratePlan()}
-                        disabled={lessonLoading}
-                        className="p-1.5 rounded-full text-[10px] text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50/80 dark:hover:bg-indigo-900/30"
-                        title="AI Regenerate"
-                      >
-                        {lessonLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                      </button>
-                      <button
-                        type="button"
-                        className="p-1.5 rounded-full text-[10px] text-slate-500 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-                        title="Manual edit"
-                      >
-                        <FileText className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 gap-2">
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[10px] font-semibold text-slate-600 dark:text-slate-300">
-                        Must‑know bullet points
-                      </label>
-                      <textarea
-                        value={directPoints}
-                        onChange={(e) => setDirectPoints(e.target.value)}
-                        placeholder="• Key fact 1&#10;• Key fact 2"
-                        className="w-full min-h-[64px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[10px] font-semibold text-slate-600 dark:text-slate-300">
-                        CFU questions to ask live
-                      </label>
-                      <textarea
-                        value={cfuIdeas}
-                        onChange={(e) => setCfuIdeas(e.target.value)}
-                        placeholder="Type or let AI draft 3–4 quick questions…"
-                        className="w-full min-h-[64px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
-                      />
-                    </div>
-                  </div>
-                </div>
-                )}
-
-                {planBlockTab === 'C' && (
-                <div className="border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="w-5 h-5 rounded-full bg-sky-500 text-white text-[10px] flex items-center justify-center font-bold">
-                        C
-                      </span>
-                      <div>
-                        <p className="text-xs font-semibold text-slate-800 dark:text-slate-100">
-                          Guided Practice (≈15 mins)
-                        </p>
-                        <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                          Students try it with you in the middle.
-                        </p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="p-1.5 rounded-full text-[10px] text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50/80 dark:hover:bg-indigo-900/30"
-                      title="AI Regenerate"
-                      onClick={() => {
-                        const templateSummary =
-                          guidedTemplate === 'Socratic Seminar'
-                            ? 'Inner and outer circles discuss the prompt and rotate midway.'
-                            : guidedTemplate === 'Jigsaw'
-                              ? 'Expert groups read different sections, then teach in new groups.'
-                              : guidedTemplate === 'Lab'
-                                ? 'Hands-on investigation with clear safety and procedure steps.'
-                                : 'Think, pair, and share responses with a quick whole-class debrief.';
-                        setGuidedNotes(templateSummary);
-                      }}
-                    >
-                      <Sparkles className="w-3 h-3" />
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 text-[10px]">
-                    <span className="font-semibold text-slate-600 dark:text-slate-300">
-                      Template
-                    </span>
-                    {(['Socratic Seminar', 'Jigsaw', 'Lab', 'Think-Pair-Share'] as const).map((tpl) => (
-                      <button
-                        key={tpl}
-                        type="button"
-                        onClick={() => setGuidedTemplate(tpl)}
-                        className={`px-2 py-0.5 rounded-full border ${
-                          guidedTemplate === tpl
-                            ? 'bg-sky-50 border-sky-400 text-sky-700'
-                            : 'bg-white/90 dark:bg-slate-900/80 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
-                        } text-[9px]`}
-                      >
-                        {tpl}
-                      </button>
-                    ))}
-                  </div>
-                  <textarea
-                    value={guidedNotes}
-                    onChange={(e) => setGuidedNotes(e.target.value)}
-                    placeholder="Steps, grouping notes, and prompts for this activity…"
-                    className="w-full min-h-[64px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
-                  />
-                </div>
-                )}
-
-                {planBlockTab === 'D' && (
-                <div className="border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="w-5 h-5 rounded-full bg-violet-500 text-white text-[10px] flex items-center justify-center font-bold">
-                        D
-                      </span>
-                      <div>
-                        <p className="text-xs font-semibold text-slate-800 dark:text-slate-100">
-                          Independent Practice
-                        </p>
-                        <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                          What students do on their own, in class or at home.
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        className="p-1.5 rounded-full text-[10px] text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50/80 dark:hover:bg-indigo-900/30"
-                        title="AI Generate activity"
-                        onClick={() => {
-                          const base = effectiveTopic.toLowerCase();
-                          setIndependentNotes(
-                            `Students complete a short independent task applying the ${base}. Include 5 practice items and 1 challenge question.`
-                          );
-                        }}
-                      >
-                        <Sparkles className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-                  <textarea
-                    value={independentNotes}
-                    onChange={(e) => setIndependentNotes(e.target.value)}
-                    placeholder="Describe the worksheet, reading, or problem set students will complete…"
-                    className="w-full min-h-[64px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
-                  />
-                  <div className="flex items-center justify-between gap-2 text-[10px]">
-                    <div className="flex items-center gap-2">
-                      <label className="font-semibold text-slate-600 dark:text-slate-300">
-                        Attachment
-                      </label>
-                      <input
-                        type="file"
-                        className="hidden"
-                        id="independent-attachment"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) setAttachmentName(file.name);
-                        }}
-                      />
-                      <label
-                        htmlFor="independent-attachment"
-                        className="px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 cursor-pointer"
-                      >
-                        Upload
-                      </label>
-                      {attachmentName && (
-                        <span className="text-slate-500 dark:text-slate-400 truncate max-w-[120px]">
-                          {attachmentName}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-                )}
-              </section>
-              </div>
-            </div>
-            )}
-
-            {(planTab as string) === 'resources' && (
-            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2">
-            <aside className="w-full space-y-3">
-              <section className="plan-print-plain bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-3">
-                <p className="text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
-                  Resource compliance: include accessible text, multimodal materials, and differentiation artifacts tied to selected standards.
-                </p>
-              </section>
-              <section className="bg-white/85 dark:bg-slate-900/85 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
-                <p className={sectionTitle}>
-                  Resources
-                </p>
-                <input
-                  value={resourceQuery}
-                  onChange={(e) => setResourceQuery(e.target.value)}
-                  placeholder="Topic for media (e.g. ecosystems)"
-                  className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[11px]"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const topic = (resourceQuery || effectiveTopic).toLowerCase();
-                    const cards: ResourceCard[] = [
-                      {
-                        title: `Intro video on the ${topic}`,
-                        kind: 'video',
-                        source: 'YouTube',
-                        url: 'https://www.youtube.com',
-                        blurb: '2–3 minute visual overview with strong visuals and captions.',
-                      },
-                      {
-                        title: `Primary source: ${topic}`,
-                        kind: 'article',
-                        source: 'Open resource',
-                        url: 'https://example.com',
-                        blurb: 'Short excerpt students can annotate or discuss in pairs.',
-                      },
-                      {
-                        title: `${topic} simulation`,
-                        kind: 'simulation',
-                        source: 'PhET‑style',
-                        url: 'https://example.com',
-                        blurb: 'Clickable model students can manipulate to see cause‑and‑effect.',
-                      },
-                    ];
-                    setResourceCards(cards);
-                  }}
-                  className="w-full mt-1 px-2 py-1 rounded-lg bg-slate-900 text-white text-[10px] font-semibold dark:bg-slate-100 dark:text-slate-900"
-                >
-                  Curate media
-                </button>
-                {resourceCards.length > 0 && (
-                  <div className="mt-1 space-y-1 max-h-40 overflow-y-auto custom-scrollbar">
-                    {resourceCards.map((card, idx) => (
-                      <div
-                        key={`${card.title}-${idx}`}
-                        className="flex items-start justify-between gap-2 px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 text-[10px]"
-                      >
-                        <div className="flex-1">
-                          <p className="font-semibold text-slate-800 dark:text-slate-100">
-                            {card.title}
-                          </p>
-                          <p className="text-[9px] text-slate-500 dark:text-slate-400">
-                            {card.source} · {card.kind}
-                          </p>
-                          <p className="mt-0.5 text-[9px] text-slate-600 dark:text-slate-300">
-                            {card.blurb}
-                          </p>
-                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                    {planBlockTab === 'A' && (
+                      <div className="border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-full bg-indigo-500 text-white text-[10px] flex items-center justify-center font-bold">
+                              A
+                            </span>
+                            <div>
+                              <p className="text-xs font-semibold text-slate-800 dark:text-slate-100">
+                                Hook (5–10 mins)
+                              </p>
+                              <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                                Kick off curiosity so students lean in.
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1">
                             <button
                               type="button"
                               onClick={() => {
-                                const line = `- ${card.title} (${card.source}) ${card.url}`;
-                                setHookContent((prev) => (prev ? `${prev}\n${line}` : line));
-                                setPlanTab('iDo');
-                                setPlanBlockTab('A');
-                                setPlanActionMessage('Attached to Hook (A).');
+                                // Simple regenerate stub based on type
+                                const base = effectiveTopic.toLowerCase();
+                                const suggestion =
+                                  hookType === 'video'
+                                    ? `Short 60‑second video clip showing the ${base} in action.`
+                                    : hookType === 'mystery'
+                                      ? `Reveal a mystery object related to the ${base} and ask students to predict what it represents.`
+                                      : `Pose a provocative question: "What would happen to our classroom if the ${base} stopped working?"`;
+                                setHookContent(suggestion);
                               }}
-                              className="px-2 py-1 rounded-full bg-white/70 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-[9px] font-black uppercase tracking-widest"
+                              className="p-1.5 rounded-full text-[10px] text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50/80 dark:hover:bg-indigo-900/30"
+                              title="AI Regenerate"
                             >
-                              Attach → A
+                              <Sparkles className="w-3 h-3" />
                             </button>
                             <button
                               type="button"
+                              className="p-1.5 rounded-full text-[10px] text-slate-500 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                              title="Manual edit"
                               onClick={() => {
-                                const line = `- ${card.title} (${card.source}) ${card.url}`;
-                                setDirectPoints((prev) => (prev ? `${prev}\n${line}` : line));
-                                setPlanTab('iDo');
-                                setPlanBlockTab('B');
-                                setPlanActionMessage('Attached to Direct instruction (B).');
+                                // no-op, textarea is always editable
                               }}
-                              className="px-2 py-1 rounded-full bg-white/70 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-[9px] font-black uppercase tracking-widest"
                             >
-                              Attach → B
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const line = `- ${card.title} (${card.source}) ${card.url}`;
-                                setGuidedNotes((prev) => (prev ? `${prev}\n${line}` : line));
-                                setPlanTab('iDo');
-                                setPlanBlockTab('C');
-                                setPlanActionMessage('Attached to Guided practice (C).');
-                              }}
-                              className="px-2 py-1 rounded-full bg-white/70 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-[9px] font-black uppercase tracking-widest"
-                            >
-                              Attach → C
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const line = `- ${card.title} (${card.source}) ${card.url}`;
-                                setIndependentNotes((prev) => (prev ? `${prev}\n${line}` : line));
-                                setPlanTab('iDo');
-                                setPlanBlockTab('D');
-                                setPlanActionMessage('Attached to Independent practice (D).');
-                              }}
-                              className="px-2 py-1 rounded-full bg-white/70 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-[9px] font-black uppercase tracking-widest"
-                            >
-                              Attach → D
+                              <FileText className="w-3 h-3" />
                             </button>
                           </div>
                         </div>
-                        <button
-                          type="button"
-                          className="px-2 py-0.5 rounded-full bg-indigo-600 text-white text-[9px] font-semibold"
-                          title="Open in new tab"
-                          onClick={() => window.open(card.url, '_blank')}
-                        >
-                          Open
-                        </button>
+                        <div className="flex items-center gap-2 text-[10px]">
+                          <span className="font-semibold text-slate-600 dark:text-slate-300">
+                            Option
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setHookType('video')}
+                            className={`px-2 py-0.5 rounded-full border text-[9px] ${
+                              hookType === 'video'
+                                ? 'bg-indigo-50 border-indigo-400 text-indigo-700'
+                                : 'bg-white/90 dark:bg-slate-900/80 border-slate-200 dark:border-slate-700'
+                            }`}
+                          >
+                            Video link
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setHookType('question')}
+                            className={`px-2 py-0.5 rounded-full border text-[9px] ${
+                              hookType === 'question'
+                                ? 'bg-indigo-50 border-indigo-400 text-indigo-700'
+                                : 'bg-white/90 dark:bg-slate-900/80 border-slate-200 dark:border-slate-700'
+                            }`}
+                          >
+                            Question
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setHookType('mystery')}
+                            className={`px-2 py-0.5 rounded-full border text-[9px] ${
+                              hookType === 'mystery'
+                                ? 'bg-indigo-50 border-indigo-400 text-indigo-700'
+                                : 'bg-white/90 dark:bg-slate-900/80 border-slate-200 dark:border-slate-700'
+                            }`}
+                          >
+                            Mystery object
+                          </button>
+                        </div>
+                        <textarea
+                          value={hookContent}
+                          onChange={(e) => setHookContent(e.target.value)}
+                          placeholder="Write or paste what students will see / hear first…"
+                          className="w-full min-h-[60px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
+                        />
                       </div>
-                    ))}
-                  </div>
-                )}
-              </section>
+                    )}
 
-              <section className="bg-white/85 dark:bg-slate-900/85 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <p className={sectionTitle}>
-                    Leveler
-                  </p>
-                  <span className="text-[9px] text-slate-500 dark:text-slate-400">
-                    Grade {levelerValue}
-                  </span>
+                    {planBlockTab === 'B' && (
+                      <div className="border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-full bg-emerald-500 text-white text-[10px] flex items-center justify-center font-bold">
+                              B
+                            </span>
+                            <div>
+                              <p className="text-xs font-semibold text-slate-800 dark:text-slate-100">
+                                Direct Instruction (15–20 mins)
+                              </p>
+                              <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                                Capture just the must‑know pieces.
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => void handleGeneratePlan()}
+                              disabled={lessonLoading}
+                              className="p-1.5 rounded-full text-[10px] text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50/80 dark:hover:bg-indigo-900/30"
+                              title="AI Regenerate"
+                            >
+                              {lessonLoading ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <Sparkles className="w-3 h-3" />
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              className="p-1.5 rounded-full text-[10px] text-slate-500 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                              title="Manual edit"
+                            >
+                              <FileText className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 gap-2">
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[10px] font-semibold text-slate-600 dark:text-slate-300">
+                              Must‑know bullet points
+                            </label>
+                            <textarea
+                              value={directPoints}
+                              onChange={(e) => setDirectPoints(e.target.value)}
+                              placeholder="• Key fact 1&#10;• Key fact 2"
+                              className="w-full min-h-[64px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
+                            />
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[10px] font-semibold text-slate-600 dark:text-slate-300">
+                              CFU questions to ask live
+                            </label>
+                            <textarea
+                              value={cfuIdeas}
+                              onChange={(e) => setCfuIdeas(e.target.value)}
+                              placeholder="Type or let AI draft 3–4 quick questions…"
+                              className="w-full min-h-[64px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {planBlockTab === 'C' && (
+                      <div className="border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-full bg-sky-500 text-white text-[10px] flex items-center justify-center font-bold">
+                              C
+                            </span>
+                            <div>
+                              <p className="text-xs font-semibold text-slate-800 dark:text-slate-100">
+                                Guided Practice (≈15 mins)
+                              </p>
+                              <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                                Students try it with you in the middle.
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="p-1.5 rounded-full text-[10px] text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50/80 dark:hover:bg-indigo-900/30"
+                            title="AI Regenerate"
+                            onClick={() => {
+                              const templateSummary =
+                                guidedTemplate === 'Socratic Seminar'
+                                  ? 'Inner and outer circles discuss the prompt and rotate midway.'
+                                  : guidedTemplate === 'Jigsaw'
+                                    ? 'Expert groups read different sections, then teach in new groups.'
+                                    : guidedTemplate === 'Lab'
+                                      ? 'Hands-on investigation with clear safety and procedure steps.'
+                                      : 'Think, pair, and share responses with a quick whole-class debrief.';
+                              setGuidedNotes(templateSummary);
+                            }}
+                          >
+                            <Sparkles className="w-3 h-3" />
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 text-[10px]">
+                          <span className="font-semibold text-slate-600 dark:text-slate-300">
+                            Template
+                          </span>
+                          {(['Socratic Seminar', 'Jigsaw', 'Lab', 'Think-Pair-Share'] as const).map(
+                            (tpl) => (
+                              <button
+                                key={tpl}
+                                type="button"
+                                onClick={() => setGuidedTemplate(tpl)}
+                                className={`px-2 py-0.5 rounded-full border ${
+                                  guidedTemplate === tpl
+                                    ? 'bg-sky-50 border-sky-400 text-sky-700'
+                                    : 'bg-white/90 dark:bg-slate-900/80 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+                                } text-[9px]`}
+                              >
+                                {tpl}
+                              </button>
+                            )
+                          )}
+                        </div>
+                        <textarea
+                          value={guidedNotes}
+                          onChange={(e) => setGuidedNotes(e.target.value)}
+                          placeholder="Steps, grouping notes, and prompts for this activity…"
+                          className="w-full min-h-[64px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
+                        />
+                      </div>
+                    )}
+
+                    {planBlockTab === 'D' && (
+                      <div className="border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-full bg-violet-500 text-white text-[10px] flex items-center justify-center font-bold">
+                              D
+                            </span>
+                            <div>
+                              <p className="text-xs font-semibold text-slate-800 dark:text-slate-100">
+                                Independent Practice
+                              </p>
+                              <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                                What students do on their own, in class or at home.
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              className="p-1.5 rounded-full text-[10px] text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50/80 dark:hover:bg-indigo-900/30"
+                              title="AI Generate activity"
+                              onClick={() => {
+                                const base = effectiveTopic.toLowerCase();
+                                setIndependentNotes(
+                                  `Students complete a short independent task applying the ${base}. Include 5 practice items and 1 challenge question.`
+                                );
+                              }}
+                            >
+                              <Sparkles className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                        <textarea
+                          value={independentNotes}
+                          onChange={(e) => setIndependentNotes(e.target.value)}
+                          placeholder="Describe the worksheet, reading, or problem set students will complete…"
+                          className="w-full min-h-[64px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
+                        />
+                        <div className="flex items-center justify-between gap-2 text-[10px]">
+                          <div className="flex items-center gap-2">
+                            <label className="font-semibold text-slate-600 dark:text-slate-300">
+                              Attachment
+                            </label>
+                            <input
+                              type="file"
+                              className="hidden"
+                              id="independent-attachment"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) setAttachmentName(file.name);
+                              }}
+                            />
+                            <label
+                              htmlFor="independent-attachment"
+                              className="px-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 cursor-pointer"
+                            >
+                              Upload
+                            </label>
+                            {attachmentName && (
+                              <span className="text-slate-500 dark:text-slate-400 truncate max-w-[120px]">
+                                {attachmentName}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </section>
                 </div>
-                <input
-                  type="range"
-                  min={0}
-                  max={12}
-                  value={levelerValue}
-                  onChange={(e) => setLevelerValue(parseInt(e.target.value, 10))}
-                  className="w-full"
-                />
-                <button
-                  type="button"
-                  className="w-full mt-1 px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-semibold disabled:opacity-50"
-                  disabled={!differentiationText.trim()}
-                  onClick={async () => {
-                    const text = differentiationText.trim();
-                    if (!text) return;
-                    const level = levelerValue <= 5 ? 'simplified' : 'advanced';
-                    setDiffLoading(true);
-                    const out = await generateDifferentiatedLesson(text, level);
-                    setDiffLoading(false);
-                    if (out) {
-                      setDifferentiationText(out);
-                      setDiffLevel(level);
-                    }
-                  }}
-                >
-                  {diffLoading ? 'Leveling…' : 'Apply to lesson text'}
-                </button>
-                <textarea
-                  value={differentiationText}
-                  onChange={(e) => setDifferentiationText(e.target.value)}
-                  placeholder="This mirrors your lesson blocks; use the slider, then paste pieces back where you want."
-                  className="w-full min-h-[70px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
-                />
-              </section>
+              </div>
+            )}
 
-              <section className="bg-white/85 dark:bg-slate-900/85 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
-                <p className={sectionTitle}>
-                  Vocabulary Bank
-                </p>
-                {lessonResult && Array.isArray((lessonResult as LessonScriptResult).vocabulary) && (lessonResult as LessonScriptResult).vocabulary.length ? (
-                  <ul className="grid grid-cols-2 gap-1 text-[10px]">
-                    {(lessonResult as LessonScriptResult).vocabulary.map((word, idx) => (
-                      <li
-                        key={`${word}-${idx}`}
-                        className="px-2 py-1 rounded-full bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 truncate"
-                      >
-                        {word}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                    Run a quick script in Block B to auto‑extract 5–10 academic terms.
-                  </p>
-                )}
-              </section>
+            {(planTab as string) === 'resources' && (
+              <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2">
+                <aside className="w-full space-y-3">
+                  <section className="plan-print-plain bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-3">
+                    <p className="text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
+                      Resource compliance: include accessible text, multimodal materials, and
+                      differentiation artifacts tied to selected standards.
+                    </p>
+                  </section>
+                  <section className="bg-white/85 dark:bg-slate-900/85 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
+                    <p className={sectionTitle}>Resources</p>
+                    <input
+                      value={resourceQuery}
+                      onChange={(e) => setResourceQuery(e.target.value)}
+                      placeholder="Topic for media (e.g. ecosystems)"
+                      className="w-full px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[11px]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const topic = (resourceQuery || effectiveTopic).toLowerCase();
+                        const cards: ResourceCard[] = [
+                          {
+                            title: `Intro video on the ${topic}`,
+                            kind: 'video',
+                            source: 'YouTube',
+                            url: 'https://www.youtube.com',
+                            blurb: '2–3 minute visual overview with strong visuals and captions.',
+                          },
+                          {
+                            title: `Primary source: ${topic}`,
+                            kind: 'article',
+                            source: 'Open resource',
+                            url: 'https://example.com',
+                            blurb: 'Short excerpt students can annotate or discuss in pairs.',
+                          },
+                          {
+                            title: `${topic} simulation`,
+                            kind: 'simulation',
+                            source: 'PhET‑style',
+                            url: 'https://example.com',
+                            blurb:
+                              'Clickable model students can manipulate to see cause‑and‑effect.',
+                          },
+                        ];
+                        setResourceCards(cards);
+                      }}
+                      className="w-full mt-1 px-2 py-1 rounded-lg bg-slate-900 text-white text-[10px] font-semibold dark:bg-slate-100 dark:text-slate-900"
+                    >
+                      Curate media
+                    </button>
+                    {resourceCards.length > 0 && (
+                      <div className="mt-1 space-y-1 max-h-40 overflow-y-auto custom-scrollbar">
+                        {resourceCards.map((card, idx) => (
+                          <div
+                            key={`${card.title}-${idx}`}
+                            className="flex items-start justify-between gap-2 px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 text-[10px]"
+                          >
+                            <div className="flex-1">
+                              <p className="font-semibold text-slate-800 dark:text-slate-100">
+                                {card.title}
+                              </p>
+                              <p className="text-[9px] text-slate-500 dark:text-slate-400">
+                                {card.source} · {card.kind}
+                              </p>
+                              <p className="mt-0.5 text-[9px] text-slate-600 dark:text-slate-300">
+                                {card.blurb}
+                              </p>
+                              <div className="mt-2 flex flex-wrap items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const line = `- ${card.title} (${card.source}) ${card.url}`;
+                                    setHookContent((prev) => (prev ? `${prev}\n${line}` : line));
+                                    setPlanTab('iDo');
+                                    setPlanBlockTab('A');
+                                    setPlanActionMessage('Attached to Hook (A).');
+                                  }}
+                                  className="px-2 py-1 rounded-full bg-white/70 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-[9px] font-black uppercase tracking-widest"
+                                >
+                                  Attach → A
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const line = `- ${card.title} (${card.source}) ${card.url}`;
+                                    setDirectPoints((prev) => (prev ? `${prev}\n${line}` : line));
+                                    setPlanTab('iDo');
+                                    setPlanBlockTab('B');
+                                    setPlanActionMessage('Attached to Direct instruction (B).');
+                                  }}
+                                  className="px-2 py-1 rounded-full bg-white/70 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-[9px] font-black uppercase tracking-widest"
+                                >
+                                  Attach → B
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const line = `- ${card.title} (${card.source}) ${card.url}`;
+                                    setGuidedNotes((prev) => (prev ? `${prev}\n${line}` : line));
+                                    setPlanTab('iDo');
+                                    setPlanBlockTab('C');
+                                    setPlanActionMessage('Attached to Guided practice (C).');
+                                  }}
+                                  className="px-2 py-1 rounded-full bg-white/70 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-[9px] font-black uppercase tracking-widest"
+                                >
+                                  Attach → C
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const line = `- ${card.title} (${card.source}) ${card.url}`;
+                                    setIndependentNotes((prev) =>
+                                      prev ? `${prev}\n${line}` : line
+                                    );
+                                    setPlanTab('iDo');
+                                    setPlanBlockTab('D');
+                                    setPlanActionMessage('Attached to Independent practice (D).');
+                                  }}
+                                  className="px-2 py-1 rounded-full bg-white/70 dark:bg-slate-900/40 border border-slate-200/70 dark:border-slate-700/60 text-[9px] font-black uppercase tracking-widest"
+                                >
+                                  Attach → D
+                                </button>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              className="px-2 py-0.5 rounded-full bg-indigo-600 text-white text-[9px] font-semibold"
+                              title="Open in new tab"
+                              onClick={() => window.open(card.url, '_blank')}
+                            >
+                              Open
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
 
-              <section className="bg-white/85 dark:bg-slate-900/85 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
-                <p className={sectionTitle}>
-                  My Links
-                </p>
-                <ul className="space-y-1 max-h-24 overflow-y-auto custom-scrollbar text-[10px]">
-                  {fileVaultLinks.map((link, i) => (
-                    <li key={i} className="flex items-center justify-between gap-2">
-                      <a
-                        href={link.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-indigo-600 dark:text-indigo-400 truncate flex-1"
-                      >
-                        {link.label || link.url}
-                      </a>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setFileVaultLinks((prev) => prev.filter((_, j) => j !== i))
+                  <section className="bg-white/85 dark:bg-slate-900/85 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className={sectionTitle}>Leveler</p>
+                      <span className="text-[9px] text-slate-500 dark:text-slate-400">
+                        Grade {levelerValue}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={12}
+                      value={levelerValue}
+                      onChange={(e) => setLevelerValue(parseInt(e.target.value, 10))}
+                      className="w-full"
+                    />
+                    <button
+                      type="button"
+                      className="w-full mt-1 px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-semibold disabled:opacity-50"
+                      disabled={!differentiationText.trim()}
+                      onClick={async () => {
+                        const text = differentiationText.trim();
+                        if (!text) return;
+                        const level = levelerValue <= 5 ? 'simplified' : 'advanced';
+                        setDiffLoading(true);
+                        const out = await generateDifferentiatedLesson(text, level);
+                        setDiffLoading(false);
+                        if (out) {
+                          setDifferentiationText(out);
+                          setDiffLevel(level);
                         }
-                        className="p-1 text-slate-400 hover:text-red-500"
+                      }}
+                    >
+                      {diffLoading ? 'Leveling…' : 'Apply to lesson text'}
+                    </button>
+                    <textarea
+                      value={differentiationText}
+                      onChange={(e) => setDifferentiationText(e.target.value)}
+                      placeholder="This mirrors your lesson blocks; use the slider, then paste pieces back where you want."
+                      className="w-full min-h-[70px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
+                    />
+                  </section>
+
+                  <section className="bg-white/85 dark:bg-slate-900/85 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
+                    <p className={sectionTitle}>Vocabulary Bank</p>
+                    {lessonResult &&
+                    Array.isArray((lessonResult as LessonScriptResult).vocabulary) &&
+                    (lessonResult as LessonScriptResult).vocabulary.length ? (
+                      <ul className="grid grid-cols-2 gap-1 text-[10px]">
+                        {(lessonResult as LessonScriptResult).vocabulary.map((word, idx) => (
+                          <li
+                            key={`${word}-${idx}`}
+                            className="px-2 py-1 rounded-full bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 truncate"
+                          >
+                            {word}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                        Run a quick script in Block B to auto‑extract 5–10 academic terms.
+                      </p>
+                    )}
+                  </section>
+
+                  <section className="bg-white/85 dark:bg-slate-900/85 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2">
+                    <p className={sectionTitle}>My Links</p>
+                    <ul className="space-y-1 max-h-24 overflow-y-auto custom-scrollbar text-[10px]">
+                      {fileVaultLinks.map((link, i) => (
+                        <li key={i} className="flex items-center justify-between gap-2">
+                          <a
+                            href={link.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-indigo-600 dark:text-indigo-400 truncate flex-1"
+                          >
+                            {link.label || link.url}
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setFileVaultLinks((prev) => prev.filter((_, j) => j !== i))
+                            }
+                            className="p-1 text-slate-400 hover:text-red-500"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </li>
+                      ))}
+                      {fileVaultLinks.length === 0 && (
+                        <li className="text-slate-500 dark:text-slate-400">
+                          Add your go‑to Drive / Docs / Slides links here.
+                        </li>
+                      )}
+                    </ul>
+                    <form
+                      className="mt-1 flex gap-1"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const form = e.currentTarget;
+                        const label = (
+                          form.querySelector('[name="vault-label"]') as HTMLInputElement
+                        )?.value?.trim();
+                        const url = (
+                          form.querySelector('[name="vault-url"]') as HTMLInputElement
+                        )?.value?.trim();
+                        if (!url) return;
+                        setFileVaultLinks((prev) => [...prev, { label: label || url, url }]);
+                        form.reset();
+                      }}
+                    >
+                      <input
+                        name="vault-label"
+                        placeholder="Label"
+                        className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-[10px]"
+                      />
+                      <input
+                        name="vault-url"
+                        placeholder="https://…"
+                        required
+                        className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-[10px]"
+                      />
+                      <button
+                        type="submit"
+                        className="px-2 py-1.5 bg-indigo-600 text-white rounded-lg text-[10px] font-semibold"
                       >
-                        <X className="w-3 h-3" />
+                        Add
                       </button>
-                    </li>
-                  ))}
-                  {fileVaultLinks.length === 0 && (
-                    <li className="text-slate-500 dark:text-slate-400">
-                      Add your go‑to Drive / Docs / Slides links here.
-                    </li>
-                  )}
-                </ul>
-                <form
-                  className="mt-1 flex gap-1"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const form = e.currentTarget;
-                    const label = (form.querySelector(
-                      '[name="vault-label"]'
-                    ) as HTMLInputElement)?.value?.trim();
-                    const url = (form.querySelector(
-                      '[name="vault-url"]'
-                    ) as HTMLInputElement)?.value?.trim();
-                    if (!url) return;
-                    setFileVaultLinks((prev) => [...prev, { label: label || url, url }]);
-                    form.reset();
-                  }}
-                >
-                  <input
-                    name="vault-label"
-                    placeholder="Label"
-                    className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-[10px]"
-                  />
-                  <input
-                    name="vault-url"
-                    placeholder="https://…"
-                    required
-                    className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-[10px]"
-                  />
-                  <button
-                    type="submit"
-                    className="px-2 py-1.5 bg-indigo-600 text-white rounded-lg text-[10px] font-semibold"
-                  >
-                    Add
-                  </button>
-                </form>
-              </section>
-            </aside>
-            </div>
+                    </form>
+                  </section>
+                </aside>
+              </div>
             )}
 
             {(planTab as string) === 'assessment' && (
-            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2">
-          <section className="plan-print-plain bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-3 mb-2">
-            <p className="text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
-              Assessment compliance: align exit ticket + success criteria to objective and preserve evidence of mastery for documentation.
-            </p>
-          </section>
-          <section className="bg-white/90 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-3">
-            <div className="flex flex-col md:flex-row md:items-start gap-3">
-              <div className="flex-1 space-y-1.5">
-                <p className={sectionTitle}>
-                  Exit Ticket Lab
-                </p>
-                <textarea
-                  value={exitTicketPrompt}
-                  onChange={(e) => setExitTicketPrompt(e.target.value)}
-                  placeholder="What do you want to check in 3 quick questions?"
-                  className="w-full min-h-[48px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
-                />
-                <button
-                  type="button"
-                  className="mt-1 px-2 py-1 rounded-lg bg-slate-900 text-white text-[10px] font-semibold dark:bg-slate-100 dark:text-slate-900"
-                  onClick={() => {
-                    const base = exitTicketPrompt || effectiveTopic;
-                    setExitTicketQuestions([
-                      `Explain one big idea you learned about ${base.toLowerCase()}.`,
-                      `Write or sketch an example of ${base.toLowerCase()} in your own words.`,
-                      `What is one question you still have about ${base.toLowerCase()}?`,
-                    ]);
-                  }}
-                >
-                  Generate 3 questions
-                </button>
-                {exitTicketQuestions.length > 0 && (
-                  <ul className="mt-1 list-decimal list-inside text-[11px] text-slate-700 dark:text-slate-200 space-y-0.5">
-                    {exitTicketQuestions.map((q, idx) => (
-                      <li key={idx}>{q}</li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+              <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2">
+                <section className="plan-print-plain bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-xl p-3 mb-2">
+                  <p className="text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
+                    Assessment compliance: align exit ticket + success criteria to objective and
+                    preserve evidence of mastery for documentation.
+                  </p>
+                </section>
+                <section className="bg-white/90 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-3">
+                  <div className="flex flex-col md:flex-row md:items-start gap-3">
+                    <div className="flex-1 space-y-1.5">
+                      <p className={sectionTitle}>Exit Ticket Lab</p>
+                      <textarea
+                        value={exitTicketPrompt}
+                        onChange={(e) => setExitTicketPrompt(e.target.value)}
+                        placeholder="What do you want to check in 3 quick questions?"
+                        className="w-full min-h-[48px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar"
+                      />
+                      <button
+                        type="button"
+                        className="mt-1 px-2 py-1 rounded-lg bg-slate-900 text-white text-[10px] font-semibold dark:bg-slate-100 dark:text-slate-900"
+                        onClick={() => {
+                          const base = exitTicketPrompt || effectiveTopic;
+                          setExitTicketQuestions([
+                            `Explain one big idea you learned about ${base.toLowerCase()}.`,
+                            `Write or sketch an example of ${base.toLowerCase()} in your own words.`,
+                            `What is one question you still have about ${base.toLowerCase()}?`,
+                          ]);
+                        }}
+                      >
+                        Generate 3 questions
+                      </button>
+                      {exitTicketQuestions.length > 0 && (
+                        <ul className="mt-1 list-decimal list-inside text-[11px] text-slate-700 dark:text-slate-200 space-y-0.5">
+                          {exitTicketQuestions.map((q, idx) => (
+                            <li key={idx}>{q}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
 
-              <div className="flex-1 space-y-1.5">
-                <p className={sectionTitle}>
-                  Success Criteria (Look‑fors)
-                </p>
-                <button
-                  type="button"
-                  className="px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-semibold"
-                  onClick={() =>
-                    setSuccessCriteria([
-                      'Students can explain the big idea in their own words without prompts.',
-                      'Students can use the key vocabulary accurately in a sentence or diagram.',
-                      'Most students can complete the independent task with minimal re‑teaching.',
-                    ])
-                  }
-                >
-                  Draft 3 look‑fors
-                </button>
-                {successCriteria.length > 0 && (
-                  <ul className="mt-1 list-disc list-inside text-[11px] text-slate-700 dark:text-slate-200 space-y-0.5">
-                    {successCriteria.map((c, idx) => (
-                      <li key={idx}>{c}</li>
-                    ))}
-                  </ul>
-                )}
-                <div className="mt-2 flex items-center justify-between gap-2 text-[10px]">
-                  <span className="text-slate-500 dark:text-slate-400">
-                    Send to LMS (coming soon)
-                  </span>
-                  <button
-                    type="button"
-                    className="px-2 py-1 rounded-lg border border-slate-300 dark:border-slate-700 text-[10px] text-slate-600 dark:text-slate-300"
-                  >
-                    Send to LMS
-                  </button>
-                </div>
-              </div>
-            </div>
+                    <div className="flex-1 space-y-1.5">
+                      <p className={sectionTitle}>Success Criteria (Look‑fors)</p>
+                      <button
+                        type="button"
+                        className="px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-semibold"
+                        onClick={() =>
+                          setSuccessCriteria([
+                            'Students can explain the big idea in their own words without prompts.',
+                            'Students can use the key vocabulary accurately in a sentence or diagram.',
+                            'Most students can complete the independent task with minimal re‑teaching.',
+                          ])
+                        }
+                      >
+                        Draft 3 look‑fors
+                      </button>
+                      {successCriteria.length > 0 && (
+                        <ul className="mt-1 list-disc list-inside text-[11px] text-slate-700 dark:text-slate-200 space-y-0.5">
+                          {successCriteria.map((c, idx) => (
+                            <li key={idx}>{c}</li>
+                          ))}
+                        </ul>
+                      )}
+                      <div className="mt-2 flex items-center justify-between gap-2 text-[10px]">
+                        <span className="text-slate-500 dark:text-slate-400">
+                          Send to LMS (coming soon)
+                        </span>
+                        <button
+                          type="button"
+                          className="px-2 py-1 rounded-lg border border-slate-300 dark:border-slate-700 text-[10px] text-slate-600 dark:text-slate-300"
+                        >
+                          Send to LMS
+                        </button>
+                      </div>
+                    </div>
+                  </div>
 
-            <div className="mt-2 border-t border-slate-200 dark:border-slate-700 pt-2">
-              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400 mb-1 flex items-center justify-between">
-                <span>Pencil‑Down Reflection</span>
-              </p>
-              <div className="relative">
-                <textarea
-                  value={reflectionNote}
-                  onChange={(e) => setReflectionNote(e.target.value)}
-                  placeholder='“Next time, skip the video—it was too long.” This note will be pinned to this lesson.'
-                className="w-full min-h-[56px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar pr-12"
-                />
-                <VoiceInputButton
-                  onResult={(text) =>
-                    setReflectionNote((prev) => prev + (prev ? ' ' : '') + text)
-                  }
-                  className="absolute right-2 bottom-2"
-                />
+                  <div className="mt-2 border-t border-slate-200 dark:border-slate-700 pt-2">
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400 mb-1 flex items-center justify-between">
+                      <span>Pencil‑Down Reflection</span>
+                    </p>
+                    <div className="relative">
+                      <textarea
+                        value={reflectionNote}
+                        onChange={(e) => setReflectionNote(e.target.value)}
+                        placeholder="“Next time, skip the video—it was too long.” This note will be pinned to this lesson."
+                        className="w-full min-h-[56px] text-[11px] px-2 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/80 resize-none custom-scrollbar pr-12"
+                      />
+                      <VoiceInputButton
+                        onResult={(text) =>
+                          setReflectionNote((prev) => prev + (prev ? ' ' : '') + text)
+                        }
+                        className="absolute right-2 bottom-2"
+                      />
+                    </div>
+                  </div>
+                </section>
               </div>
-            </div>
-          </section>
-            </div>
             )}
           </div>
           <div className="plan-print-footer">
@@ -8171,14 +9727,14 @@ const App: React.FC = () => {
             <img
               src="https://api.qrserver.com/v1/create-qr-code/?size=68x68&data=https%3A%2F%2Fdonegrading.com%2F"
               alt="DoneGrading QR"
+              loading="lazy"
+              decoding="async"
             />
           </div>
         </div>
       </PageWrapper>
     );
   };
-
-  const [scheduleCursor, setScheduleCursor] = useState<string>(() => new Date().toISOString().slice(0, 10));
 
   const renderSchedule = () => {
     const sorted = [...scheduleItems].sort((a, b) => a.date.localeCompare(b.date));
@@ -8209,7 +9765,8 @@ const App: React.FC = () => {
 
     const dailyItems = sorted.filter((item) => isOnDate(item, cursorDate));
 
-    const normalizeKind = (k: ScheduleItem['kind']): NonNullable<ScheduleItem['kind']> => k ?? 'reminder';
+    const normalizeKind = (k: ScheduleItem['kind']): NonNullable<ScheduleItem['kind']> =>
+      k ?? 'reminder';
 
     const matchesFilters = (item: ScheduleItem, forDate?: Date) => {
       const kind = normalizeKind(item.kind);
@@ -8223,8 +9780,8 @@ const App: React.FC = () => {
         now.setHours(0, 0, 0, 0);
         if (d.getTime() >= now.getTime()) return false;
       }
-      if (scheduleSearch.trim()) {
-        const q = scheduleSearch.trim().toLowerCase();
+      if (deferredScheduleSearch.trim()) {
+        const q = deferredScheduleSearch.trim().toLowerCase();
         const hay = `${item.title} ${item.notes ?? ''}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
@@ -8233,7 +9790,11 @@ const App: React.FC = () => {
 
     const formatDateLabel = (d: Date) => {
       try {
-        return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+        return d.toLocaleDateString(undefined, {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+        });
       } catch {
         return d.toISOString().slice(0, 10);
       }
@@ -8282,7 +9843,9 @@ const App: React.FC = () => {
         return o.when.getTime() >= day0.getTime() && o.when.getTime() <= endWeek.getTime();
       });
 
-      const laterItems: Array<{ when: Date; item: ScheduleItem }> = occurrences.filter((o) => o.when.getTime() > endWeek.getTime());
+      const laterItems: Array<{ when: Date; item: ScheduleItem }> = occurrences.filter(
+        (o) => o.when.getTime() > endWeek.getTime()
+      );
 
       return {
         todayItems,
@@ -8407,7 +9970,9 @@ const App: React.FC = () => {
       };
 
       if (editingScheduleId) {
-        setScheduleItems((prev) => prev.map((i) => (i.id === editingScheduleId ? { ...i, ...base } : i)));
+        setScheduleItems((prev) =>
+          prev.map((i) => (i.id === editingScheduleId ? { ...i, ...base } : i))
+        );
       } else {
         setScheduleItems((prev) => [base, ...prev]);
       }
@@ -8446,7 +10011,9 @@ const App: React.FC = () => {
       setActiveScheduleHour(hour);
 
       const defaultTime =
-        hour != null ? `${hour.toString().padStart(2, '0')}:00` : scheduleTime || new Date().toTimeString().slice(0, 5);
+        hour != null
+          ? `${hour.toString().padStart(2, '0')}:00`
+          : scheduleTime || new Date().toTimeString().slice(0, 5);
 
       const effectiveDate = dateOverride || item?.date || todayIso;
 
@@ -8506,10 +10073,18 @@ const App: React.FC = () => {
                     type="button"
                     onClick={() => setScheduleView(mode)}
                     className={`px-3 py-1 rounded-full font-semibold capitalize ${
-                      scheduleView === mode ? 'bg-indigo-600 text-white' : 'text-slate-700 dark:text-slate-300'
+                      scheduleView === mode
+                        ? 'bg-indigo-600 text-white'
+                        : 'text-slate-700 dark:text-slate-300'
                     }`}
                   >
-                    {mode === 'daily' ? 'Day' : mode === 'weekly' ? 'Week' : mode === 'monthly' ? 'Month' : 'Agenda'}
+                    {mode === 'daily'
+                      ? 'Day'
+                      : mode === 'weekly'
+                        ? 'Week'
+                        : mode === 'monthly'
+                          ? 'Month'
+                          : 'Agenda'}
                   </button>
                 ))}
               </div>
@@ -8615,40 +10190,42 @@ const App: React.FC = () => {
                       Type
                     </p>
                     <div className="flex flex-wrap gap-1.5">
-                      {(['teacherBlock', 'meeting', 'appointment', 'event', 'reminder'] as Array<NonNullable<ScheduleItem['kind']>>).map(
-                        (k) => {
-                          const active = scheduleFilterKinds.has(k);
-                          return (
-                            <button
-                              key={k}
-                              type="button"
-                              onClick={() =>
-                                setScheduleFilterKinds((prev) => {
-                                  const next = new Set(prev);
-                                  if (next.has(k)) next.delete(k);
-                                  else next.add(k);
-                                  return next;
-                                })
-                              }
-                              className={`px-2 py-1 rounded-full text-[10px] font-semibold border ${
-                                active
-                                  ? 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-200'
-                                  : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
-                              }`}
-                            >
-                              {k === 'teacherBlock'
-                                ? 'Teacher blocks'
-                                : k === 'appointment'
-                                  ? 'Appointments'
-                                  : k === 'meeting'
-                                    ? 'Meetings'
-                                    : k === 'event'
-                                      ? 'Events'
-                                      : 'Reminders'}
-                            </button>
-                          );
-                        },
-                      )}
+                      {(
+                        ['teacherBlock', 'meeting', 'appointment', 'event', 'reminder'] as Array<
+                          NonNullable<ScheduleItem['kind']>
+                        >
+                      ).map((k) => {
+                        const active = scheduleFilterKinds.has(k);
+                        return (
+                          <button
+                            key={k}
+                            type="button"
+                            onClick={() =>
+                              setScheduleFilterKinds((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(k)) next.delete(k);
+                                else next.add(k);
+                                return next;
+                              })
+                            }
+                            className={`px-2 py-1 rounded-full text-[10px] font-semibold border ${
+                              active
+                                ? 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-200'
+                                : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
+                            }`}
+                          >
+                            {k === 'teacherBlock'
+                              ? 'Teacher blocks'
+                              : k === 'appointment'
+                                ? 'Appointments'
+                                : k === 'meeting'
+                                  ? 'Meetings'
+                                  : k === 'event'
+                                    ? 'Events'
+                                    : 'Reminders'}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -8729,17 +10306,29 @@ const App: React.FC = () => {
                 <>
                   <div className="rounded-xl bg-indigo-50/70 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 p-3">
                     <p className="text-[10px] font-semibold text-indigo-700 dark:text-indigo-200">
-                      Scan-first agenda: today + tomorrow up top, then the rest of the week, then what’s next.
+                      Scan-first agenda: today + tomorrow up top, then the rest of the week, then
+                      what’s next.
                     </p>
                   </div>
 
                   {(
                     [
                       { title: 'Today', items: agendaGroups.todayItems, date: cursorDate },
-                      { title: 'Tomorrow', items: agendaGroups.tomorrowItems, date: (() => { const d = new Date(cursorDate); d.setDate(d.getDate() + 1); return d; })() },
+                      {
+                        title: 'Tomorrow',
+                        items: agendaGroups.tomorrowItems,
+                        date: (() => {
+                          const d = new Date(cursorDate);
+                          d.setDate(d.getDate() + 1);
+                          return d;
+                        })(),
+                      },
                     ] as const
                   ).map((g) => (
-                    <section key={g.title} className="bg-white/90 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-2xl p-3">
+                    <section
+                      key={g.title}
+                      className="bg-white/90 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 rounded-2xl p-3"
+                    >
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
@@ -8751,7 +10340,9 @@ const App: React.FC = () => {
                         </div>
                         <button
                           type="button"
-                          onClick={() => openEditorFor(null, undefined, g.date.toISOString().slice(0, 10))}
+                          onClick={() =>
+                            openEditorFor(null, undefined, g.date.toISOString().slice(0, 10))
+                          }
                           className="px-2 py-1 rounded-full bg-emerald-600 text-white text-[10px] font-semibold"
                         >
                           + Add
@@ -8789,7 +10380,11 @@ const App: React.FC = () => {
                               <button
                                 key={`${e.id}-${g.title}`}
                                 type="button"
-                                onClick={() => openEditorFor(null, e, g.date.toISOString().slice(0, 10))}
+                                data-schedule-focus-id={e.id}
+                                data-schedule-focus-date={formatLocalYMD(g.date)}
+                                onClick={() =>
+                                  openEditorFor(null, e, g.date.toISOString().slice(0, 10))
+                                }
                                 className="w-full text-left rounded-xl border border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-950/50 px-3 py-2 flex items-start justify-between gap-3"
                               >
                                 <div className="min-w-0">
@@ -8797,7 +10392,9 @@ const App: React.FC = () => {
                                     <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-100 truncate">
                                       {e.title}
                                     </p>
-                                    <span className={`shrink-0 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-[0.16em] ${badgeClass}`}>
+                                    <span
+                                      className={`shrink-0 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-[0.16em] ${badgeClass}`}
+                                    >
                                       {badge}
                                     </span>
                                   </div>
@@ -8805,7 +10402,9 @@ const App: React.FC = () => {
                                     {e.time || 'Any time'}
                                     {e.endTime ? ` – ${e.endTime}` : ''}
                                     {e.recurrence !== 'once' ? ` · ${e.recurrence}` : ''}
-                                    {e.courseId ? ` · ${courses.find((c) => c.id === e.courseId)?.name || 'Course'}` : ''}
+                                    {e.courseId
+                                      ? ` · ${courses.find((c) => c.id === e.courseId)?.name || 'Course'}`
+                                      : ''}
                                   </p>
                                   {e.notes && (
                                     <p className="mt-1 text-[10px] text-slate-600 dark:text-slate-200 line-clamp-2">
@@ -8830,16 +10429,26 @@ const App: React.FC = () => {
                     </p>
                     <div className="mt-2 space-y-2">
                       {agendaGroups.thisWeekItems.length === 0 ? (
-                        <div className="text-[11px] text-slate-500 dark:text-slate-400">Nothing else this week.</div>
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                          Nothing else this week.
+                        </div>
                       ) : (
                         agendaGroups.thisWeekItems
-                          .sort((a, b) => a.when.getTime() - b.when.getTime() || (a.item.time || '').localeCompare(b.item.time || ''))
+                          .sort(
+                            (a, b) =>
+                              a.when.getTime() - b.when.getTime() ||
+                              (a.item.time || '').localeCompare(b.item.time || '')
+                          )
                           .slice(0, 24)
                           .map((o) => (
                             <button
                               key={`${o.item.id}-${o.when.toISOString()}`}
                               type="button"
-                              onClick={() => openEditorFor(null, o.item, o.when.toISOString().slice(0, 10))}
+                              data-schedule-focus-id={o.item.id}
+                              data-schedule-focus-date={formatLocalYMD(o.when)}
+                              onClick={() =>
+                                openEditorFor(null, o.item, o.when.toISOString().slice(0, 10))
+                              }
                               className="w-full text-left rounded-xl border border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-950/50 px-3 py-2 flex items-center justify-between gap-3"
                             >
                               <div className="min-w-0">
@@ -8851,7 +10460,9 @@ const App: React.FC = () => {
                                   {o.item.recurrence !== 'once' ? ` · ${o.item.recurrence}` : ''}
                                 </p>
                               </div>
-                              <span className="text-[10px] text-slate-500 dark:text-slate-400">Edit</span>
+                              <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                                Edit
+                              </span>
                             </button>
                           ))
                       )}
@@ -8878,16 +10489,26 @@ const App: React.FC = () => {
                     </div>
                     <div className="mt-2 space-y-2">
                       {agendaGroups.laterItems.length === 0 ? (
-                        <div className="text-[11px] text-slate-500 dark:text-slate-400">Nothing upcoming in the next 4 weeks.</div>
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                          Nothing upcoming in the next 4 weeks.
+                        </div>
                       ) : (
                         agendaGroups.laterItems
-                          .sort((a, b) => a.when.getTime() - b.when.getTime() || (a.item.time || '').localeCompare(b.item.time || ''))
+                          .sort(
+                            (a, b) =>
+                              a.when.getTime() - b.when.getTime() ||
+                              (a.item.time || '').localeCompare(b.item.time || '')
+                          )
                           .slice(0, 16)
                           .map((o) => (
                             <button
                               key={`${o.item.id}-${o.when.toISOString()}`}
                               type="button"
-                              onClick={() => openEditorFor(null, o.item, o.when.toISOString().slice(0, 10))}
+                              data-schedule-focus-id={o.item.id}
+                              data-schedule-focus-date={formatLocalYMD(o.when)}
+                              onClick={() =>
+                                openEditorFor(null, o.item, o.when.toISOString().slice(0, 10))
+                              }
                               className="w-full text-left rounded-xl border border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-950/50 px-3 py-2 flex items-center justify-between gap-3"
                             >
                               <div className="min-w-0">
@@ -8898,7 +10519,9 @@ const App: React.FC = () => {
                                   {formatDateLabel(o.when)} · {o.item.time || 'Any time'}
                                 </p>
                               </div>
-                              <span className="text-[10px] text-slate-500 dark:text-slate-400">Edit</span>
+                              <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                                Edit
+                              </span>
                             </button>
                           ))
                       )}
@@ -8927,7 +10550,10 @@ const App: React.FC = () => {
                     </button>
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-3">
-                    {[{ label: 'Morning', hrs: amHours }, { label: 'Afternoon', hrs: pmHours }].map((col) => (
+                    {[
+                      { label: 'Morning', hrs: amHours },
+                      { label: 'Afternoon', hrs: pmHours },
+                    ].map((col) => (
                       <div key={col.label} className="space-y-1">
                         <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300 text-center">
                           {col.label}
@@ -8941,7 +10567,9 @@ const App: React.FC = () => {
                               return Number(h) === hour;
                             })
                             .filter((it) => matchesFilters(it, cursorDate));
-                          const hasTeacherBlock = eventsAtHour.some((e) => normalizeKind(e.kind) === 'teacherBlock');
+                          const hasTeacherBlock = eventsAtHour.some(
+                            (e) => normalizeKind(e.kind) === 'teacherBlock'
+                          );
                           const isActive = activeScheduleHour === hour;
                           const isNow = (() => {
                             const now = new Date();
@@ -8976,7 +10604,9 @@ const App: React.FC = () => {
                               )}
                               <div className="w-full space-y-1 mt-1">
                                 {eventsAtHour.length === 0 ? (
-                                  <p className="text-[10px] text-emerald-900/40 dark:text-emerald-100/40">&nbsp;</p>
+                                  <p className="text-[10px] text-emerald-900/40 dark:text-emerald-100/40">
+                                    &nbsp;
+                                  </p>
                                 ) : (
                                   eventsAtHour.map((e) => (
                                     <div
@@ -9071,7 +10701,9 @@ const App: React.FC = () => {
                           </button>
                           <div className="flex-1 flex flex-wrap gap-1">
                             {dayEvents.length === 0 ? (
-                              <span className="text-[9px] text-slate-400 dark:text-slate-500">No items</span>
+                              <span className="text-[9px] text-slate-400 dark:text-slate-500">
+                                No items
+                              </span>
                             ) : (
                               dayEvents.slice(0, 18).map((e) => (
                                 <button
@@ -9081,7 +10713,9 @@ const App: React.FC = () => {
                                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 whitespace-nowrap max-w-full"
                                 >
                                   <span className="text-[8px] font-mono">{e.time || '—'}</span>
-                                  <span className="text-[9px] font-semibold truncate max-w-[120px]">{e.title}</span>
+                                  <span className="text-[9px] font-semibold truncate max-w-[120px]">
+                                    {e.title}
+                                  </span>
                                 </button>
                               ))
                             )}
@@ -9172,7 +10806,9 @@ const App: React.FC = () => {
                             >
                               <div
                                 className={`text-[9px] font-semibold ${
-                                  isToday ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-600 dark:text-slate-300'
+                                  isToday
+                                    ? 'text-emerald-700 dark:text-emerald-300'
+                                    : 'text-slate-600 dark:text-slate-300'
                                 }`}
                               >
                                 {inMonth ? dayNumber : ''}
@@ -9192,7 +10828,7 @@ const App: React.FC = () => {
                                   </div>
                                 )}
                               </div>
-                            </button>,
+                            </button>
                           );
                         }
                         return cellsArray;
@@ -9215,9 +10851,7 @@ const App: React.FC = () => {
                 onClick={() => setScheduleFormOpen((open) => !open)}
                 className="w-full flex items-center justify-between px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-slate-600 dark:text-slate-300"
               >
-                <span>
-                  {editingScheduleId ? 'Edit item' : 'Add item'}
-                </span>
+                <span>{editingScheduleId ? 'Edit item' : 'Add item'}</span>
                 <span className="text-[11px] font-semibold">{scheduleFormOpen ? '−' : '+'}</span>
               </button>
               {scheduleFormOpen && (
@@ -9234,7 +10868,12 @@ const App: React.FC = () => {
                       value={scheduleKind}
                       onChange={(e) =>
                         setScheduleKind(
-                          e.target.value as 'event' | 'reminder' | 'teacherBlock' | 'appointment' | 'meeting',
+                          e.target.value as
+                            | 'event'
+                            | 'reminder'
+                            | 'teacherBlock'
+                            | 'appointment'
+                            | 'meeting'
                         )
                       }
                       className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 text-[11px] text-slate-800 dark:text-slate-100 outline-none focus:border-indigo-400"
@@ -9360,245 +10999,351 @@ const App: React.FC = () => {
 
   if (showOnboarding) {
     return (
-      <Onboarding
-        onComplete={() => setShowOnboarding(false)}
-        onSkip={() => setShowOnboarding(false)}
-      />
+      <Suspense fallback={<PhaseLazyFallback />}>
+        <OnboardingLazy
+          onComplete={() => setShowOnboarding(false)}
+          onSkip={() => setShowOnboarding(false)}
+        />
+      </Suspense>
     );
   }
 
   return (
     <AppContext.Provider value={appContextValue}>
-    <>
-      <style>{`
+      <>
+        <style>{`
         @media print {
-          .fixed.bottom-3 {
+          #dg-bottom-nav {
             display: none !important;
           }
         }
       `}</style>
-      <div id="main-content" className="h-full font-sans text-slate-800 dark:text-slate-200 selection:bg-indigo-500/30 overflow-hidden relative gradient-animate flex flex-col" tabIndex={-1}>
-
-      {(!isOnline && !isOfflineBannerDismissed) && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] animate-in slide-in-from-top duration-500 w-[90%] max-w-sm">
-          <div className="px-4 py-3 bg-amber-500/90 backdrop-blur-xl border border-amber-400/50 rounded-xl shadow-xl flex items-center justify-between text-white drop-shadow-md">
-            <div className="flex items-center gap-3">
-              <WifiOff className="w-4 h-4" /> 
-              <span className="font-black text-[10px] uppercase tracking-widest">Offline Mode</span>
-            </div>
-            <button onClick={() => setIsOfflineBannerDismissed(true)} className="p-1 hover:bg-white/20 rounded-lg transition-colors">
-              <X className="w-3 h-3" />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {(showOnlineRestore && isOnline) && (
-        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[100] animate-in slide-in-from-top duration-500 w-[90%] max-w-sm">
-          <div className="px-4 py-2.5 bg-emerald-500/90 backdrop-blur-xl border border-emerald-400/50 rounded-xl shadow-lg flex items-center gap-2 text-white font-black text-[9px] uppercase tracking-widest justify-center drop-shadow-md">
-            <Wifi className="w-4 h-4" /> <span>Real-time Sync Active</span>
-          </div>
-        </div>
-      )}
-
-      {/* RENDER ROUTER — single flex child so content fits viewport */}
-      <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-      {phase === AppPhase.AUTHENTICATION && <AuthView />}
-      {phase === AppPhase.PLAN && renderPlan()}
-      {phase === AppPhase.SCHEDULE && renderSchedule()}
-      {phase === AppPhase.DASHBOARD && renderDashboard()}
-      {phase === AppPhase.GRADE_COURSE_PICKER && renderGradeCoursePicker()}
-      {phase === AppPhase.ROSTER_VIEW && renderRosterView()}
-      {phase === 'COURSE_CREATION' && renderCourseCreation()}
-      {phase === AppPhase.ASSIGNMENT_SELECT && renderAssignmentSelect()}
-      {phase === AppPhase.ASSIGNMENT_CREATION && renderAssignmentCreation()}
-      {phase === AppPhase.GRADE_SCAN_SETUP && renderScanSetup()}
-      {phase === AppPhase.GRADE_BATCH_ROSTER && renderBatchRoster()}
-      {phase === AppPhase.RUBRIC_SETUP && renderRubricSetup()}
-      {phase === AppPhase.MODE_SELECTION && renderModeSelection()}
-      {phase === AppPhase.GRADING_LOOP && renderGradingLoop()}
-      {phase === AppPhase.AUDIT && renderAudit()}
-      {phase === AppPhase.GRADE_SYNC_PREFLIGHT && renderSyncPreflight()}
-      {phase === AppPhase.SYNCING && renderSyncing()}
-      {phase === AppPhase.FINALE && renderFinale()}
-      {phase === AppPhase.PAYWALL && renderPaywall()}
-      {phase === AppPhase.RECORDS && (
-        <PageWrapper
-          headerTitle={educatorName || 'Communicate'}
-          headerSubtitle={todayLabel || undefined}
-          isOnline={isOnline}
-          isDarkMode={isDarkMode}
-          setIsDarkMode={setIsDarkMode}
-          syncStatus={syncStatus}
+        <div
+          id="main-content"
+          className="h-full font-sans text-slate-800 dark:text-slate-200 selection:bg-indigo-500/30 overflow-hidden relative gradient-animate flex flex-col"
+          tabIndex={-1}
         >
-          <CommunicationDashboard educatorName={educatorName} courses={courses} classroom={classroom} students={students} accessToken={accessToken} />
-        </PageWrapper>
-      )}
-      {phase === AppPhase.OPTIONS && renderOptions()}
-      </div>
+          {!isOnline && !isOfflineBannerDismissed && (
+            <div className="fixed z-[100] animate-in slide-in-from-top duration-500 w-[min(100%,24rem)] max-w-[calc(100vw-1rem)] left-1/2 -translate-x-1/2 top-[max(0.75rem,env(safe-area-inset-top,0.5rem))]">
+              <div className="px-4 py-3 bg-amber-500/90 backdrop-blur-xl border border-amber-400/50 rounded-xl shadow-xl flex flex-col gap-2 text-white drop-shadow-md">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <WifiOff className="w-4 h-4 shrink-0" />
+                    <div className="min-w-0">
+                      <span className="font-black text-[10px] uppercase tracking-widest block">
+                        Offline mode
+                      </span>
+                      <p className="mt-0.5 text-[10px] font-semibold text-white/90 leading-snug">
+                        Network-only actions are dimmed in the bar below. Hover or long-press for
+                        details.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsOfflineBannerDismissed(true)}
+                    className="p-1 hover:bg-white/20 rounded-lg transition-colors shrink-0"
+                    aria-label="Dismiss offline notice"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
-      {/* Global voice capture overlay disabled – voice handled inline via VoiceInputButton components */}
+          {showOnlineRestore && isOnline && (
+            <div className="fixed z-[100] animate-in slide-in-from-top duration-500 w-[min(100%,24rem)] max-w-[calc(100vw-1rem)] left-1/2 -translate-x-1/2 top-[calc(max(0.75rem,env(safe-area-inset-top,0.5rem))+3.5rem)]">
+              <div className="px-4 py-2.5 bg-emerald-500/90 backdrop-blur-xl border border-emerald-400/50 rounded-xl shadow-lg flex items-center gap-2 text-white font-black text-[9px] uppercase tracking-widest justify-center drop-shadow-md">
+                <Wifi className="w-4 h-4" /> <span>Real-time Sync Active</span>
+              </div>
+            </div>
+          )}
 
-      {/* GLOBAL BOTTOM NAV (hidden in Class Presenter for clean projection) */}
-      {phase !== AppPhase.CLASS_PRESENTER && (
-      <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-[90] w-full max-w-md px-4">
-        <div className="relative">
-          <div className="bg-white/95 dark:bg-slate-900/95 border border-slate-200/80 dark:border-slate-700/80 rounded-xl shadow-lg px-2 h-16 flex items-center justify-between gap-1">
-            <button
-              type="button"
-              onClick={() => setPhase(AppPhase.AUTHENTICATION)}
-              className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
-                phase === AppPhase.AUTHENTICATION
-                  ? 'text-red-500'
-                  : 'text-slate-600 dark:text-slate-300'
-              }`}
-            >
-              <Home className="w-4 h-4 mb-0.5" />
-              <span className="text-[7px] font-bold uppercase tracking-[0.16em]">Dashboard</span>
-            </button>
-            <button
-              type="button"
-              disabled={!isSignedIn}
-              onClick={() => {
-                if (!isSignedIn) return;
-                setPhase(AppPhase.PLAN);
-              }}
-              className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
-                phase === AppPhase.PLAN
-                  ? 'text-blue-500'
-                  : isSignedIn
-                    ? 'text-slate-600 dark:text-slate-300'
-                    : 'text-slate-400 dark:text-slate-600'
-              }`}
-            >
-              <BookOpen className="w-4 h-4 mb-0.5" />
-              <span className="text-[7px] font-bold uppercase tracking-[0.16em]">Plan</span>
-            </button>
-            <button
-              type="button"
-              disabled={!isSignedIn}
-              onClick={() => {
-                if (!isSignedIn) return;
-                setPhase(AppPhase.DASHBOARD);
-              }}
-              className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
-                phase === AppPhase.DASHBOARD
-                  ? 'text-yellow-500'
-                  : isSignedIn
-                    ? 'text-slate-600 dark:text-slate-300'
-                    : 'text-slate-400 dark:text-slate-600'
-              }`}
-            >
-              <LayoutDashboard className="w-4 h-4 mb-0.5" />
-              <span className="text-[7px] font-bold uppercase tracking-[0.16em]">Grade</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (!navHasSupport) return;
-                const isEditable = (el: HTMLElement | null) =>
-                  !!el &&
-                  (el instanceof HTMLTextAreaElement ||
-                    el instanceof HTMLInputElement ||
-                    el.isContentEditable);
-                const activeEl = document.activeElement as HTMLElement | null;
-                const target = isEditable(activeEl)
-                  ? activeEl
-                  : isEditable(lastFocusedFieldRef.current)
-                    ? (lastFocusedFieldRef.current as HTMLElement)
-                    : null;
-                if (!target) return;
-                if (!isNavListening) {
-                  if (voiceTargetRef.current && voiceTargetRef.current !== target) {
-                    voiceTargetRef.current.classList.remove('dg-voice-target');
-                  }
-                  voiceTargetRef.current = target;
-                  target.classList.add('dg-voice-target');
-                  // Keep focus on the field so cursor insertion works.
-                  try { target.focus(); } catch { /* ignore */ }
-                }
-                toggleNavListening();
-              }}
-              className={`flex items-center justify-center w-11 h-11 rounded-full border-[2px] ${
-                !navHasSupport
-                  ? 'bg-indigo-400/30 text-white/60 border-white/40 dark:border-slate-900/40 cursor-not-allowed'
-                  : isNavListening
-                    ? 'bg-red-500 text-white border-white/80 dark:border-slate-900/80 animate-pulse'
-                    : 'bg-slate-950 text-white border-white/80 dark:bg-white dark:text-slate-950 dark:border-slate-900/80 active:scale-95 transition-transform'
-              }`}
-              title={
-                !navHasSupport
-                  ? 'Voice input unavailable'
-                  : isNavListening
-                    ? 'Stop voice input'
-                    : 'Start voice input for the focused field'
-              }
-              aria-label="Voice capture"
-            >
-              <Mic className="w-5 h-5" />
-            </button>
-
-            <button
-              type="button"
-              disabled={!isSignedIn}
-              onClick={() => {
-                if (!isSignedIn) return;
-                setPhase(AppPhase.SCHEDULE);
-              }}
-              className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
-                phase === AppPhase.SCHEDULE
-                  ? 'text-green-500'
-                  : isSignedIn
-                    ? 'text-slate-600 dark:text-slate-300'
-                    : 'text-slate-400 dark:text-slate-600'
-              }`}
-            >
-              <Calendar className="w-4 h-4 mb-0.5" />
-              <span className="text-[7px] font-bold uppercase tracking-[0.16em]">Schedule</span>
-            </button>
-            <button
-              type="button"
-              disabled={!isSignedIn}
-              onClick={() => {
-                if (!isSignedIn) return;
-                setPhase(AppPhase.RECORDS);
-              }}
-              className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
-                phase === AppPhase.RECORDS
-                  ? 'text-purple-500'
-                  : isSignedIn
-                    ? 'text-slate-600 dark:text-slate-300'
-                    : 'text-slate-400 dark:text-slate-600'
-              }`}
-            >
-              <MessageCircle className="w-4 h-4 mb-0.5" />
-              <span className="text-[7px] font-bold uppercase tracking-[0.16em]">Communicate</span>
-            </button>
-            <button
-              type="button"
-              disabled={!isSignedIn}
-              onClick={() => {
-                if (!isSignedIn) return;
-                setPhase(AppPhase.OPTIONS);
-              }}
-              className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
-                phase === AppPhase.OPTIONS
-                  ? 'text-slate-700 dark:text-slate-200'
-                  : isSignedIn
-                    ? 'text-slate-600 dark:text-slate-300'
-                    : 'text-slate-400 dark:text-slate-600'
-              }`}
-            >
-              <Settings className="w-4 h-4 mb-0.5" />
-              <span className="text-[7px] font-bold uppercase tracking-[0.16em]">Options</span>
-            </button>
+          {/* RENDER ROUTER — single flex child so content fits viewport */}
+          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+            {phase === AppPhase.AUTHENTICATION && (
+              <Suspense fallback={<PhaseLazyFallback />}>
+                <AuthViewLazy />
+              </Suspense>
+            )}
+            {phase === AppPhase.PLAN && renderPlan()}
+            {phase === AppPhase.SCHEDULE && renderSchedule()}
+            {phase === AppPhase.DASHBOARD && renderDashboard()}
+            {phase === AppPhase.GRADE_COURSE_PICKER && renderGradeCoursePicker()}
+            {phase === AppPhase.ROSTER_VIEW && renderRosterView()}
+            {phase === AppPhase.COURSE_CREATION && renderCourseCreation()}
+            {phase === AppPhase.ASSIGNMENT_SELECT && renderAssignmentSelect()}
+            {phase === AppPhase.ASSIGNMENT_CREATION && renderAssignmentCreation()}
+            {phase === AppPhase.GRADE_SCAN_SETUP && renderScanSetup()}
+            {phase === AppPhase.GRADE_BATCH_ROSTER && renderBatchRoster()}
+            {phase === AppPhase.RUBRIC_SETUP && renderRubricSetup()}
+            {phase === AppPhase.MODE_SELECTION && renderModeSelection()}
+            {phase === AppPhase.GRADING_LOOP && renderGradingLoop()}
+            {phase === AppPhase.AUDIT && renderAudit()}
+            {phase === AppPhase.GRADE_SYNC_PREFLIGHT && renderSyncPreflight()}
+            {phase === AppPhase.SYNCING && renderSyncing()}
+            {phase === AppPhase.FINALE && renderFinale()}
+            {phase === AppPhase.PAYWALL && renderPaywall()}
+            {phase === AppPhase.RECORDS && (
+              <PageWrapper
+                headerTitle={educatorName || 'Communicate'}
+                headerSubtitle={todayLabel || undefined}
+                isOnline={isOnline}
+                isDarkMode={isDarkMode}
+                setIsDarkMode={setIsDarkMode}
+                syncStatus={syncStatus}
+              >
+                <Suspense fallback={<PhaseLazyFallback />}>
+                  <CommunicationDashboardLazy
+                    educatorName={educatorName}
+                    courses={courses}
+                    classroom={classroom}
+                    students={students}
+                    accessToken={accessToken}
+                  />
+                </Suspense>
+              </PageWrapper>
+            )}
+            {phase === AppPhase.OPTIONS && renderOptions()}
           </div>
+
+          {/* Global voice capture overlay disabled – voice handled inline via VoiceInputButton components */}
+
+          {/* GLOBAL BOTTOM NAV (hidden in Class Presenter for clean projection) */}
+          {phase !== AppPhase.CLASS_PRESENTER && (
+            <div
+              id="dg-bottom-nav"
+              className="fixed inset-x-0 bottom-0 z-[90] pb-[env(safe-area-inset-bottom,0px)] pt-1"
+            >
+              <div className="relative w-full">
+                <div className="bg-white/98 dark:bg-slate-900/98 border-t border-slate-200/90 dark:border-slate-700/90 shadow-[0_-4px_24px_rgba(0,0,0,0.08)] min-h-14 h-14 sm:min-h-16 sm:h-16 flex items-center justify-between gap-0.5 sm:gap-1 rounded-t-xl sm:rounded-t-2xl pl-[max(0.35rem,env(safe-area-inset-left,0px))] pr-[max(0.35rem,env(safe-area-inset-right,0px))]">
+                  <button
+                    type="button"
+                    onClick={() => setPhase(AppPhase.AUTHENTICATION)}
+                    className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
+                      phase === AppPhase.AUTHENTICATION
+                        ? 'text-red-500'
+                        : 'text-slate-600 dark:text-slate-300'
+                    }`}
+                  >
+                    <Home className="w-4 h-4 sm:w-5 sm:h-5 mb-0.5 shrink-0" />
+                    <span className="text-[8px] sm:text-[9px] font-bold uppercase tracking-[0.14em] sm:tracking-[0.16em] leading-tight text-center">
+                      Home
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!isSignedIn}
+                    title={
+                      isSignedIn && !isOnline
+                        ? 'Plan opens offline; AI generate & some exports need internet when you use them.'
+                        : undefined
+                    }
+                    onClick={() => {
+                      if (!isSignedIn) return;
+                      setPhase(AppPhase.PLAN);
+                    }}
+                    className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
+                      phase === AppPhase.PLAN
+                        ? 'text-blue-500'
+                        : isSignedIn
+                          ? !isOnline
+                            ? 'text-slate-600 dark:text-slate-300 opacity-60'
+                            : 'text-slate-600 dark:text-slate-300'
+                          : 'text-slate-400 dark:text-slate-600'
+                    }`}
+                  >
+                    <BookOpen className="w-4 h-4 sm:w-5 sm:h-5 mb-0.5 shrink-0" />
+                    <span className="text-[8px] sm:text-[9px] font-bold uppercase tracking-[0.14em] sm:tracking-[0.16em] leading-tight text-center">
+                      Plan
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!isSignedIn}
+                    onClick={() => {
+                      if (!isSignedIn) return;
+                      setPhase(AppPhase.DASHBOARD);
+                    }}
+                    className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
+                      phase === AppPhase.DASHBOARD
+                        ? 'text-yellow-500'
+                        : isSignedIn
+                          ? 'text-slate-600 dark:text-slate-300'
+                          : 'text-slate-400 dark:text-slate-600'
+                    }`}
+                  >
+                    <LayoutDashboard className="w-4 h-4 sm:w-5 sm:h-5 mb-0.5 shrink-0" />
+                    <span className="text-[8px] sm:text-[9px] font-bold uppercase tracking-[0.14em] sm:tracking-[0.16em] leading-tight text-center">
+                      Grade
+                    </span>
+                  </button>
+                  <div className="relative flex items-center justify-center shrink-0">
+                    {voiceCoachVisible && (
+                      <div
+                        role="region"
+                        aria-label="Voice input tip"
+                        className="absolute bottom-[calc(100%+12px)] left-1/2 z-[100] w-[min(17.5rem,calc(100vw-2rem))] -translate-x-1/2"
+                      >
+                        <div className="relative rounded-2xl border border-slate-200/90 dark:border-slate-600/90 bg-white dark:bg-slate-900 px-3.5 py-3 shadow-[0_8px_30px_rgba(0,0,0,0.18)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.45)]">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-indigo-600 dark:text-indigo-300">
+                            Voice tip
+                          </p>
+                          <p
+                            id="dg-voice-coach-desc"
+                            className="mt-1.5 text-[12px] font-semibold leading-snug text-slate-800 dark:text-slate-100"
+                          >
+                            Tap a text field first, then tap the mic. Your words go where the cursor
+                            is.
+                          </p>
+                          <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">
+                            Press Esc to dismiss.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={dismissVoiceMicCoach}
+                            className="mt-2.5 w-full py-2 rounded-xl bg-indigo-600 text-white text-[11px] font-black uppercase tracking-widest shadow-sm hover:bg-indigo-700 transition-colors"
+                          >
+                            Got it
+                          </button>
+                        </div>
+                        <div
+                          className="absolute -bottom-1.5 left-1/2 h-3 w-3 -translate-x-1/2 rotate-45 border border-slate-200/90 dark:border-slate-600/90 border-t-0 border-l-0 bg-white dark:bg-slate-900"
+                          aria-hidden
+                        />
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!navHasSupport) return;
+                        const isEditable = (el: HTMLElement | null) =>
+                          !!el &&
+                          (el instanceof HTMLTextAreaElement ||
+                            el instanceof HTMLInputElement ||
+                            el.isContentEditable);
+                        const activeEl = document.activeElement as HTMLElement | null;
+                        const target = isEditable(activeEl)
+                          ? activeEl
+                          : isEditable(lastFocusedFieldRef.current)
+                            ? (lastFocusedFieldRef.current as HTMLElement)
+                            : null;
+                        if (!target) return;
+                        if (!isNavListening) {
+                          if (voiceTargetRef.current && voiceTargetRef.current !== target) {
+                            voiceTargetRef.current.classList.remove('dg-voice-target');
+                          }
+                          voiceTargetRef.current = target;
+                          target.classList.add('dg-voice-target');
+                          // Keep focus on the field so cursor insertion works.
+                          try {
+                            target.focus();
+                          } catch {
+                            /* ignore */
+                          }
+                        }
+                        toggleNavListening();
+                      }}
+                      className={`flex items-center justify-center w-11 h-11 rounded-full border-[2px] ${
+                        !navHasSupport
+                          ? 'bg-indigo-400/30 text-white/60 border-white/40 dark:border-slate-900/40 cursor-not-allowed'
+                          : isNavListening
+                            ? 'bg-red-500 text-white border-white/80 dark:border-slate-900/80 animate-pulse'
+                            : 'bg-slate-950 text-white border-white/80 dark:bg-white dark:text-slate-950 dark:border-slate-900/80 active:scale-95 transition-transform'
+                      }`}
+                      title={
+                        !navHasSupport
+                          ? 'Voice input unavailable'
+                          : isNavListening
+                            ? 'Stop voice input'
+                            : 'Tap a field first, then use the mic'
+                      }
+                      aria-label="Voice capture"
+                      aria-describedby={voiceCoachVisible ? 'dg-voice-coach-desc' : undefined}
+                    >
+                      <Mic className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={!isSignedIn}
+                    onClick={() => {
+                      if (!isSignedIn) return;
+                      setPhase(AppPhase.SCHEDULE);
+                    }}
+                    className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
+                      phase === AppPhase.SCHEDULE
+                        ? 'text-green-500'
+                        : isSignedIn
+                          ? 'text-slate-600 dark:text-slate-300'
+                          : 'text-slate-400 dark:text-slate-600'
+                    }`}
+                  >
+                    <Calendar className="w-4 h-4 sm:w-5 sm:h-5 mb-0.5 shrink-0" />
+                    <span className="text-[8px] sm:text-[9px] font-bold uppercase tracking-[0.14em] sm:tracking-[0.16em] leading-tight text-center">
+                      Schedule
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!isSignedIn || !isOnline}
+                    title={isSignedIn && !isOnline ? NEEDS_INTERNET_COMMUNICATE : undefined}
+                    aria-label={
+                      !isSignedIn
+                        ? 'Communicate — sign in to use'
+                        : !isOnline
+                          ? NEEDS_INTERNET_COMMUNICATE
+                          : 'Communicate'
+                    }
+                    onClick={() => {
+                      if (!isSignedIn || !isOnline) return;
+                      bumpNavUsage('communicate');
+                      setPhase(AppPhase.RECORDS);
+                    }}
+                    className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
+                      phase === AppPhase.RECORDS
+                        ? 'text-purple-500'
+                        : isSignedIn
+                          ? !isOnline
+                            ? 'text-slate-400 dark:text-slate-600 opacity-45 cursor-not-allowed'
+                            : 'text-slate-600 dark:text-slate-300'
+                          : 'text-slate-400 dark:text-slate-600'
+                    }`}
+                  >
+                    <MessageCircle className="w-4 h-4 sm:w-5 sm:h-5 mb-0.5 shrink-0" />
+                    <span className="text-[8px] sm:text-[9px] font-bold uppercase tracking-[0.14em] sm:tracking-[0.16em] leading-tight text-center">
+                      Communicate
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!isSignedIn}
+                    onClick={() => {
+                      if (!isSignedIn) return;
+                      setPhase(AppPhase.OPTIONS);
+                    }}
+                    className={`flex flex-col items-center flex-1 py-1 rounded-xl ${
+                      phase === AppPhase.OPTIONS
+                        ? 'text-slate-700 dark:text-slate-200'
+                        : isSignedIn
+                          ? 'text-slate-600 dark:text-slate-300'
+                          : 'text-slate-400 dark:text-slate-600'
+                    }`}
+                  >
+                    <Settings className="w-4 h-4 sm:w-5 sm:h-5 mb-0.5 shrink-0" />
+                    <span className="text-[8px] sm:text-[9px] font-bold uppercase tracking-[0.14em] sm:tracking-[0.16em] leading-tight text-center">
+                      Options
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
-      </div>
-      )}
-    </div>
-    <ConsentBanner />
-    </>
+        <ConsentBanner />
+      </>
     </AppContext.Provider>
   );
 };

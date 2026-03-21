@@ -31,7 +31,8 @@
     "lucide-react": "^0.564.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-i18next": "^15.1.0"
+    "react-i18next": "^15.1.0",
+    "stripe": "^17.7.0"
   },
   "devDependencies": {
     "@capacitor/android": "^7.0.0",

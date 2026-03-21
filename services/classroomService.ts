@@ -1,7 +1,7 @@
-import { Course, Assignment, Student } from "../types";
+import { Course, Assignment, Student } from '../types';
 
-const CLASSROOM_BASE_URL = "https://classroom.googleapis.com/v1";
-const GMAIL_BASE_URL = "https://gmail.googleapis.com/gmail/v1";
+const CLASSROOM_BASE_URL = 'https://classroom.googleapis.com/v1';
+const GMAIL_BASE_URL = 'https://gmail.googleapis.com/gmail/v1';
 
 /** Minimal shapes from Classroom REST JSON (we only map fields we use). */
 type GApiCourse = { id?: string; name?: string; section?: string };
@@ -35,12 +35,12 @@ export class ClassroomService {
         headers: {
           ...options.headers,
           Authorization: `Bearer ${this.accessToken}`,
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
         },
       });
 
       if (!response.ok) {
-        let errorMessage = "Classroom API Error";
+        let errorMessage = 'Classroom API Error';
         try {
           const error = await response.json();
           errorMessage = error.error?.message || errorMessage;
@@ -55,100 +55,107 @@ export class ClassroomService {
         return null;
       }
 
-      const contentType = response.headers.get("content-type") || "";
-      if (contentType.includes("application/json")) {
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
         return response.json();
       }
 
       // Fallback: return plain text if not JSON
       return response.text();
     } catch (err) {
-      if (err instanceof TypeError && err.message === "Failed to fetch") {
-        throw new Error("Network connection lost. Please check your internet.");
+      if (err instanceof TypeError && err.message === 'Failed to fetch') {
+        throw new Error('Network connection lost. Please check your internet.');
       }
       throw err;
     }
   }
 
   async getCourses(): Promise<Course[]> {
-    const data = (await this.fetchWithAuth("/courses?courseStates=ACTIVE")) as GApiCoursesList;
+    const data = (await this.fetchWithAuth('/courses?courseStates=ACTIVE')) as GApiCoursesList;
     return (data.courses || []).map((c) => ({
-      id: c.id ?? "",
-      name: c.name ?? "Course",
-      period: c.section || "General",
+      id: c.id ?? '',
+      name: c.name ?? 'Course',
+      period: c.section || 'General',
       source: 'google' as const,
     }));
   }
 
   async createCourse(name: string, period: string): Promise<Course> {
-    const data = await this.fetchWithAuth("/courses", {
-      method: "POST",
+    const data = await this.fetchWithAuth('/courses', {
+      method: 'POST',
       body: JSON.stringify({
         name,
-        section: period || "General",
+        section: period || 'General',
         // Let the current authenticated teacher be the owner
-        ownerId: "me",
+        ownerId: 'me',
       }),
     });
     return {
       id: data.id,
       name: data.name,
-      period: data.section || "General",
+      period: data.section || 'General',
       source: 'google',
       lastUsed: Date.now(),
     };
   }
 
   async getAssignments(courseId: string): Promise<Assignment[]> {
-    const data = (await this.fetchWithAuth(`/courses/${courseId}/courseWork`)) as GApiCourseWorkList;
+    const data = (await this.fetchWithAuth(
+      `/courses/${courseId}/courseWork`
+    )) as GApiCourseWorkList;
     return (data.courseWork || []).map((cw) => ({
-      id: cw.id ?? "",
-      title: cw.title ?? "Assignment",
+      id: cw.id ?? '',
+      title: cw.title ?? 'Assignment',
       maxScore: cw.maxPoints || 100,
-      rubric: cw.description || "Grade based on assignment title.",
+      rubric: cw.description || 'Grade based on assignment title.',
     }));
   }
 
   async getStudents(courseId: string): Promise<Student[]> {
     const data = (await this.fetchWithAuth(`/courses/${courseId}/students`)) as GApiStudentsList;
     return (data.students || []).map((s) => ({
-      id: s.userId ?? "",
-      name: s.profile?.name?.fullName || "Unknown Student",
+      id: s.userId ?? '',
+      name: s.profile?.name?.fullName || 'Unknown Student',
       email: s.profile?.emailAddress || undefined, // Extracted email address for Gmail API
     }));
   }
 
-  async createAssignment(courseId: string, title: string, description: string, maxScore: number): Promise<Assignment> {
+  async createAssignment(
+    courseId: string,
+    title: string,
+    description: string,
+    maxScore: number
+  ): Promise<Assignment> {
     const data = await this.fetchWithAuth(`/courses/${courseId}/courseWork`, {
-      method: "POST",
+      method: 'POST',
       body: JSON.stringify({
         title,
         description,
         maxPoints: maxScore,
-        workType: "ASSIGNMENT",
-        state: "PUBLISHED"
+        workType: 'ASSIGNMENT',
+        state: 'PUBLISHED',
       }),
     });
     return {
       id: data.id,
       title: data.title,
       maxScore: data.maxPoints || 100,
-      rubric: data.description || ""
+      rubric: data.description || '',
     };
   }
 
   async updateCourse(courseId: string, name: string, period?: string): Promise<Course> {
     const data = await this.fetchWithAuth(`/courses/${courseId}?updateMask=name,section`, {
-      method: "PATCH",
+      method: 'PATCH',
       body: JSON.stringify({
         name,
-        section: period || "General",
+        section: period || 'General',
       }),
     });
     return {
       id: data.id,
       name: data.name,
-      period: data.section || "General",
+      period: data.section || 'General',
       source: 'google',
       lastUsed: Date.now(),
     };
@@ -156,15 +163,19 @@ export class ClassroomService {
 
   async deleteCourse(courseId: string): Promise<void> {
     await this.fetchWithAuth(`/courses/${courseId}`, {
-      method: "DELETE",
+      method: 'DELETE',
     });
   }
 
-  async updateAssignment(courseId: string, assignmentId: string, title: string): Promise<Assignment> {
+  async updateAssignment(
+    courseId: string,
+    assignmentId: string,
+    title: string
+  ): Promise<Assignment> {
     const data = await this.fetchWithAuth(
       `/courses/${courseId}/courseWork/${assignmentId}?updateMask=title`,
       {
-        method: "PATCH",
+        method: 'PATCH',
         body: JSON.stringify({ title }),
       }
     );
@@ -172,18 +183,26 @@ export class ClassroomService {
       id: data.id,
       title: data.title,
       maxScore: data.maxPoints || 100,
-      rubric: data.description || "",
+      rubric: data.description || '',
     };
   }
 
   async deleteAssignment(courseId: string, assignmentId: string): Promise<void> {
     await this.fetchWithAuth(`/courses/${courseId}/courseWork/${assignmentId}`, {
-      method: "DELETE",
+      method: 'DELETE',
     });
   }
 
-  async postGrade(courseId: string, courseWorkId: string, studentId: string, score: number, feedback: string) {
-    console.log(`DEBUG: Target Course: ${courseId}, Assignment: ${courseWorkId}, Student: ${studentId}`);
+  async postGrade(
+    courseId: string,
+    courseWorkId: string,
+    studentId: string,
+    score: number,
+    feedback: string
+  ) {
+    console.log(
+      `DEBUG: Target Course: ${courseId}, Assignment: ${courseWorkId}, Student: ${studentId}`
+    );
 
     // 1. Fetch ONLY this specific student's submission
     const submissionsData = (await this.fetchWithAuth(
@@ -194,21 +213,23 @@ export class ClassroomService {
 
     // 2. Find the submission object
     const submission = submissions.find((s) => String(s.userId) === String(studentId));
-    
+
     if (!submission) {
-      throw new Error(`Grade sync failed: No submission found. The student must at least open the assignment once in Google Classroom.`);
+      throw new Error(
+        `Grade sync failed: No submission found. The student must at least open the assignment once in Google Classroom.`
+      );
     }
 
     // 3. Patch BOTH draft and assigned grades
-    const numericScore = Number(score); 
+    const numericScore = Number(score);
 
     await this.fetchWithAuth(
       `/courses/${courseId}/courseWork/${courseWorkId}/studentSubmissions/${submission.id}?updateMask=draftGrade,assignedGrade`,
       {
-        method: "PATCH",
-        body: JSON.stringify({ 
-          draftGrade: numericScore,    
-          assignedGrade: numericScore 
+        method: 'PATCH',
+        body: JSON.stringify({
+          draftGrade: numericScore,
+          assignedGrade: numericScore,
         }),
       }
     );
@@ -216,12 +237,15 @@ export class ClassroomService {
     // 4. Add private comment for feedback (Kept here to act as a fallback/log if Google ever enables this via API)
     if (feedback && feedback.trim()) {
       try {
-        await this.fetchWithAuth(`/courses/${courseId}/courseWork/${courseWorkId}/studentSubmissions/${submission.id}/comments`, {
-          method: "POST",
-          body: JSON.stringify({ text: feedback }),
-        });
+        await this.fetchWithAuth(
+          `/courses/${courseId}/courseWork/${courseWorkId}/studentSubmissions/${submission.id}/comments`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ text: feedback }),
+          }
+        );
       } catch (e) {
-        console.warn("Grade posted successfully, but feedback comment failed:", e);
+        console.warn('Grade posted successfully, but feedback comment failed:', e);
       }
     }
 
@@ -238,20 +262,20 @@ export class ClassroomService {
 
     const escapeHtml = (s: string) =>
       s
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#39;");
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 
-    const textBody = body ?? "";
+    const textBody = body ?? '';
     const safeText = escapeHtml(textBody);
     const htmlBody = `<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>${escapeHtml(subject || "DoneGrading")}</title>
+    <title>${escapeHtml(subject || 'DoneGrading')}</title>
   </head>
   <body style="margin:0;padding:0;background:#f6f7fb;">
     <div style="max-width:640px;margin:0 auto;padding:20px 14px;">
@@ -274,14 +298,13 @@ export class ClassroomService {
   </body>
 </html>`;
 
-    const mixedBoundary = "DONEGRADING-MIXED-BOUNDARY";
-    const altBoundary = "DONEGRADING-ALT-BOUNDARY";
+    const mixedBoundary = 'DONEGRADING-MIXED-BOUNDARY';
+    const altBoundary = 'DONEGRADING-ALT-BOUNDARY';
 
     let mimeBody: string;
-    const images = Array.isArray(imageBase64) ? imageBase64 : (imageBase64 ? [imageBase64] : []);
+    const images = Array.isArray(imageBase64) ? imageBase64 : imageBase64 ? [imageBase64] : [];
     if (images.length > 0) {
-      mimeBody =
-`MIME-Version: 1.0
+      mimeBody = `MIME-Version: 1.0
 Content-Type: multipart/mixed; boundary="${mixedBoundary}"
 
 --${mixedBoundary}
@@ -311,12 +334,11 @@ Content-Disposition: attachment; filename="work-${idx + 1}.jpg"
 ${img}
 `
   )
-  .join("")}
+  .join('')}
 --${mixedBoundary}--
 `;
     } else {
-      mimeBody =
-`MIME-Version: 1.0
+      mimeBody = `MIME-Version: 1.0
 Content-Type: multipart/alternative; boundary="${altBoundary}"
 
 --${altBoundary}
@@ -332,30 +354,29 @@ ${htmlBody}
 --${altBoundary}--`;
     }
 
-    const fullMessage =
-`To: ${toEmail}
+    const fullMessage = `To: ${toEmail}
 Subject: ${subject}
 ${mimeBody}`;
 
     const base64Encoded = btoa(unescape(encodeURIComponent(fullMessage)));
-    const raw = base64Encoded.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const raw = base64Encoded.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
     const response = await fetch(`${GMAIL_BASE_URL}/users/me/messages/send`, {
-      method: "POST",
+      method: 'POST',
       headers: {
         Authorization: `Bearer ${this.accessToken}`,
-        "Content-Type": "application/json",
+        'Content-Type': 'application/json',
       },
       body: JSON.stringify({ raw }),
     });
 
     if (!response.ok) {
-      let errorMessage = "Gmail API error";
+      let errorMessage = 'Gmail API error';
       try {
         const err = await response.json();
         errorMessage = err.error?.message || errorMessage;
       } catch {
-        errorMessage = await response.text() || errorMessage;
+        errorMessage = (await response.text()) || errorMessage;
       }
       throw new Error(`Email failed: ${errorMessage}`);
     }
@@ -365,14 +386,18 @@ ${mimeBody}`;
    * Send a formatted lesson plan (HTML + plain-text alternative) via Gmail API.
    * `fullHtmlDocument` must be a complete HTML document (caller escapes user content).
    */
-  async sendLessonPlanEmail(toEmail: string, subject: string, plainText: string, fullHtmlDocument: string): Promise<void> {
+  async sendLessonPlanEmail(
+    toEmail: string,
+    subject: string,
+    plainText: string,
+    fullHtmlDocument: string
+  ): Promise<void> {
     if (!toEmail) return;
 
-    const textBody = plainText ?? "";
-    const altBoundary = "DONEGRADING-PLAN-ALT";
+    const textBody = plainText ?? '';
+    const altBoundary = 'DONEGRADING-PLAN-ALT';
 
-    const mimeBody =
-`MIME-Version: 1.0
+    const mimeBody = `MIME-Version: 1.0
 Content-Type: multipart/alternative; boundary="${altBoundary}"
 
 --${altBoundary}
@@ -387,30 +412,29 @@ ${fullHtmlDocument}
 
 --${altBoundary}--`;
 
-    const fullMessage =
-`To: ${toEmail}
+    const fullMessage = `To: ${toEmail}
 Subject: ${subject}
 ${mimeBody}`;
 
     const base64Encoded = btoa(unescape(encodeURIComponent(fullMessage)));
-    const raw = base64Encoded.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const raw = base64Encoded.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
     const response = await fetch(`${GMAIL_BASE_URL}/users/me/messages/send`, {
-      method: "POST",
+      method: 'POST',
       headers: {
         Authorization: `Bearer ${this.accessToken}`,
-        "Content-Type": "application/json",
+        'Content-Type': 'application/json',
       },
       body: JSON.stringify({ raw }),
     });
 
     if (!response.ok) {
-      let errorMessage = "Gmail API error";
+      let errorMessage = 'Gmail API error';
       try {
         const err = await response.json();
         errorMessage = err.error?.message || errorMessage;
       } catch {
-        errorMessage = await response.text() || errorMessage;
+        errorMessage = (await response.text()) || errorMessage;
       }
       throw new Error(`Email failed: ${errorMessage}`);
     }

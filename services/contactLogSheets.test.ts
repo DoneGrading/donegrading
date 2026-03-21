@@ -8,7 +8,9 @@ describe('parseSheetId', () => {
   });
 
   it('returns raw id when input looks like id (long alphanumeric)', () => {
-    expect(parseSheetId('abc123XYZ789def456ghi012jkl345mno')).toBe('abc123XYZ789def456ghi012jkl345mno');
+    expect(parseSheetId('abc123XYZ789def456ghi012jkl345mno')).toBe(
+      'abc123XYZ789def456ghi012jkl345mno'
+    );
   });
 
   it('returns null for empty or whitespace', () => {

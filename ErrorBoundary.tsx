@@ -30,9 +30,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
       return (
         <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 p-6">
           <div className="max-w-sm w-full bg-white/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700 rounded-3xl p-6 shadow-xl text-center space-y-3">
-            <h1 className="text-lg font-black tracking-tight">
-              Something went wrong
-            </h1>
+            <h1 className="text-lg font-black tracking-tight">Something went wrong</h1>
             <p className="text-sm text-slate-600 dark:text-slate-300">
               Your scans and grades are safe. Please reload the app and try again.
             </p>
@@ -51,4 +49,3 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
     return this.props.children;
   }
 }
-

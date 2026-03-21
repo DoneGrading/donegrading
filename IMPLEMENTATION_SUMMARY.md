@@ -9,7 +9,7 @@ This document summarizes what was implemented from **WORLD_CLASS_ROADMAP.md**. R
 - **Sentry** (`lib/sentry.ts`): Optional; set `VITE_SENTRY_DSN` to enable. `initSentry()` in `main.tsx`. `ErrorBoundary` calls `captureException()` with PII scrubbing in `beforeSend`.
 - **Analytics** (`analytics.ts`): Extended event types (`page_view`, `grading_session_start`, `scan_capture`, `rubric_created`, `lesson_generated`, `message_sent`, `paywall_view`, `subscription_start`). Consent gate: `getAnalyticsConsent()` / `setAnalyticsConsent()`; `logEvent` no-ops when consent is false.
 - **Retry** (`lib/retry.ts`): `withRetry(fn, { maxAttempts, delayMs, backoff, retryable })` for 5xx/429.
-- **Timeout** (`lib/fetchWithTimeout.ts`): `fetchWithTimeout(url, { timeoutMs })` for fetch calls. *Wire into `classroomService` / Gemini call sites as needed.*
+- **Timeout** (`lib/fetchWithTimeout.ts`): `fetchWithTimeout(url, { timeoutMs })` for fetch calls. _Wire into `classroomService` / Gemini call sites as needed._
 - **Offline queue**: Existing `gradedWorks` in localStorage is the queue; sync runs when online. No new queue type added; documented in roadmap.
 
 ---
@@ -27,7 +27,7 @@ This document summarizes what was implemented from **WORLD_CLASS_ROADMAP.md**. R
 
 - **Tailwind**: CDN removed; `global.css` with `@tailwind` + `tailwind.config.js` + `postcss.config.js`. Built via Vite PostCSS.
 - **Code-split**: `vite.config.ts` `manualChunks`: `vendor` (react, react-dom), `lucide`, `gemini`. Lazy-loaded views can be added later (e.g. `lazy(() => import('./views/AuthView'))`).
-- **Debounce**: `hooks/useDebounce.ts` and `useDebouncedCallback`. *Use in dashboard/assignment search inputs where needed.*
+- **Debounce**: `hooks/useDebounce.ts` and `useDebouncedCallback`. _Use in dashboard/assignment search inputs where needed._
 
 ---
 

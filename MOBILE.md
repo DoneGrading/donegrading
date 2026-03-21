@@ -79,13 +79,13 @@ Then run the app from Android Studio (device or emulator).
 
 ## Summary
 
-| Goal                    | Command / step                                      |
-|-------------------------|------------------------------------------------------|
-| Dev in browser          | `npm run dev`                                        |
-| Build web output        | `npm run build`                                      |
-| Sync to native projects | `npm run cap:sync` or `npx cap sync`                 |
-| Open Android project    | `npm run cap:open:android`                           |
-| Open iOS project        | `npm run cap:open:ios` (after `cap add ios`)         |
-| API key                 | `VITE_GEMINI_API_KEY` in `.env.local`                |
+| Goal                    | Command / step                               |
+| ----------------------- | -------------------------------------------- |
+| Dev in browser          | `npm run dev`                                |
+| Build web output        | `npm run build`                              |
+| Sync to native projects | `npm run cap:sync` or `npx cap sync`         |
+| Open Android project    | `npm run cap:open:android`                   |
+| Open iOS project        | `npm run cap:open:ios` (after `cap add ios`) |
+| API key                 | `VITE_GEMINI_API_KEY` in `.env.local`        |
 
 You can keep developing in this repo and deploy the same code as a **web app** (e.g. Vite build + your server) and as **iOS/Android apps** via Capacitor.

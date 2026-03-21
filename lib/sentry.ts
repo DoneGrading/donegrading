@@ -5,15 +5,17 @@
 let sentryInitialized = false;
 
 export function initSentry(): void {
-  const dsn =
-    typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SENTRY_DSN;
+  const dsn = typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SENTRY_DSN;
   if (!dsn || typeof dsn !== 'string' || !dsn.startsWith('https://')) return;
 
   import('@sentry/react').then((Sentry) => {
     Sentry.init({
       dsn,
       environment: (import.meta as any).env?.MODE || 'development',
-      integrations: [Sentry.browserTracingIntegration(), Sentry.replayIntegration({ maskAllText: true })],
+      integrations: [
+        Sentry.browserTracingIntegration(),
+        Sentry.replayIntegration({ maskAllText: true }),
+      ],
       tracesSampleRate: 0.2,
       replaysOnErrorSampleRate: 0.5,
       beforeSend(event, hint) {

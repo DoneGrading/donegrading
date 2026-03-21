@@ -30,15 +30,32 @@ View your app in AI Studio: https://ai.studio/apps/4f5b250b-1758-4177-8df6-40c51
 
 ### Environment variables
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `VITE_GEMINI_API_KEY` | Yes | Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey). |
-| `VITE_GOOGLE_CLIENT_ID` | For Classroom | Google OAuth client ID (Cloud Console). |
-| `VITE_FIREBASE_API_KEY` | Optional | Firebase Web API key (threads / push). |
-| `VITE_FIREBASE_PROJECT_ID` | Optional | Firebase project ID. |
-| `VITE_SENTRY_DSN` | Optional | Sentry DSN for error monitoring. |
+| Variable                   | Required      | Description                                                                 |
+| -------------------------- | ------------- | --------------------------------------------------------------------------- |
+| `VITE_GEMINI_API_KEY`      | Yes           | Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey). |
+| `VITE_GOOGLE_CLIENT_ID`    | For Classroom | Google OAuth client ID (Cloud Console).                                     |
+| `VITE_FIREBASE_API_KEY`    | Optional      | Firebase Web API key (threads / push).                                      |
+| `VITE_FIREBASE_PROJECT_ID` | Optional      | Firebase project ID.                                                        |
+| `VITE_SENTRY_DSN`          | Optional      | Sentry DSN for error monitoring.                                            |
 
 Copy `.env.example` to `.env.local` and fill in values.
+
+### Billing (Stripe)
+
+Premium sync/email features use **Stripe Checkout** (subscription mode). Configure these on the machine that runs **`node server.js`** (not in the Vite-only dev bundle):
+
+| Variable                 | Required | Description                                                                 |
+| ------------------------ | -------- | --------------------------------------------------------------------------- |
+| `STRIPE_SECRET_KEY`      | Yes\*    | Secret key from the Stripe Dashboard.                                       |
+| `STRIPE_PRICE_ID`        | Yes\*    | Recurring **Price** ID (`price_…`) for your Pro plan.                         |
+| `APP_ORIGIN`             | Yes\*    | Public site URL for success/cancel redirects (e.g. `http://localhost:5173` with Vite + proxy). |
+| `STRIPE_WEBHOOK_SECRET`  | Optional | For `POST /api/billing/webhook` (e.g. `stripe listen --forward-to …`).      |
+
+\*If unset, checkout returns 503 and the paywall shows a configuration message.
+
+**Local dev:** Terminal 1 — `PORT=8080 STRIPE_SECRET_KEY=… STRIPE_PRICE_ID=… APP_ORIGIN=http://localhost:5173 node server.js`. Terminal 2 — `npm run dev`. Vite proxies `/api/*` to port 8080.
+
+**Production:** `npm run build && npm start` (or your host). Set `APP_ORIGIN` to your real HTTPS origin. Subscription status is stored in `localStorage` after a successful return; webhooks log events today—wire to your user store when you add accounts + billing portal.
 
 ### Running tests
 

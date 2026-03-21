@@ -1,25 +1,24 @@
-import { GoogleGenAI, Type } from "@google/genai";
-import { GradingResponse, type GeometricData } from "../types";
+import { GoogleGenAI, Type } from '@google/genai';
+import { GradingResponse, type GeometricData } from '../types';
 
 type EnvRecord = Record<string, string | undefined>;
 
 const readViteEnv = (key: string): string | undefined => {
-  if (typeof import.meta === "undefined") return undefined;
+  if (typeof import.meta === 'undefined') return undefined;
   const env = (import.meta as ImportMeta & { env?: EnvRecord }).env;
   return env?.[key];
 };
 
 const readProcessEnv = (key: string): string | undefined => {
-  if (typeof process === "undefined") return undefined;
+  if (typeof process === 'undefined') return undefined;
   return process.env?.[key];
 };
 
-const getApiKey = () =>
-  readViteEnv("VITE_GEMINI_API_KEY") || readProcessEnv("API_KEY") || "";
+const getApiKey = () => readViteEnv('VITE_GEMINI_API_KEY') || readProcessEnv('API_KEY') || '';
 
 export type FrameAssessmentResult = {
   scanHealth: number;
-  alignment: "IN_FRAME" | "OVERLAP_DETECTED" | "OUT_OF_BOUNDS";
+  alignment: 'IN_FRAME' | 'OVERLAP_DETECTED' | 'OUT_OF_BOUNDS';
   corners?: GeometricData;
   triggerSignal?: string;
   transcription?: string;
@@ -32,10 +31,10 @@ export const assessFrame = async (base64Image: string): Promise<FrameAssessmentR
     if (!apiKey) return null;
     const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: 'gemini-3-flash-preview',
       contents: {
         parts: [
-          { inlineData: { mimeType: "image/jpeg", data: base64Image } },
+          { inlineData: { mimeType: 'image/jpeg', data: base64Image } },
           {
             text: `You are an ultra-fast Document Viewfinder Sensor for teachers.
 
@@ -55,29 +54,32 @@ Assess whether a document is in-frame and readable enough to capture.
       },
       config: {
         thinkingConfig: { thinkingBudget: 0 },
-        responseMimeType: "application/json",
+        responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,
           properties: {
             scanHealth: { type: Type.NUMBER },
-            alignment: { type: Type.STRING, enum: ["IN_FRAME", "OVERLAP_DETECTED", "OUT_OF_BOUNDS"] },
+            alignment: {
+              type: Type.STRING,
+              enum: ['IN_FRAME', 'OVERLAP_DETECTED', 'OUT_OF_BOUNDS'],
+            },
             corners: {
               type: Type.OBJECT,
               properties: {
                 topLeft: { type: Type.ARRAY, items: { type: Type.NUMBER } },
                 topRight: { type: Type.ARRAY, items: { type: Type.NUMBER } },
                 bottomLeft: { type: Type.ARRAY, items: { type: Type.NUMBER } },
-                bottomRight: { type: Type.ARRAY, items: { type: Type.NUMBER } }
-              }
+                bottomRight: { type: Type.ARRAY, items: { type: Type.NUMBER } },
+              },
             },
             transcription: { type: Type.STRING },
             triggerSignal: { type: Type.STRING },
           },
-          required: ["scanHealth", "alignment"],
+          required: ['scanHealth', 'alignment'],
         },
       },
     });
-    const text = response.text || "{}";
+    const text = response.text || '{}';
     try {
       return JSON.parse(text) as FrameAssessmentResult;
     } catch {
@@ -86,7 +88,7 @@ Assess whether a document is in-frame and readable enough to capture.
       return JSON.parse(jsonMatch[0]) as FrameAssessmentResult;
     }
   } catch (e) {
-    console.error("Frame assessment error", e);
+    console.error('Frame assessment error', e);
     return null;
   }
 };
@@ -208,20 +210,24 @@ export const extractRubricFromImage = async (base64Image: string): Promise<strin
             },
           },
           {
-            text: `You are an expert educational administrator. Extract all the grading criteria, point distributions, and expectations from this rubric image as clear text. Organize it logically. If there is no readable text or it is clearly not a rubric, reply with exactly "NO RUBRIC".`
-          }
-        ]
-      }
+            text: `You are an expert educational administrator. Extract all the grading criteria, point distributions, and expectations from this rubric image as clear text. Organize it logically. If there is no readable text or it is clearly not a rubric, reply with exactly "NO RUBRIC".`,
+          },
+        ],
+      },
     });
     return response.text || null;
   } catch (e) {
-    console.error("Rubric extraction error", e);
+    console.error('Rubric extraction error', e);
     return null;
   }
 };
 
 // Service to generate a rubric from a title and description
-export const generateRubric = async (assignmentTitle: string, assignmentDescription: string, maxScore: number): Promise<string | null> => {
+export const generateRubric = async (
+  assignmentTitle: string,
+  assignmentDescription: string,
+  maxScore: number
+): Promise<string | null> => {
   try {
     const apiKey = getApiKey();
     if (!apiKey) return null;
@@ -231,11 +237,11 @@ export const generateRubric = async (assignmentTitle: string, assignmentDescript
       contents: `Generate a professional and detailed grading rubric for: ${assignmentTitle}. 
       Context: ${assignmentDescription}. 
       Total points: ${maxScore}. 
-      Return only the formatted rubric text.`
+      Return only the formatted rubric text.`,
     });
     return response.text || null;
   } catch (e) {
-    console.error("Rubric generation error", e);
+    console.error('Rubric generation error', e);
     return null;
   }
 };
@@ -294,38 +300,41 @@ Active Zone: 10-90% frame.
   6. Explicitly mention the student's handwriting, effort, or name inclusion in the feedback to explain their score.
   7. Example: "John, your analysis of the plant cell structure is excellent, and your neat handwriting makes it very easy to read! To improve, try to label the cell wall more clearly next time. Great effort!"
 
-Return ONLY JSON.`
-          }
-        ]
+Return ONLY JSON.`,
+          },
+        ],
       },
       config: {
         thinkingConfig: { thinkingBudget: 0 },
-        responseMimeType: "application/json",
+        responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,
           properties: {
             detected: { type: Type.BOOLEAN },
             scanHealth: { type: Type.NUMBER },
-            alignment: { type: Type.STRING, enum: ["IN_FRAME", "OVERLAP_DETECTED", "OUT_OF_BOUNDS"] },
+            alignment: {
+              type: Type.STRING,
+              enum: ['IN_FRAME', 'OVERLAP_DETECTED', 'OUT_OF_BOUNDS'],
+            },
             corners: {
               type: Type.OBJECT,
               properties: {
                 topLeft: { type: Type.ARRAY, items: { type: Type.NUMBER } },
                 topRight: { type: Type.ARRAY, items: { type: Type.NUMBER } },
                 bottomLeft: { type: Type.ARRAY, items: { type: Type.NUMBER } },
-                bottomRight: { type: Type.ARRAY, items: { type: Type.NUMBER } }
-              }
+                bottomRight: { type: Type.ARRAY, items: { type: Type.NUMBER } },
+              },
             },
             triggerSignal: { type: Type.STRING },
             oneWordCommand: { type: Type.STRING },
             studentName: { type: Type.STRING },
             score: { type: Type.NUMBER },
             feedback: { type: Type.STRING },
-            transcription: { type: Type.STRING }
+            transcription: { type: Type.STRING },
           },
-          required: ["detected", "scanHealth", "alignment"]
-        }
-      }
+          required: ['detected', 'scanHealth', 'alignment'],
+        },
+      },
     });
 
     const text = response.text || '{}';
@@ -337,7 +346,7 @@ Return ONLY JSON.`
       return JSON.parse(jsonMatch[0]) as GradingResponse;
     }
   } catch (e) {
-    console.error("Gemini analysis error", e);
+    console.error('Gemini analysis error', e);
     return null;
   }
 };
@@ -357,13 +366,13 @@ export const analyzeMultiPagePaper = async (
       .slice(0, 10)
       .map((data) => ({
         inlineData: {
-          mimeType: "image/jpeg",
+          mimeType: 'image/jpeg',
           data,
         },
       }));
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: 'gemini-3-flash-preview',
       contents: {
         parts: [
           ...imageParts,
@@ -372,7 +381,7 @@ export const analyzeMultiPagePaper = async (
 
 ## Instructions
 - Consider ALL pages as a single submission.
-- Match the student from: ${studentList.join(", ")}.
+- Match the student from: ${studentList.join(', ')}.
 - OCR handwriting carefully across pages.
 - SCORE: Evaluate against Rubric: ${rubric} (Max: ${maxScore}).
 - Provide ONE final score and ONE consolidated feedback.
@@ -390,7 +399,7 @@ Return ONLY JSON.`,
       },
       config: {
         thinkingConfig: { thinkingBudget: 0 },
-        responseMimeType: "application/json",
+        responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,
           properties: {
@@ -400,12 +409,12 @@ Return ONLY JSON.`,
             feedback: { type: Type.STRING },
             transcription: { type: Type.STRING },
           },
-          required: ["detected"],
+          required: ['detected'],
         },
       },
     });
 
-    const text = response.text || "{}";
+    const text = response.text || '{}';
     try {
       return JSON.parse(text) as GradingResponse;
     } catch {
@@ -414,7 +423,7 @@ Return ONLY JSON.`,
       return JSON.parse(jsonMatch[0]) as GradingResponse;
     }
   } catch (e) {
-    console.error("Gemini multi-page analysis error", e);
+    console.error('Gemini multi-page analysis error', e);
     return null;
   }
 };
@@ -431,11 +440,11 @@ export const generateLessonScript = async (topic: string): Promise<LessonScriptR
   try {
     const apiKey = getApiKey();
     if (!apiKey) {
-      throw new Error("Missing Gemini API key");
+      throw new Error('Missing Gemini API key');
     }
     const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: 'gemini-3-flash-preview',
       contents: `You are an expert K-12 curriculum designer. For this topic: "${topic}", provide a 30-minute lesson plan.
 
 Return ONLY valid JSON with exactly these keys (no markdown, no extra text):
@@ -443,7 +452,7 @@ Return ONLY valid JSON with exactly these keys (no markdown, no extra text):
 - "vocabulary": array of 5-10 key vocabulary words or phrases students should learn.
 - "discussionQuestions": array of exactly 3 discussion questions for the class.`,
       config: {
-        responseMimeType: "application/json",
+        responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,
           properties: {
@@ -451,11 +460,11 @@ Return ONLY valid JSON with exactly these keys (no markdown, no extra text):
             vocabulary: { type: Type.ARRAY, items: { type: Type.STRING } },
             discussionQuestions: { type: Type.ARRAY, items: { type: Type.STRING } },
           },
-          required: ["outline", "vocabulary", "discussionQuestions"],
+          required: ['outline', 'vocabulary', 'discussionQuestions'],
         },
       },
     });
-    const text = response.text || "{}";
+    const text = response.text || '{}';
     try {
       return JSON.parse(text) as LessonScriptResult;
     } catch {
@@ -465,20 +474,18 @@ Return ONLY valid JSON with exactly these keys (no markdown, no extra text):
       return JSON.parse(jsonMatch[0]) as LessonScriptResult;
     }
   } catch (e) {
-    console.error("Lesson script error", e);
+    console.error('Lesson script error', e);
     return null;
   }
 };
 
-export const generateLessonPartChoices = async (
-  params: {
-    objective: string;
-    part: LessonPartKey;
-    grade: string;
-    subject: string;
-    topic?: string;
-  }
-): Promise<string[] | null> => {
+export const generateLessonPartChoices = async (params: {
+  objective: string;
+  part: LessonPartKey;
+  grade: string;
+  subject: string;
+  topic?: string;
+}): Promise<string[] | null> => {
   try {
     const apiKey = getApiKey();
     if (!apiKey) return null;
@@ -487,20 +494,18 @@ export const generateLessonPartChoices = async (
 
     const partGuidance: Record<LessonPartKey, string> = {
       doNow:
-        "Create a 2–3 minute warm-up (Do Now) aligned to the objective. Provide text a teacher can paste into a student-facing or teacher-facing prompt.",
-      iDo:
-        "Create mini-lesson direct instruction text (I do). Provide concise step prompts a teacher can model/think-aloud.",
-      weDo:
-        "Create guided practice text (We do). Provide collaborative steps and quick check prompts.",
+        'Create a 2–3 minute warm-up (Do Now) aligned to the objective. Provide text a teacher can paste into a student-facing or teacher-facing prompt.',
+      iDo: 'Create mini-lesson direct instruction text (I do). Provide concise step prompts a teacher can model/think-aloud.',
+      weDo: 'Create guided practice text (We do). Provide collaborative steps and quick check prompts.',
       youDo:
-        "Create independent practice text (You do). Provide task directions and a success checklist sentence.",
+        'Create independent practice text (You do). Provide task directions and a success checklist sentence.',
       exitTicket:
-        "Create an exit ticket prompt a teacher can paste. It should support checking the objective (3 quick prompts if possible, but keep as one prompt text).",
+        'Create an exit ticket prompt a teacher can paste. It should support checking the objective (3 quick prompts if possible, but keep as one prompt text).',
     };
 
     const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: 'gemini-3-flash-preview',
       contents: `You are an expert K-12 curriculum designer.
 
 Objective (teacher-written learning target):
@@ -508,7 +513,7 @@ Objective (teacher-written learning target):
 
 Grade: ${grade}
 Subject: ${subject}
-${topic ? `Topic context: ${topic}` : ""}
+${topic ? `Topic context: ${topic}` : ''}
 
 Task:
 Generate EXACTLY 3 distinct options for the lesson part: "${part}".
@@ -524,18 +529,18 @@ Part guidance:
 ${partGuidance[part]}`,
       config: {
         thinkingConfig: { thinkingBudget: 0 },
-        responseMimeType: "application/json",
+        responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,
           properties: {
             choices: { type: Type.ARRAY, items: { type: Type.STRING } },
           },
-          required: ["choices"],
+          required: ['choices'],
         },
       },
     });
 
-    const text = response.text || "{}";
+    const text = response.text || '{}';
     try {
       const parsed = JSON.parse(text) as { choices: string[] };
       if (!Array.isArray(parsed.choices)) return null;
@@ -548,7 +553,7 @@ ${partGuidance[part]}`,
       return parsed.choices.slice(0, 3);
     }
   } catch (e) {
-    console.error("Lesson part choices generation error", e);
+    console.error('Lesson part choices generation error', e);
     return null;
   }
 };
@@ -567,7 +572,7 @@ export const generateLearningTargetAndSuccessCriteria = async (params: {
 
     const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: 'gemini-3-flash-preview',
       contents: `You are an expert K-12 curriculum designer.
 
 Create:
@@ -578,7 +583,7 @@ Inputs:
 - Lesson title: ${lessonTitle}
 - Grade: ${grade}
 - Subject: ${subject}
-- Objective hint (optional): ${objectiveHint || "N/A"}
+- Objective hint (optional): ${objectiveHint || 'N/A'}
 
 Rules:
 - Objective must be 1 sentence and directly measurable/aligned to the lesson title.
@@ -589,19 +594,19 @@ Rules:
 `,
       config: {
         thinkingConfig: { thinkingBudget: 0 },
-        responseMimeType: "application/json",
+        responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,
           properties: {
             objective: { type: Type.STRING },
             studentSuccessCriteria: { type: Type.STRING },
           },
-          required: ["objective", "studentSuccessCriteria"],
+          required: ['objective', 'studentSuccessCriteria'],
         },
       },
     });
 
-    const text = response.text || "{}";
+    const text = response.text || '{}';
     try {
       return JSON.parse(text) as { objective: string; studentSuccessCriteria: string };
     } catch {
@@ -610,7 +615,7 @@ Rules:
       return JSON.parse(jsonMatch[0]) as { objective: string; studentSuccessCriteria: string };
     }
   } catch (e) {
-    console.error("Learning target generation error", e);
+    console.error('Learning target generation error', e);
     return null;
   }
 };
@@ -629,14 +634,14 @@ export const generatePlanningContext = async (params: {
 
     const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: 'gemini-3-flash-preview',
       contents: `You are an expert K-12 curriculum designer.
 
 Given:
 - Lesson title: ${lessonTitle}
-- Learning target hint (optional): ${learningTargetHint || "N/A"}
-- Grade hint (optional): ${gradeHint || "N/A"}
-- Subject hint (optional): ${subjectHint || "N/A"}
+- Learning target hint (optional): ${learningTargetHint || 'N/A'}
+- Grade hint (optional): ${gradeHint || 'N/A'}
+- Subject hint (optional): ${subjectHint || 'N/A'}
 
 Task:
 Return a best-fit planning context for this lesson:
@@ -649,7 +654,7 @@ Rules:
 - No markdown, no extra keys.`,
       config: {
         thinkingConfig: { thinkingBudget: 0 },
-        responseMimeType: "application/json",
+        responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,
           properties: {
@@ -657,76 +662,88 @@ Rules:
             subject: { type: Type.STRING },
             duration: { type: Type.NUMBER },
           },
-          required: ["grade", "subject", "duration"],
+          required: ['grade', 'subject', 'duration'],
         },
       },
     });
 
-    const text = response.text || "{}";
+    const text = response.text || '{}';
     try {
       const parsed = JSON.parse(text) as { grade: string; subject: string; duration: number };
       if (!parsed) return null;
       if (!parsed.grade || !parsed.subject) return null;
       const d = Number(parsed.duration);
       if (!Number.isFinite(d)) return null;
-      return { grade: parsed.grade, subject: parsed.subject, duration: Math.max(10, Math.min(120, Math.round(d))) };
+      return {
+        grade: parsed.grade,
+        subject: parsed.subject,
+        duration: Math.max(10, Math.min(120, Math.round(d))),
+      };
     } catch {
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (!jsonMatch) return null;
-      const parsed = JSON.parse(jsonMatch[0]) as { grade: string; subject: string; duration: number };
+      const parsed = JSON.parse(jsonMatch[0]) as {
+        grade: string;
+        subject: string;
+        duration: number;
+      };
       const d = Number(parsed.duration);
       if (!Number.isFinite(d)) return null;
-      return { grade: parsed.grade, subject: parsed.subject, duration: Math.max(10, Math.min(120, Math.round(d))) };
+      return {
+        grade: parsed.grade,
+        subject: parsed.subject,
+        duration: Math.max(10, Math.min(120, Math.round(d))),
+      };
     }
   } catch (e) {
-    console.error("Planning context generation error", e);
+    console.error('Planning context generation error', e);
     return null;
   }
 };
 
 export const generateDifferentiatedLesson = async (
   lessonText: string,
-  level: "simplified" | "advanced"
+  level: 'simplified' | 'advanced'
 ): Promise<string | null> => {
   const directive =
-    level === "simplified"
-      ? "Rewrite this lesson for students with learning gaps: shorter sentences, simpler vocabulary, more scaffolding, and one extra practice step. Keep the same learning goal."
-      : "Rewrite this lesson for advanced/gifted students: add depth, extension questions, and one enrichment task. Keep the same learning goal.";
+    level === 'simplified'
+      ? 'Rewrite this lesson for students with learning gaps: shorter sentences, simpler vocabulary, more scaffolding, and one extra practice step. Keep the same learning goal.'
+      : 'Rewrite this lesson for advanced/gifted students: add depth, extension questions, and one enrichment task. Keep the same learning goal.';
   try {
     const apiKey = getApiKey();
     if (!apiKey) return null;
     const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: 'gemini-3-flash-preview',
       contents: `${directive}\n\nLesson:\n${lessonText}`,
     });
     return response.text || null;
   } catch (e) {
-    console.error("Differentiation error", e);
+    console.error('Differentiation error', e);
     return null;
   }
 };
 
 export const translateText = async (
   text: string,
-  targetLanguage: "es" | "en"
+  targetLanguage: 'es' | 'en'
 ): Promise<string | null> => {
   try {
     const apiKey = getApiKey();
     if (!apiKey) return null;
     const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: `Translate this text to ${targetLanguage === "es" ? "Spanish" : "English"}.
+      model: 'gemini-3-flash-preview',
+      contents: `Translate this text to ${targetLanguage === 'es' ? 'Spanish' : 'English'}.
 Return ONLY the translated text (no quotes, no markdown).
 
 Text:
 ${text}`,
       config: { thinkingConfig: { thinkingBudget: 0 } },
     });
-    return (response.text || "").trim() || null;
+    return (response.text || '').trim() || null;
   } catch (e) {
-    console.error("Translation error", e);
+    console.error('Translation error', e);
     return null;
   }
 };

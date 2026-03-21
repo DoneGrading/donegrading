@@ -7,6 +7,9 @@ export interface HomeSummary {
     title: string;
     course?: string;
     timeLabel?: string;
+    /** Deep-link into Schedule (Agenda) for this occurrence. */
+    scheduleItemId?: string;
+    scheduleDate?: string;
   };
   assignmentsToGrade: number;
   assignmentsPrimaryLabel?: string;
@@ -21,8 +24,8 @@ export interface HomeSummary {
 
 /** Shared app state and handlers used by phase views. Extended as more views are extracted. */
 export interface AppContextValue {
-  phase: AppPhase | 'COURSE_CREATION';
-  setPhase: (p: AppPhase | 'COURSE_CREATION') => void;
+  phase: AppPhase;
+  setPhase: (p: AppPhase) => void;
   isSignedIn: boolean;
   accessToken: string | null;
   educatorName: string;
@@ -33,6 +36,8 @@ export interface AppContextValue {
   syncStatus: 'idle' | 'ok' | 'error';
   navUsage: Record<string, number>;
   bumpNavUsage: (key: 'plan' | 'grade' | 'teach' | 'communicate') => void;
+  /** Open Schedule on Agenda, jump cursor to date, scroll/highlight the item row. */
+  openScheduleToItem: (scheduleItemId: string, dateISO: string) => void;
   homeSummary: HomeSummary;
   handleShareApp: () => void;
   handleSignOut: () => void;

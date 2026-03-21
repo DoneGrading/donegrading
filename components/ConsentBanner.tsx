@@ -35,10 +35,11 @@ export function ConsentBanner(): React.ReactElement | null {
     <div
       role="dialog"
       aria-label="Cookie consent"
-      className="fixed bottom-20 left-4 right-4 z-[80] rounded-2xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/95 p-4 shadow-xl backdrop-blur-md"
+      className="fixed z-[80] rounded-none sm:rounded-2xl border-x-0 border-b-0 sm:border border-slate-200 dark:border-slate-700 bg-white/98 dark:bg-slate-900/98 p-3 sm:p-4 shadow-[0_-8px_32px_rgba(0,0,0,0.12)] backdrop-blur-md left-0 right-0 bottom-[calc(4.25rem+env(safe-area-inset-bottom,0px))] sm:bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] pl-[max(0.75rem,env(safe-area-inset-left,0px))] pr-[max(0.75rem,env(safe-area-inset-right,0px))]"
     >
       <p className="text-xs text-slate-600 dark:text-slate-300 mb-3">
-        We use analytics to improve the app. You can accept or decline. No personal data is shared with third parties.
+        We use analytics to improve the app. You can accept or decline. No personal data is shared
+        with third parties.
       </p>
       <div className="flex gap-2">
         <button

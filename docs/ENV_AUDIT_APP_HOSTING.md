@@ -2,30 +2,30 @@
 
 ## Current (Firebase Console)
 
-| Variable | Status |
-|----------|--------|
-| VITE_GEMINI_API_KEY | ✓ Set |
-| VITE_FIREBASE_API_KEY | ✓ Set |
-| VITE_FIREBASE_PROJECT_ID | ✓ Set |
-| VITE_FIREBASE_AUTH_DOMAIN | ✓ Set |
-| VITE_FIREBASE_STORAGE_BUCKET | ✓ Set |
-| VITE_FIREBASE_MESSAGING_SENDER_ID | ✓ Set |
-| VITE_FIREBASE_APP_ID | ✓ Set |
+| Variable                          | Status |
+| --------------------------------- | ------ |
+| VITE_GEMINI_API_KEY               | ✓ Set  |
+| VITE_FIREBASE_API_KEY             | ✓ Set  |
+| VITE_FIREBASE_PROJECT_ID          | ✓ Set  |
+| VITE_FIREBASE_AUTH_DOMAIN         | ✓ Set  |
+| VITE_FIREBASE_STORAGE_BUCKET      | ✓ Set  |
+| VITE_FIREBASE_MESSAGING_SENDER_ID | ✓ Set  |
+| VITE_FIREBASE_APP_ID              | ✓ Set  |
 
 ## Missing (add in Console → App Hosting → Settings → Environment)
 
-| Variable | Required? | Purpose |
-|----------|-----------|--------|
-| **VITE_GOOGLE_CLIENT_ID** | **Yes** | Google OAuth (Sign in with Google). Without it, production uses a fallback in code; set this to your **production** OAuth client ID and add `https://app.donegrading.com` as an authorized JavaScript origin in Google Cloud Console. |
-| VITE_APPLE_CLIENT_ID | Optional | Sign in with Apple. If unset, users see “Use Sign in with Google for now.” |
-| VITE_SENTRY_DSN | Optional | Sentry error monitoring. |
+| Variable                  | Required? | Purpose                                                                                                                                                                                                                               |
+| ------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **VITE_GOOGLE_CLIENT_ID** | **Yes**   | Google OAuth (Sign in with Google). Without it, production uses a fallback in code; set this to your **production** OAuth client ID and add `https://app.donegrading.com` as an authorized JavaScript origin in Google Cloud Console. |
+| VITE_APPLE_CLIENT_ID      | Optional  | Sign in with Apple. If unset, users see “Use Sign in with Google for now.”                                                                                                                                                            |
+| VITE_SENTRY_DSN           | Optional  | Sentry error monitoring.                                                                                                                                                                                                              |
 
 ## Fix
 
 1. **Firebase Console** → **App Hosting** → **donegrading** → **Settings** → **Environment**.
 2. Click **Add new**.
 3. Add:
-   - **Key:** `VITE_GOOGLE_CLIENT_ID`  
+   - **Key:** `VITE_GOOGLE_CLIENT_ID`
    - **Value:** your production Google OAuth client ID (e.g. `….apps.googleusercontent.com`).
 4. In **Google Cloud Console** → APIs & Services → Credentials → that OAuth 2.0 Client ID → **Authorized JavaScript origins**, add:
    - `https://app.donegrading.com`

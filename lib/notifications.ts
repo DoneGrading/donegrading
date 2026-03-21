@@ -42,4 +42,3 @@ export async function scheduleReminderNotification(payload: ReminderNotification
 
   window.setTimeout(fire, delay);
 }
-
