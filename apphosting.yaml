@@ -2,8 +2,10 @@
 # https://firebase.google.com/docs/app-hosting/configure
 
 scripts:
-  # npm ci is faster and more reliable in CI than npm install
-  buildCommand: npm ci && npm run build
+  # Firebase/Cloud Build often sets NODE_ENV=production, which makes `npm ci` skip
+  # devDependencies. Vite, TypeScript, Tailwind, etc. are devDependencies — the build
+  # would fail without them. Force a non-production install for the CI step only.
+  buildCommand: NODE_ENV=development npm ci && npm run build
   runCommand: node server.js
 
 # Include full project so node_modules (Express) is available; [dist, server.js] alone would exclude deps
